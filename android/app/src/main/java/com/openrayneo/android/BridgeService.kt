@@ -123,7 +123,7 @@ internal class BridgeService : Service() {
         }, { ended ->
             if (ended) conversations.stop() else { voiceAudio.stop(); conversations.endRound() }
         }, { voiceAudio.accept(it) }, { conversations.transportError(it) })
-        translator = LiveTranslator(main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
+        translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
             if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
         audio = PromptAudio { left, right ->

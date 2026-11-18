@@ -52,9 +52,9 @@ internal class ConversationController(private val context: Context, private val 
     private var enrollmentChannel = 1
     private var resamplers = List(2) { ConversationAudio() }
     private val engines = mutableMapOf<Int, SpeakerEngine>()
-    private val activeASR = mutableMapOf<Int, ConversationASR>()
+    private val activeASR = mutableMapOf<Int, SpeechRound>()
     private data class Round(val channel: Int, val baseFrame: Long, var endFrame: Long? = null)
-    private val rounds = linkedMapOf<ConversationASR, Round>()
+    private val rounds = linkedMapOf<SpeechRound, Round>()
     private val laneStarts = mutableMapOf<Int, Long>()
     private val inputThrough = mutableMapOf<Int, Long>()
     private var asrEpoch = 0
@@ -100,7 +100,7 @@ internal class ConversationController(private val context: Context, private val 
                 if (System.currentTimeMillis() - lastSummaryAt > 60_000 && config.optString("memoryAutoSummary", "true") != "false") {
                     record?.takeIf { it.segments.isNotEmpty() && !it.processingPending }?.let { lastSummaryAt = System.currentTimeMillis(); enqueueSummary(it.id, "rolling") }
                 }
-                if (constraint == null && deferredProcessing && !liveBackfill && savingAudio && captureChannels > 0 && queuedSamples.get() == 0 && System.currentTimeMillis() >= nextBackfillAt && settings.read().optString("asrKey").isNotBlank()) resumeLive()
+                if (constraint == null && deferredProcessing && !liveBackfill && savingAudio && captureChannels > 0 && queuedSamples.get() == 0 && System.currentTimeMillis() >= nextBackfillAt && SpeechRounds.ready(context, settings.read())) resumeLive()
                 drainAgent()
             } else if (!closing && state.modelReady) resumePending()
             scheduleDaySummaries(false); worker.postDelayed(this, 15_000)
@@ -131,7 +131,7 @@ internal class ConversationController(private val context: Context, private val 
             config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId; closing = false
             liveBackfill = false; replaying = false; replayFailed = false; tail?.close(); tail = null; cancelASR()
             resourcePauseReason = if (mode == ConversationMode.ENROLL) null else resourceConstraint()
-            deferredProcessing = mode != ConversationMode.ENROLL && (cfg.optString("asrKey").isBlank() || resourcePauseReason != null)
+            deferredProcessing = mode != ConversationMode.ENROLL && (!SpeechRounds.ready(context, cfg) || resourcePauseReason != null)
             pendingSentences.clear(); pendingAgent.clear(); dispatching = false; manualSpeakers.clear(); laneStarts.clear(); inputThrough.clear()
             resamplers = List(2) { ConversationAudio() }; enrollmentTarget = target
             record = ConversationRecord(mode = mode, source = source, audioAnchors = listOf(AudioAnchor(0, System.currentTimeMillis())),
@@ -211,8 +211,8 @@ internal class ConversationController(private val context: Context, private val 
     private fun startASR(channel: Int, baseFrame: Long) {
         val token = generation; val epoch = asrEpoch; val wake = roundId
         val info = Round(channel, baseFrame)
-        lateinit var round: ConversationASR
-        round = ConversationASR(config, { text, begin, end, _, words -> worker.post {
+        lateinit var round: SpeechRound
+        round = SpeechRounds.create(context, config, { text, begin, end, _, words -> worker.post {
             if (token == generation && epoch == asrEpoch && state.running) {
                 val base = baseFrame * 1000 / 16000
                 val id = "${record!!.id}:c$channel:${base + begin}:${base + end}"
@@ -539,13 +539,13 @@ internal class ConversationController(private val context: Context, private val 
     } }
     fun configurationChanged() { worker.post { nextBackfillAt = 0; if (!state.running) resumePending() } }
     private fun resumePending() {
-        if (state.running || closing || resourceConstraint() != null || System.currentTimeMillis() < nextBackfillAt || settings.read().optString("asrKey").isBlank()) return
+        if (state.running || closing || resourceConstraint() != null || System.currentTimeMillis() < nextBackfillAt || !SpeechRounds.ready(context, settings.read())) return
         repository.records.filter { it.processingPending && !it.audioPending && it.audioSamples > 0 }.minByOrNull { it.createdAt }?.let { retranscribe(it.id) }
     }
     fun retranscribe(recordId: String) {
         check(!state.running && !closing && state.modelReady) { "먼저 현재 기록을 중지하세요" }
         val old = repository.records.first { it.id == recordId }; require(old.audioSamples > 0)
-        val cfg = settings.read(); require(cfg.optString("asrKey").isNotBlank()) { "먼저 ASR 키를 입력하세요" }
+        val cfg = settings.read(); require(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
         ++generation
         publish(state.copy(running = true, stopping = false, mode = old.mode, source = old.source, status = "채널별 완료 커서에 따라 각각 보충하며 원문과 수동 수정은 유지됩니다",
             error = null, activeRecord = old, segments = old.segments, decodedSeconds = 0.0))

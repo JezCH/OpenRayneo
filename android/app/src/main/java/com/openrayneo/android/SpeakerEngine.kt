@@ -69,7 +69,7 @@ internal class SpeakerEngine(context: Context, private val people: () -> List<Vo
         while (!vad.empty()) {
             val speech = vad.front()
             val samples = speech.samples
-            val begin = offsetMS + speech.start * 1000 / 16000
+            val begin = offsetMS + speech.start.toLong() * 1000 / 16000
             val end = begin + samples.size * 1000L / 16000
             vad.pop()
             if (enrolling) {

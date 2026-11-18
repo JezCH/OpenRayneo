@@ -14,7 +14,7 @@ internal class ConversationASR(config: JSONObject,
     private val sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
     private val failed: (String) -> Unit, private val completed: () -> Unit,
     /** When set, the service also streams unfinished sentences (live captions); records keep using finals only. */
-    private val interim: ((String) -> Unit)? = null) : WebSocketListener() {
+    private val interim: ((String) -> Unit)? = null) : WebSocketListener(), SpeechRound {
     private val task = UUID.randomUUID().toString()
     private val model = config.optString("asrModel").ifBlank { "qwen-audio-3.1-asr-flash-message" }
     private val key = config.optString("asrKey").trim()
@@ -31,20 +31,20 @@ internal class ConversationASR(config: JSONObject,
     private var finishSent = false
     private val seen = mutableSetOf<String>()
 
-    @Synchronized fun start() {
+    @Synchronized override fun start() {
         require(key.isNotEmpty()) { "먼저 Bailian ASR API Key를 입력하세요" }
         require(address.startsWith("wss://")) { "ASR 서비스 주소는 wss://로 시작해야 합니다" }
         socket = http.newWebSocket(Request.Builder().url(address).header("Authorization", "Bearer $key").build(), this)
     }
-    @Synchronized fun canAcceptAudio() = !ended && !finishing && pending.size + (socket?.queueSize() ?: 0) < 128000
-    @Synchronized fun append(samples: FloatArray) {
+    @Synchronized override fun canAcceptAudio() = !ended && !finishing && pending.size + (socket?.queueSize() ?: 0) < 128000
+    @Synchronized override fun append(samples: FloatArray) {
         if (ended || finishing) return
         check(pending.size + samples.size * 2 <= 480000) { "ASR 전송 대기 오디오가 15초를 넘어 이번 라운드를 중지했습니다(오류 상태 유지)" }
         for (sample in samples) pending.writeShortLe((sample * 32768).toInt().coerceIn(-32768, 32767))
         pump()
     }
-    @Synchronized fun finish() { if (!ended) { finishing = true; pump() } }
-    @Synchronized fun cancel() { if (!ended) { ended = true; pending.clear(); socket?.cancel(); release() } }
+    @Synchronized override fun finish() { if (!ended) { finishing = true; pump() } }
+    @Synchronized override fun cancel() { if (!ended) { ended = true; pending.clear(); socket?.cancel(); release() } }
     override fun onOpen(webSocket: WebSocket, response: Response) {
         val parameters = JSONObject().put("format", "pcm").put("sample_rate", 16000)
             .put("intermediate_result_enabled", interim != null).put("disfluency_removal_enabled", false)

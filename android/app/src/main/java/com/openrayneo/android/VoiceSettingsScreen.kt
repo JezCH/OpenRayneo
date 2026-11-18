@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
@@ -18,11 +19,27 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
         Note("음성 특징과 화자 처리는 이 기기에서 실행되며 ASR과 기록 요약은 설정한 서비스를 사용합니다. 답변, 짧은 힌트, 작업 판단은 휴대폰 로컬 Agent가 맡고 키는 Android Keystore로 암호화 저장됩니다.")
+        SectionLabel("ASR 엔진")
+        var engine by remember(model.config) { mutableStateOf(model.config.optString("asrEngine").ifBlank { "cloud" }) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(engine == "cloud", { engine = "cloud"; drafts["asrEngine"] = "cloud" }); Text("클라우드 (Bailian)")
+            RadioButton(engine == "local", { engine = "local"; drafts["asrEngine"] = "local" }); Text("기기 내장 (SenseVoice)")
+        }
+        Note("기기 내장은 인터넷 없이 휴대폰에서 바로 인식해 빠르지만, 문장이 끝난 뒤 결과가 나오고 정확도는 클라우드보다 조금 낮을 수 있습니다. 언어는 자동 감지하고, 아래 인식 언어 힌트에 없는 언어 결과는 버립니다.")
+        val context = LocalContext.current
+        val installed = remember(LocalSpeechModel.downloading) { LocalSpeechModel.installed(context) }
+        if (engine != "local") Unit
+        else if (installed) Text("기기 ASR 모델 준비됨 (SenseVoice int8, 약 240MB)")
+        else ToolButton(onClick = { LocalSpeechModel.download(context.applicationContext) }, enabled = !LocalSpeechModel.downloading, modifier = Modifier.fillMaxWidth()) {
+            Text(if (LocalSpeechModel.downloading) "내려받는 중… ${(LocalSpeechModel.progress * 100).toInt()}%" else "기기 ASR 모델 내려받기 (약 240MB, Wi-Fi 권장)")
+        }
+        if (LocalSpeechModel.downloading) LinearProgressIndicator(progress = { LocalSpeechModel.progress }, modifier = Modifier.fillMaxWidth())
+        LocalSpeechModel.message?.takeIf { !LocalSpeechModel.downloading }?.let { Note(it) }
         SectionLabel("Bailian ASR")
         VoiceField(model, "asrKey", "API Key", secret = true)
         VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
@@ -39,7 +56,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Checkbox("ko" in asrLanguages, { toggleLanguage("ko", it) }); Text("한국어")
             Checkbox("en" in asrLanguages, { toggleLanguage("en", it) }); Text("영어")
         }
-        Note("선택하지 않으면 자동 감지합니다. 선택한 언어는 language_hints로 전달됩니다.")
+        Note("선택하지 않으면 자동 감지합니다. 클라우드는 language_hints로 전달하고, 기기 내장은 고른 언어 밖의 결과(예: 잡음을 중국어로 읽은 결과)를 버립니다.")
         var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
         Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
         Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
@@ -61,7 +78,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         VoiceField(model, "modelName", "요약 모델 이름")
         VoiceField(model, "modelKey", "요약 모델 API Key", secret = true)
         StructuredVoicePrompt(model, "memoryPrompt", "기억 귀속 및 정리", ConversationPrompts.memory)
-        Note("실시간 번역(한국어 ↔ 영어)도 이 모델과 위의 Bailian ASR을 사용합니다.")
+        Note("실시간 번역(한국어 ↔ 영어)도 이 모델과 위에서 고른 ASR 엔진을 사용합니다.")
         Note("이 모델은 앱 내 기록 요약에 사용됩니다.원문, 화자, 서술 대상은 따로 저장되며 가져올 수 있는 모든 전사는 장기 보관됩니다.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         ToolButton(onClick = {

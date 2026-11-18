@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
  * All callbacks are funnelled onto [main]; nothing is stored or added to records.
  */
 internal class LiveTranslator(
+    private val context: android.content.Context,
     private val main: Handler,
     private val show: (source: String, target: String) -> Unit,
     private val changed: () -> Unit,
@@ -35,7 +36,7 @@ internal class LiveTranslator(
     private val translations = Executors.newSingleThreadExecutor()
     private var config = JSONObject()
     @Volatile private var generation = 0
-    private var asr: ConversationASR? = null
+    private var asr: SpeechRound? = null
     private var resampler = ConversationAudio()
     @Volatile private var call: Call? = null
     // Main-thread display state.
@@ -48,7 +49,7 @@ internal class LiveTranslator(
 
     /** Throws with a user-facing message when ASR or the translation model is not configured. */
     fun validate(settings: JSONObject) {
-        require(settings.optString("asrKey").isNotBlank()) { "먼저 음성 설정에서 Bailian ASR API Key를 입력하세요" }
+        require(SpeechRounds.ready(context, settings)) { SpeechRounds.missing(settings) }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
         }
@@ -105,12 +106,12 @@ internal class LiveTranslator(
 
     private fun openASR() {
         val token: Int
-        val round: ConversationASR
+        val round: SpeechRound
         synchronized(this) {
             if (!active) return
             token = generation
             resampler = ConversationAudio()
-            round = ConversationASR(config,
+            round = SpeechRounds.create(context, config,
                 { text, _, _, _, _ -> main.post { finished(token, text) } },
                 { message -> main.post { asrEnded(token, message) } },
                 { main.post { asrEnded(token, null) } },
@@ -146,7 +147,7 @@ internal class LiveTranslator(
     private fun render() = show(clip(sourceLine, SOURCE_LIMIT), targetLine)
 
     private fun interim(token: Int, text: String) {
-        if (token != generation || !active) return
+        if (token != generation || !active || misheard(text)) return
         heard()
         sourceLine = text
         render()
@@ -155,6 +156,8 @@ internal class LiveTranslator(
     private fun finished(token: Int, text: String) {
         if (token != generation || !active) return
         heard()
+        // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
+        if (misheard(text)) return
         val sequence = ++latestFinal
         val from = if (isKorean(text)) "Korean" else "English"
         val to = if (from == "Korean") "English" else "Korean"
@@ -211,6 +214,9 @@ internal class LiveTranslator(
         private const val SOURCE_LIMIT = 80
         private const val TARGET_LIMIT = 120
         fun clip(text: String, limit: Int): String { val value = text.trim(); return if (value.length <= limit) value else "…" + value.takeLast(limit - 1) }
+        /** True when the text has no Hangul or Latin letters but does have CJK ideographs or kana. */
+        fun misheard(text: String) = text.none { it in '가'..'힣' || it in 'a'..'z' || it in 'A'..'Z' } &&
+            text.any { it in '一'..'鿿' || it in '㐀'..'䶿' || it in '぀'..'ヿ' }
         /** Hangul share of letters decides the direction; mixed or Latin-only utterances count as English. */
         fun isKorean(text: String): Boolean {
             val hangul = text.count { it in '가'..'힣' || it in 'ㄱ'..'ㆎ' }
