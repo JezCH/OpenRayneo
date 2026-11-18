@@ -157,8 +157,19 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         return JSONObject().put("eventID", id).put("readBack", confirmed).put("items", JSONArray(actual))
     }
     fun searchCities(query: String): JSONObject {
-        val url = "https://geocoding-api.open-meteo.com/v1/search?name=" + java.net.URLEncoder.encode(query, "UTF-8") + "&count=8&language=zh&format=json"
-        val result = get(url); state = state.copy(weatherCities = result.optJSONArray("results").objects()); return result
+        fun search(name: String) = get("https://geocoding-api.open-meteo.com/v1/search?name=" +
+            java.net.URLEncoder.encode(name, "UTF-8") + "&count=10&language=ko&format=json").optJSONArray("results").objects()
+        val trimmed = query.trim()
+        // Open-Meteo lists Korean cities under full administrative names (서울특별시, 부산광역시, 수원시) and
+        // short queries only match exactly, so "서울" alone finds nothing. Try those forms for Hangul input.
+        val names = if (trimmed.any { it in '가'..'힣' }) {
+            val base = trimmed.removeSuffix("특별시").removeSuffix("광역시").removeSuffix("시")
+            listOf(trimmed) + listOf("특별시", "광역시", "특별자치시", "시", "군", "구").map { base + it }.filter { it != trimmed }
+        } else listOf(trimmed)
+        val cities = names.flatMap(::search).distinctBy { it.optLong("id") }
+            .sortedByDescending { it.optLong("population", 0) }.take(10)
+        state = state.copy(weatherCities = cities)
+        return JSONObject().put("results", JSONArray(cities))
     }
     fun currentWeather(): JSONObject {
         val location = phoneLocation.current()
