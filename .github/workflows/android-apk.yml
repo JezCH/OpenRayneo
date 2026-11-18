@@ -48,7 +48,13 @@ jobs:
 
       - name: Build release APK
         working-directory: android
-        run: ./gradlew :app:assembleRelease --console=plain
+        run: |
+          # Surface compiler/lint errors as annotations so they are readable without opening the raw log.
+          set -o pipefail
+          ./gradlew :app:assembleRelease --console=plain 2>&1 | tee "$RUNNER_TEMP/gradle.log" || {
+            grep -E '^e: |error:|What went wrong|^> ' "$RUNNER_TEMP/gradle.log" | head -40 | sed 's/^/::error::/'
+            exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         with:
