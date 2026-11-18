@@ -26,11 +26,11 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
             if (!active) return "안경 음성 수신이 중지됨"
             if (error != null) return "안경 오디오: $error"
             if (receivedPackets == 0L) return "오디오 세션 확인됨, 첫 안경 오디오 패킷 대기"
-            if (lastAudio == 0L) return "수신: $receivedPackets개 오디오 패킷, 디코딩 출력 대기"
+            if (lastAudio == 0L) return "수신: ${receivedPackets}개 오디오 패킷, 디코딩 출력 대기"
             if (SystemClock.elapsedRealtime() - lastAudio > 3_000) return "안경 오디오가 중단됨, 내비게이션 표시는 계속 가능"
             fun db(value: Double) = if (value <= 0.00001) "무음" else "${(20 * log10(value)).toInt()} dBFS"
             val levels = if (channels == 1) "안경 모노 · ${db(left)}" else "안경 스테레오 · 채널 1 ${db(left)} · 채널 2 ${db(right)}"
-            return "$levels\n디코딩됨 ${samples / 48_000}초 · 버림 $dropped개 패킷"
+            return "$levels\n디코딩됨 ${samples / 48_000}초 · 버림 ${dropped}개 패킷"
         }
         fun coordinatorState(): AudioState {
             val phase = when {

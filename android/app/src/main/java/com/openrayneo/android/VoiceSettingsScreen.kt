@@ -185,7 +185,7 @@ private fun PersonMergeDialog(model: AppModel, initial: VoicePerson, dismiss: ()
                     }
                 }
             }
-            Note("병합할 목소리 프로필 ${sourceIds.size}개, 수정할 선택 기록 ${validRecords.size}개, $affected개 발화. 관련 요약과 Agent 결과는 새로 고침 필요로 표시됩니다. 선택하지 않은 과거 원문은 현재 귀속을 유지합니다.")
+            Note("병합할 목소리 프로필 ${sourceIds.size}개, 수정할 선택 기록 ${validRecords.size}개, ${affected}개 발화. 관련 요약과 Agent 결과는 새로 고침 필요로 표시됩니다. 선택하지 않은 과거 원문은 현재 귀속을 유지합니다.")
         }
     }, confirmButton = { TextButton(onClick = {
         model.attempt { model.service().conversations.mergePeople(sourceIds, requireNotNull(targetId), validRecords.map { it.id }.toSet()) }

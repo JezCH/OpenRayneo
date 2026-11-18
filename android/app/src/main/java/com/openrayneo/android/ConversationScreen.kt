@@ -354,7 +354,7 @@ internal fun HistoricalSpeakerDialog(
     val count = selected.values.sumOf { it.size }
     AlertDialog(onDismissRequest = dismiss, title = { Text(if (split) "인물의 과거 발화 분리" else "과거 인물 귀속 일괄 수정") }, text = {
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Note("먼저 기록을 선택하거나 펼쳐서 발화를 고르세요. 이번에 수정할 항목: 기록 ${selected.size}개, $count개 원문. 관련 요약과 Agent 결과는 새로 고침 필요로 표시되며 원문과 오디오는 유지됩니다.")
+            Note("먼저 기록을 선택하거나 펼쳐서 발화를 고르세요. 이번에 수정할 항목: 기록 ${selected.size}개, ${count}개 원문. 관련 요약과 Agent 결과는 새로 고침 필요로 표시되며 원문과 오디오는 유지됩니다.")
             if (split) OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("분리할 새 인물 이름") })
             else {
                 Text("다음으로 수정", style = MaterialTheme.typography.titleSmall)
