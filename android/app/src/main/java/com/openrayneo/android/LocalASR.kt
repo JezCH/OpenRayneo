@@ -3,6 +3,7 @@
 package com.openrayneo.android
 
 import android.content.Context
+import android.os.Environment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -29,17 +30,23 @@ internal interface SpeechRound {
 
 /**
  * Chooses the ASR engine from config key "asrEngine": cloud (Bailian, default), "local" (SenseVoice,
- * sentence by sentence) or "stream" (Korean streaming zipformer, live partial results).
+ * sentence by sentence), "stream" (Korean streaming zipformer) or "nemotron" (multilingual streaming).
  */
 internal object SpeechRounds {
     fun model(config: JSONObject): LocalModel<*>? = when (config.optString("asrEngine")) {
         "local" -> LocalModels.senseVoice
         "stream" -> LocalModels.zipformer
+        "nemotron" -> LocalModels.nemotron
         else -> null
     }
     /** Translation hears Korean and English, so the Korean-only streaming engine falls back to SenseVoice when present, else cloud. */
     fun bilingual(context: Context, config: JSONObject): JSONObject = if (config.optString("asrEngine") != "stream") config
         else JSONObject(config.toString()).put("asrEngine", if (LocalModels.senseVoice.installed(context)) "local" else "cloud")
+    /** One language hint fixes the language (locale codes as in the model card); otherwise the model detects it. */
+    private fun nemotronLanguage(config: JSONObject): String {
+        val hints = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        return when (hints.singleOrNull()) { "ko" -> "ko-KR"; "en" -> "en-US"; else -> "auto" }
+    }
     /** Whether the configured engine can run now (key entered, or model downloaded). */
     fun ready(context: Context, config: JSONObject) = model(config)?.installed(context) ?: config.optString("asrKey").isNotBlank()
     fun missing(config: JSONObject) = model(config)?.let { "먼저 음성 설정에서 기기 ASR 모델(${it.title})을 내려받으세요" } ?: "먼저 음성 설정에서 Bailian ASR API Key를 입력하세요"
@@ -48,7 +55,8 @@ internal object SpeechRounds {
                failed: (String) -> Unit, completed: () -> Unit, interim: ((String) -> Unit)? = null): SpeechRound =
         when (config.optString("asrEngine")) {
             "local" -> LocalASR(context, config, sentence, failed, completed, interim)
-            "stream" -> StreamASR(context, sentence, failed, completed, interim)
+            "stream" -> StreamASR(context, LocalModels.zipformer, null, sentence, failed, completed, interim)
+            "nemotron" -> StreamASR(context, LocalModels.nemotron, nemotronLanguage(config), sentence, failed, completed, interim)
             else -> ConversationASR(config, sentence, failed, completed, interim)
         }
 }
@@ -57,7 +65,9 @@ internal object SpeechRounds {
  * A model downloaded once into app storage from Hugging Face; loaded while rounds use it and freed after a
  * minute idle. All loading, decoding and releasing happens on [LocalModels.executor].
  */
-internal class LocalModel<T>(val title: String, private val folderName: String, private val base: String,
+internal class LocalModel<T>(val title: String, val size: String, private val folderName: String,
+    /** Folder name of the official sherpa-onnx archive, looked up under [SHARED_ROOT] so copied files survive reinstalls. */
+    val sharedName: String, private val base: String,
     private val files: List<Pair<String, Float>>, private val load: (File) -> T, private val free: (T) -> Unit) {
     var downloading by mutableStateOf(false); private set
     var progress by mutableStateOf(0f); private set
@@ -67,7 +77,14 @@ internal class LocalModel<T>(val title: String, private val folderName: String, 
     private var idle: ScheduledFuture<*>? = null
 
     private fun folder(context: Context) = File(context.filesDir, folderName)
-    fun installed(context: Context) = files.all { (name, _) -> File(folder(context), name).length() > 0 }
+    private fun complete(dir: File) = files.all { (name, _) -> File(dir, name).length() > 0 }
+    val sharedFolder get() = File(Environment.getExternalStorageDirectory(), "$SHARED_ROOT/$sharedName")
+    /** The copied folder (needs all-files access) wins over the in-app download. */
+    fun location(context: Context): File? =
+        sharedFolder.takeIf { Environment.isExternalStorageManager() && complete(it) } ?: folder(context).takeIf(::complete)
+    fun installed(context: Context) = location(context) != null
+    fun shared(context: Context) = location(context) == sharedFolder
+    val fileNames get() = files.map { it.first }
 
     fun download(context: Context) {
         if (downloading) return
@@ -111,8 +128,8 @@ internal class LocalModel<T>(val title: String, private val folderName: String, 
     fun acquire(context: Context): T {
         idle?.cancel(false); idle = null
         val model = loaded ?: run {
-            check(installed(context)) { "기기 ASR 모델($title)이 없습니다. 음성 설정에서 내려받으세요" }
-            load(folder(context)).also { loaded = it }
+            val dir = checkNotNull(location(context)) { "기기 ASR 모델($title)이 없습니다. 음성 설정에서 내려받거나 폴더에 복사하세요" }
+            load(dir).also { loaded = it }
         }
         users++
         return model
@@ -128,11 +145,14 @@ internal class LocalModel<T>(val title: String, private val folderName: String, 
 }
 
 internal object LocalModels {
+    /** Copy official model folders here (e.g. from a PC over USB): /sdcard/OpenRayneo/models/<archive folder>/ */
+    const val SHARED_ROOT = "OpenRayneo/models"
     /** All recognizer work (load, decode, release) for every on-device round is serialized here. */
     val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { Thread(it, "local-asr").apply { isDaemon = true } }
 
     /** SenseVoice int8 (zh/en/ja/ko/yue), automatic language detection; rounds filter by their language hints. */
-    val senseVoice = LocalModel("SenseVoice", "asr/sense-voice-2024-07-17",
+    val senseVoice = LocalModel("SenseVoice", "약 240MB", "asr/sense-voice-2024-07-17",
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/",
         // Model first, so progress tracks the large file.
         listOf("model.int8.onnx" to 0.99f, "tokens.txt" to 0.01f), { dir ->
@@ -144,7 +164,8 @@ internal object LocalModels {
         }, { it.release() })
 
     /** Korean-only streaming zipformer transducer (KsponSpeech recipe); int8 encoder/joiner, fp32 decoder as in upstream examples. */
-    val zipformer = LocalModel("한국어 스트리밍", "asr/zipformer-ko-2024-06-16",
+    val zipformer = LocalModel("한국어 스트리밍", "약 130MB", "asr/zipformer-ko-2024-06-16",
+        "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
         "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/main/",
         listOf("encoder-epoch-99-avg-1.int8.onnx" to 0.9f, "decoder-epoch-99-avg-1.onnx" to 0.06f,
             "joiner-epoch-99-avg-1.int8.onnx" to 0.03f, "tokens.txt" to 0.01f), { dir ->
@@ -157,6 +178,27 @@ internal object LocalModels {
                         joiner = File(dir, "joiner-epoch-99-avg-1.int8.onnx").absolutePath),
                     tokens = File(dir, "tokens.txt").absolutePath, numThreads = 2, modelType = "zipformer"),
                 // Close a sentence after 0.8 s of silence once something was said (default 1.4 s), and cap it at 15 s.
+                endpointConfig = EndpointConfig(rule2 = EndpointRule(true, 0.8f, 0.0f), rule3 = EndpointRule(false, 0.0f, 15.0f)),
+                enableEndpoint = true))
+        }, { it.release() })
+
+    /**
+     * NVIDIA Nemotron 3.5 ASR Streaming 0.6B, multilingual (ko-KR, en-US, ...), 560 ms chunks, int8.
+     * k2-fsa publishes it only as a tar.bz2, so the in-app download uses a Hugging Face mirror of the same
+     * four files (sizes match the official listing); copying the official archive's folder works too.
+     */
+    val nemotron = LocalModel("Nemotron 다국어 스트리밍", "약 680MB", "asr/nemotron-3.5-streaming-560ms-int8",
+        "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+        "https://huggingface.co/apbaxel/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-int8/resolve/main/",
+        listOf("encoder.int8.onnx" to 0.96f, "decoder.int8.onnx" to 0.02f, "joiner.int8.onnx" to 0.015f, "tokens.txt" to 0.005f), { dir ->
+            OnlineRecognizer(null, OnlineRecognizerConfig(
+                featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+                modelConfig = OnlineModelConfig(
+                    transducer = OnlineTransducerModelConfig(
+                        encoder = File(dir, "encoder.int8.onnx").absolutePath,
+                        decoder = File(dir, "decoder.int8.onnx").absolutePath,
+                        joiner = File(dir, "joiner.int8.onnx").absolutePath),
+                    tokens = File(dir, "tokens.txt").absolutePath, numThreads = 4),
                 endpointConfig = EndpointConfig(rule2 = EndpointRule(true, 0.8f, 0.0f), rule3 = EndpointRule(false, 0.0f, 15.0f)),
                 enableEndpoint = true))
         }, { it.release() })
@@ -329,7 +371,9 @@ internal class LocalASR(private val context: Context, config: JSONObject,
  * reported on every change (it can still be corrected while the sentence goes on), and the endpoint rule
  * closes the sentence. Callbacks run on [LocalModels.executor].
  */
-internal class StreamASR(private val context: Context,
+internal class StreamASR(private val context: Context, private val source: LocalModel<OnlineRecognizer>,
+    /** Per-stream "language" option (Nemotron); null for single-language models. */
+    private val language: String?,
     private val sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
     private val failed: (String) -> Unit, private val completed: () -> Unit,
     private val interim: ((String) -> Unit)? = null) : SpeechRound {
@@ -385,14 +429,14 @@ internal class StreamASR(private val context: Context,
     }
     private fun prepare() {
         if (stream != null) return
-        val model = recognizer ?: LocalModels.zipformer.acquire(context).also { recognizer = it }
+        val model = recognizer ?: source.acquire(context).also { recognizer = it }
         if (denoiser == null) denoiser = LocalModels.denoiser(context)
-        stream = model.createStream()
+        stream = model.createStream().also(::configure)
     }
     private fun release() {
         stream?.release(); stream = null
         denoiser?.release(); denoiser = null
-        if (recognizer != null) { recognizer = null; LocalModels.zipformer.releaseUser() }
+        if (recognizer != null) { recognizer = null; source.releaseUser() }
     }
 
     private fun accept(samples: FloatArray) {
@@ -402,8 +446,10 @@ internal class StreamASR(private val context: Context,
         while (model.isReady(current)) model.decode(current)
         val text = model.getResult(current).text.trim()
         if (text.isNotEmpty() && text != partial) { partial = text; interim?.invoke(text) }
-        if (model.isEndpoint(current)) { close(text); model.reset(current) }
+        if (model.isEndpoint(current)) { close(text); model.reset(current); configure(current) }
     }
+    /** The language must be set before audio; set it again after each reset in case reset clears options. */
+    private fun configure(stream: OnlineStream) { language?.let { stream.setOption("language", it) } }
     private fun close(text: String) {
         if (text.isNotEmpty()) sentence(text, sentenceStart * 1000 / 16000, fed * 1000 / 16000, "$task:${index++}", emptyList())
         sentenceStart = fed; partial = ""

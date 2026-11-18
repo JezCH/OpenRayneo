@@ -27,18 +27,30 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         SectionLabel("ASR 엔진")
         var engine by remember(model.config) { mutableStateOf(model.config.optString("asrEngine").ifBlank { "cloud" }) }
         Column {
-            listOf("cloud" to "클라우드 (Bailian Qwen)", "stream" to "기기 내장 · 실시간 (한국어 스트리밍)", "local" to "기기 내장 · 문장 단위 (SenseVoice)").forEach { (key, label) ->
+            listOf("cloud" to "클라우드 (Bailian Qwen)", "nemotron" to "기기 내장 · 실시간 다국어 (Nemotron)", "stream" to "기기 내장 · 실시간 한국어 (zipformer)",
+                "local" to "기기 내장 · 문장 단위 (SenseVoice)").forEach { (key, label) ->
                 Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { engine = key; drafts["asrEngine"] = key }); Text(label) }
             }
         }
-        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐지며 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 스트리밍 대신 SenseVoice(없으면 클라우드)를 씁니다.")
+        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐집니다. Nemotron은 한국어·영어 등 다국어(언어 힌트가 하나면 그 언어로 고정, 아니면 자동 감지)이며 무겁고, zipformer는 가볍지만 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 스트리밍 대신 SenseVoice(없으면 클라우드)를 씁니다.")
         val context = LocalContext.current
         SpeechRounds.model(JSONObject().put("asrEngine", engine))?.let { local ->
-            val installed = remember(local, local.downloading) { local.installed(context) }
-            if (installed) Text("${local.title} 모델 준비됨")
+            var access by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
+            var recheck by remember { mutableIntStateOf(0) }
+            val installed = remember(local, local.downloading, access, recheck) { local.installed(context) }
+            if (installed) Text("${local.title} 모델 준비됨" + if (local.shared(context)) " (복사한 폴더 사용)" else "")
             else ToolButton(onClick = { local.download(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (local.downloading) "내려받는 중… ${(local.progress * 100).toInt()}%"
-                    else "${local.title} 모델 내려받기 (약 ${if (engine == "stream") 140 else 240}MB, Wi-Fi 권장)")
+                Text(if (local.downloading) "내려받는 중… ${(local.progress * 100).toInt()}%" else "${local.title} 모델 내려받기 (${local.size}, Wi-Fi 권장)")
+            }
+            Note("다시 받지 않으려면 파일을 휴대폰 저장소의 ${LocalModels.SHARED_ROOT}/${local.sharedName}/ 폴더에 복사하세요(공식 압축 파일을 풀면 같은 폴더명). 필요한 파일: ${local.fileNames.joinToString(", ")}. 앱을 지웠다 깔아도 남습니다.")
+            if (!access) ToolOutlinedButton(onClick = {
+                context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:" + context.packageName)))
+            }, modifier = Modifier.fillMaxWidth()) { Text("복사한 모델 폴더 읽기 허용 (모든 파일 접근)") }
+            else if (!installed) ToolOutlinedButton(onClick = { recheck++ }, modifier = Modifier.fillMaxWidth()) { Text("복사한 폴더 다시 확인") }
+            if (!access) LaunchedEffect(Unit) {
+                // Pick up the permission when the user returns from system settings.
+                while (true) { kotlinx.coroutines.delay(1000); if (android.os.Environment.isExternalStorageManager()) { access = true; break } }
             }
             if (local.downloading) LinearProgressIndicator(progress = { local.progress }, modifier = Modifier.fillMaxWidth())
             local.message?.takeIf { !local.downloading }?.let { Note(it) }
