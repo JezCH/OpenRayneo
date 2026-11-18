@@ -125,6 +125,14 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.voiceWake(enabled) } }, enabled = editable) { Text("음성 깨우기 적용") }
                 }
             }
+            settings.optJSONObject("voiceAssistantConfig")?.deviceInt("wakeupWord")?.let { current ->
+                var word by remember(current) { mutableStateOf(current) }
+                SettingsSection("깨우기 명령어") {
+                    SettingsChoice("명령어", word, listOf(2 to "Hey RayNeo (영어)", 1 to "샤오레이 샤오레이 (중국어)"), editable) { word = it }
+                    Note("안경 펌웨어의 깨우기 명령어를 변경합니다. 기기가 현재 값을 보고한 뒤에 표시됩니다.")
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.wakeWord(word) } }, enabled = editable) { Text("깨우기 명령어 적용") }
+                }
+            }
             val units = settings.optJSONObject("systemUnitsConfig")
             val currentTime = units?.deviceInt("time_format")
             val currentTemp = units?.deviceInt("temp_unit")

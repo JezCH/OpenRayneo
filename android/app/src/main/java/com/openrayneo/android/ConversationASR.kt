@@ -17,6 +17,8 @@ internal class ConversationASR(config: JSONObject,
     private val model = config.optString("asrModel").ifBlank { "qwen-audio-3.1-asr-flash-message" }
     private val key = config.optString("asrKey").trim()
     private val address = config.optString("asrUrl").ifBlank { "wss://dashscope.aliyuncs.com/api-ws/v1/inference" }
+    // Comma-separated ISO codes (e.g. "ko,en"); blank keeps the service's automatic language detection.
+    private val languages = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
     private val pending = Buffer()
@@ -45,6 +47,7 @@ internal class ConversationASR(config: JSONObject,
         val parameters = JSONObject().put("format", "pcm").put("sample_rate", 16000)
             .put("intermediate_result_enabled", false).put("disfluency_removal_enabled", false)
             .put("heartbeat", true).put("vad_model", "far_field_meeting_16k")
+        if (languages.isNotEmpty()) parameters.put("language_hints", org.json.JSONArray(languages))
         webSocket.send(JSONObject().put("header", header("run-task")).put("payload", JSONObject()
             .put("task_group", "audio").put("task", "asr").put("function", "recognition")
             .put("model", model).put("parameters", parameters).put("input", JSONObject())).toString())

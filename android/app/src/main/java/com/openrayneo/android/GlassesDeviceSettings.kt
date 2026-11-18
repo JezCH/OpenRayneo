@@ -61,6 +61,13 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
         it.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") == enabled
     }
+    /** Firmware wake word: 1 = 小雷小雷 (Chinese), 2 = English wake word. */
+    fun wakeWord(word: Int) {
+        require(word in 1..2)
+        apply("set_ai_wakeup_word", 16, 17, payload(mode = word), "voiceAssistantConfig") {
+            it.settings.optJSONObject("voiceAssistantConfig")?.deviceInt("wakeupWord") == word
+        }
+    }
     fun units(time: Int, temperature: Int, measurement: Int) {
         require(listOf(time, temperature, measurement).all { it in 1..2 })
         val data = JSONObject(checkNotNull(state.settings.optJSONObject("systemUnitsConfig")).toString())
@@ -120,7 +127,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             if (data != null) {
                 if (command == "sync_ai_settings") {
                     val normalized = JSONObject()
-                    listOf("ai_state" to "enabled", "ai_voice_wakeup" to "voiceWakeup", "ai_work_mode" to "workMode").forEach { (wire, key) -> if (data.has(wire)) normalized.put(key, data.opt(wire)) }
+                    listOf("ai_state" to "enabled", "ai_voice_wakeup" to "voiceWakeup", "ai_work_mode" to "workMode", "ai_wakeup_word" to "wakeupWord").forEach { (wire, key) -> if (data.has(wire)) normalized.put(key, data.opt(wire)) }
                     state = state.copy(settings = merge(state.settings, JSONObject().put("voiceAssistantConfig", normalized)))
                     reported["voiceAssistantConfig"] = now
                 } else {

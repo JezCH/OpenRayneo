@@ -26,7 +26,7 @@ internal class GlassesVoiceTransport(
         source = next
         when (next) {
             ConversationSource.NATIVE -> {
-                check(nativeActive && nativeCode in 1..6) { "먼저 '샤오레이 샤오레이(샤오레이 샤오레이)'라고 말해 안경을 깨우고 자동 응답을 켜세요" }
+                check(nativeActive && nativeCode in 1..6) { "먼저 깨우기 명령어(Hey RayNeo 등)로 안경을 깨우고 자동 응답을 켜세요" }
                 send(0x0d, 2, JSONObject().put("rc", 1)); send(0x0d, 9, JSONObject().put("rc", 1))
             }
             ConversationSource.ALWAYS_ON -> send(0x0f, 20, JSONObject().put("cmd", "life_log_switch")

@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -17,7 +18,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrKey", "asrUrl", "asrModel", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds")
+    val voiceKeys = listOf("asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -26,8 +27,21 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         VoiceField(model, "asrKey", "API Key", secret = true)
         VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
         VoiceField(model, "asrModel", "모델", "qwen-audio-3.1-asr-flash-message")
+        var asrLanguages by remember(model.config) {
+            mutableStateOf(model.config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
+        }
+        fun toggleLanguage(code: String, on: Boolean) {
+            asrLanguages = if (on) asrLanguages + code else asrLanguages - code
+            drafts["asrLanguage"] = listOf("ko", "en").filter { it in asrLanguages }.joinToString(",")
+        }
+        Text("인식 언어 힌트")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox("ko" in asrLanguages, { toggleLanguage("ko", it) }); Text("한국어")
+            Checkbox("en" in asrLanguages, { toggleLanguage("en", it) }); Text("영어")
+        }
+        Note("선택하지 않으면 자동 감지합니다. 선택한 언어는 language_hints로 전달됩니다.")
         var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
-        Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("'샤오레이 샤오레이'로 깨우면 자동 응답") }
+        Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
         Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
         var autoMemory by remember(model.config) { mutableStateOf(model.config.optString("memoryAutoSummary", "true") != "false") }
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
