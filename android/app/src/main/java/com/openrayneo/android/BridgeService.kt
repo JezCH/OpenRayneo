@@ -599,7 +599,7 @@ internal class BridgeService : Service() {
     private fun onLog(text: String) {
         android.util.Log.i("OpenRayneo", text)
         logs.addLast("${LocalTime.now().withNano(0)} $text")
-        while (logs.size > 80) logs.removeFirst()
+        while (logs.size > 300) logs.removeFirst()
         if (!dispatching) notifyUI()
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }

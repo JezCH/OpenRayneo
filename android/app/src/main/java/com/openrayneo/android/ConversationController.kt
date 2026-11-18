@@ -68,6 +68,8 @@ internal class ConversationController(private val context: Context, private val 
     private var asrEpoch = 0
     private val summarizer = ConversationSummarizer()
     private var config = JSONObject()
+    /** Realtime two-channel only: silences channel 2 while channel 1 clearly carries the wearer's voice. Worker thread. */
+    @Volatile private var selfGate: SelfVoiceGate? = null
     private var record: ConversationRecord? = null
     private var roundBaseMS = 0L
     private var roundId: String? = null
@@ -139,6 +141,7 @@ internal class ConversationController(private val context: Context, private val 
             enrollmentSeconds = 0f, enrollmentReady = false, enrollmentCanConfirm = false, enrollmentTotalSeconds = 0f, decodedSeconds = 0.0))
         worker.post {
             config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId; closing = false
+            selfGate = selfGateFor(source, mode, cfg)
             liveBackfill = false; replaying = false; replayFailed = false; tail?.close(); tail = null; cancelASR()
             resourcePauseReason = if (mode == ConversationMode.ENROLL) null else resourceConstraint()
             deferredProcessing = mode != ConversationMode.ENROLL && (!SpeechRounds.ready(context, cfg) || resourcePauseReason != null)
@@ -195,11 +198,12 @@ internal class ConversationController(private val context: Context, private val 
                     finally { queuedSamples.addAndGet(-pcm.frames) }
                 }
                 if (System.currentTimeMillis() - lastPublished > 1_000) { lastPublished = System.currentTimeMillis()
-                    publish(state.copy(decodedSeconds = samples / 16000.0, voiceGate = gate.summary())) }
+                    publish(state.copy(decodedSeconds = samples / 16000.0, voiceGate = gate.summary().ifEmpty { selfGate?.summary().orEmpty() })) }
             } catch (error: Exception) { fail(error.message ?: "원본 오디오 저장 실패", token) }
         }
     }
-    private fun process(pcm: ConversationPCM, startFrame: Long) {
+    private fun process(input: ConversationPCM, startFrame: Long) {
+        val pcm = selfGate?.takeIf { input.channels.size == 2 }?.apply(input) ?: input
         if (state.mode == ConversationMode.ENROLL) {
             engine(enrollmentChannel).accept(pcm.channels[enrollmentChannel - 1])
             val result = engine(enrollmentChannel).enrollment()
@@ -558,6 +562,10 @@ internal class ConversationController(private val context: Context, private val 
         if (state.running || closing || resourceConstraint() != null || System.currentTimeMillis() < nextBackfillAt || !SpeechRounds.ready(context, settings.read())) return
         repository.records.filter { it.processingPending && !it.audioPending && it.audioSamples > 0 }.minByOrNull { it.createdAt }?.let { retranscribe(it.id) }
     }
+    /** Fresh per session or replay: only realtime two-channel records assume channel 1 is the wearer. */
+    private fun selfGateFor(source: ConversationSource, mode: ConversationMode, cfg: JSONObject): SelfVoiceGate? =
+        if (source != ConversationSource.REALTIME || mode == ConversationMode.ENROLL) null
+        else cfg.optString("selfVoiceMarginDb").ifBlank { "6" }.toDoubleOrNull()?.takeIf { it > 0 }?.let(::SelfVoiceGate)
     fun retranscribe(recordId: String) {
         check(!state.running && !closing && state.modelReady) { "먼저 현재 기록을 중지하세요" }
         val old = repository.records.first { it.id == recordId }; require(old.audioSamples > 0)
@@ -566,6 +574,7 @@ internal class ConversationController(private val context: Context, private val 
         publish(state.copy(running = true, stopping = false, mode = old.mode, source = old.source, status = "채널별 완료 커서에 따라 각각 보충하며 원문과 수동 수정은 유지됩니다",
             error = null, activeRecord = old, segments = old.segments, decodedSeconds = 0.0))
         worker.post {
+            selfGate = selfGateFor(old.source, old.mode, cfg)
             config = cfg; samples = old.audioSamples; roundId = null; replaying = true; replayFailed = false; replayReadComplete = false; deferredProcessing = false; savingAudio = false
             pendingSentences.clear(); pendingAgent.clear(); manualSpeakers.clear(); inputThrough.clear(); record = repository.save(old.copy(processingPending = true))
             try { beginBackfill(false) }
@@ -584,6 +593,42 @@ internal class ConversationController(private val context: Context, private val 
             generation++; cancelASR(); tail?.close(); engines.values.forEach { it.close() }; engines.clear(); summarizer.close(); inference.shutdownNow()
             writerThread.quitSafely(); thread.quitSafely()
         } }
+    }
+}
+
+/**
+ * Channel 1 is the wearer's mic, channel 2 the outside mic, and the wearer's own voice reaches both. When a
+ * 20 ms frame is clearly louder on channel 1 than on channel 2 (by [marginDb]) and channel 1 is above a speech
+ * floor, the wearer is talking, so channel 2 is silenced (plus a short hangover) and the same words are not
+ * transcribed twice as someone else's. A loud outside sound raises both channels about equally, so the ratio,
+ * not channel 1's level alone, decides. Channel 1 itself passes unchanged.
+ */
+internal class SelfVoiceGate(private val marginDb: Double) {
+    private var hold = 0
+    @Volatile private var total = 0L
+    @Volatile private var muted = 0L
+    fun summary() = if (total == 0L) "" else "본인 목소리로 판단해 채널 2 무음 처리: ${muted * 100 / total}% (기준 ${marginDb.toInt()} dB)"
+    fun apply(pcm: ConversationPCM): ConversationPCM {
+        val self = pcm.channels[0]; val outside = pcm.channels[1]
+        val out = outside.copyOf()
+        var start = 0
+        while (start < self.size) {
+            val end = minOf(start + FRAME, self.size)
+            var a = 1e-10; var b = 1e-10
+            for (i in start until end) { a += self[i] * self[i]; b += outside[i] * outside[i] }
+            val level = 10 * kotlin.math.log10(a / (end - start))
+            val ratio = 10 * kotlin.math.log10(a / b)
+            if (level > FLOOR_DB && ratio >= marginDb) hold = HANG
+            total++
+            if (hold > 0) { hold--; muted++; out.fill(0f, start, end) }
+            start = end
+        }
+        return ConversationPCM(listOf(self, out))
+    }
+    private companion object {
+        const val FRAME = 320        // 20 ms at 16 kHz
+        const val FLOOR_DB = -50.0   // below this channel 1 is silence, whatever the ratio
+        const val HANG = 15          // keep muting 300 ms after the last own-voice frame
     }
 }
 
