@@ -328,7 +328,7 @@ internal class ConversationController(private val context: Context, private val 
         if (dispatching || pendingAgent.isEmpty() || !state.running) return
         if (state.source == ConversationSource.ALWAYS_ON && !liveBackfill && !replaying && rounds.isNotEmpty()) return
         val input = pendingAgent.toList(); val token = generation; val source = state.source; val contextGeneration = agentContextGeneration
-        val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", record?.id).put("recordRevision", record?.revision).put("processingComplete", true)
+        val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", record?.id).put("recordRevision", record?.revision)
         val voice = VoiceRequest(input.joinToString(" ") { it.text }, modePolicy.agentPrompt + "\n" + payload, source, input.lastOrNull()?.roundId,
             true, record?.id, record?.revision ?: 1, input.any { it.processingMode == "backfill" })
         dispatching = true; val ids = input.map { it.id }.toSet(); pendingAgent.removeAll { it.id in ids }

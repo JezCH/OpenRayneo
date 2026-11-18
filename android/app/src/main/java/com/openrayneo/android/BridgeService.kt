@@ -366,9 +366,9 @@ internal class BridgeService : Service() {
         }
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
-        val limit = if (maxChars > 0) "\n[안경 표시 제한] 안경 화면에는 약 ${maxChars}자까지만 보인다. 답변 본문은 ${maxChars}자 이내로 핵심만 쓴다. 더 긴 내용이 필요하면 요약해서 답하고, 사용자가 자세히 요청할 때만 나눠서 이어 말한다." else ""
+        val limit = if (maxChars > 0) "\n[안경 표시] 답변은 ${maxChars}자 이내. 더 필요하면 요약하고, 자세히 요청받을 때만 이어서 말한다." else ""
         // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
-        agent.harness.submit(request.text, request.context + limit + "\n대기열 등록 시각: ${java.time.ZonedDateTime.now()} (전달 시 외부 Agent가 현재 시각을 갱신)", input = input) { result ->
+        agent.harness.submit(request.text, request.context + limit, input = input) { result ->
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
         return true
