@@ -16,7 +16,7 @@ internal data class CompanionContentState(val dashboard: JSONObject? = null, val
     val weatherCities: List<JSONObject> = emptyList(), val weather: JSONObject? = null, val automaticWeather: Boolean = false)
 
 /** Device-backed content shared by manual pages, model tools and the local Agent API. */
-internal class CompanionContent(context: Context, private val requests: GlassesRequests,
+internal class CompanionContent(private val context: Context, private val requests: GlassesRequests,
     private val address: () -> String?, private val changed: () -> Unit) {
     @Volatile var state = CompanionContentState(); private set
     private val phoneLocation = PhoneLocation(context)
@@ -42,7 +42,8 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         if (address() == null || !state.automaticWeather || state.busy || !force && System.currentTimeMillis() - weatherAttemptAt < 30 * 60_000) return
         val city = local.getString("weatherCity:" + device(), null)?.let(::JSONObject) ?: return
         weatherAttemptAt = System.currentTimeMillis()
-        run { weather(city); pushWeather() }
+        // A "current location" choice follows the phone: locate again on every update.
+        run { weather(if (city.optBoolean("current")) currentCity() else city); pushWeather() }
     }
     fun refresh() = run { dashboard(); events(1); events(0); JSONObject().put("readBack", true) }
     fun disconnected() { weatherAttemptAt = 0; state = CompanionContentState(); changed() }
@@ -170,6 +171,17 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
             .sortedByDescending { it.optLong("population", 0) }.take(10)
         state = state.copy(weatherCities = cities)
         return JSONObject().put("results", JSONArray(cities))
+    }
+    /** The phone's position as a weather city, named by the system geocoder (e.g. 강남구) when it can. */
+    fun currentCity(): JSONObject {
+        val location = phoneLocation.current()
+        val latitude = location.getDouble("latitude"); val longitude = location.getDouble("longitude")
+        val place = if (!android.location.Geocoder.isPresent()) null else runCatching {
+            @Suppress("DEPRECATION")
+            android.location.Geocoder(context, java.util.Locale.KOREAN).getFromLocation(latitude, longitude, 1)?.firstOrNull()
+        }.getOrNull()
+        val name = place?.run { subLocality ?: locality ?: subAdminArea ?: adminArea } ?: "현재 위치"
+        return JSONObject().put("id", 0L).put("name", name).put("latitude", latitude).put("longitude", longitude).put("current", true)
     }
     fun currentWeather(): JSONObject {
         val location = phoneLocation.current()

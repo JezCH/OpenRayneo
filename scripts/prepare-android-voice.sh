@@ -17,6 +17,7 @@ if [ "${OPENRAYNEO_VOICE_MODELS_ONLY:-0}" != 1 ]; then
 fi
 fetch https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx "$voice_assets/campplus-zh-16k.onnx"
 fetch https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx "$voice_assets/silero-vad.onnx"
+fetch https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx "$voice_assets/gtcrn-simple.onnx"
 if [ ! -s "$voice_assets/segmentation.int8.onnx" ]; then
     voice_cache="$repo_dir/.build/android-voice-models"
     mkdir -p "$voice_cache"

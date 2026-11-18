@@ -37,7 +37,8 @@ android {
 val prepareVoiceModels by tasks.registering(Exec::class) {
     commandLine("sh", rootProject.file("../scripts/prepare-android-voice.sh"))
     outputs.files(file("libs/sherpa-onnx-2.0.1.aar"), file("src/main/assets/voice-models/campplus-zh-16k.onnx"),
-        file("src/main/assets/voice-models/silero-vad.onnx"), file("src/main/assets/voice-models/segmentation.int8.onnx"))
+        file("src/main/assets/voice-models/silero-vad.onnx"), file("src/main/assets/voice-models/gtcrn-simple.onnx"),
+        file("src/main/assets/voice-models/segmentation.int8.onnx"))
 }
 tasks.named("preBuild") { dependsOn(prepareVoiceModels) }
 

@@ -89,6 +89,10 @@ internal fun CompanionContentScreen(model: AppModel) {
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
             }
             3 -> {
+                ToolButton(onClick = { model.attempt { val content = model.service().content
+                    content.run { content.weather(content.currentCity()); content.pushWeather() }
+                } }, enabled = editable) { Text("현재 위치 날씨를 안경에 표시") }
+                Note("휴대폰 위치로 날씨를 가져와 안경에 보냅니다. 자동 업데이트를 켜면 매번 현재 위치를 다시 찾습니다. 다른 도시는 아래에서 검색하세요.")
                 OutlinedTextField(cityQuery, { cityQuery = it }, Modifier.fillMaxWidth(), label = { Text("도시 검색") })
                 ToolButton(onClick = { model.attempt { model.service().content.run { model.service().content.searchCities(cityQuery) } } }, enabled = !state.busy && cityQuery.isNotBlank()) { Text("도시 찾기") }
                 state.weatherCities.forEach { city -> TextButton(onClick = { model.attempt { model.service().content.run { model.service().content.weather(city) } } }, enabled = editable) {
@@ -102,7 +106,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                         Text("연결 시 및 30분마다 날씨 업데이트")
                     }
                     ToolOutlinedButton(onClick = { model.attempt { model.service().content.automaticWeather(force = true) } }, enabled = editable && state.automaticWeather) { Text("지금 자동 업데이트") }
-                    Note("홈 온도는 여기서 선택한 도시를 사용합니다. 날씨는 Open-Meteo에서 제공하며 연결이 끊기면 업데이트가 중지됩니다.")
+                    Note("홈 온도는 여기서 고른 도시나 현재 위치를 사용합니다. 날씨는 Open-Meteo에서 제공하며 연결이 끊기면 업데이트가 중지됩니다.")
                 }
             }
         }

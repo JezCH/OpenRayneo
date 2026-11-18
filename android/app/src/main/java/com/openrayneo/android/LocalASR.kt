@@ -124,7 +124,8 @@ internal object LocalSpeechModel {
 }
 
 /**
- * On-device round: silero VAD cuts sentences, SenseVoice decodes each one (non-streaming).
+ * On-device round: streaming GTCRN removes background noise, silero VAD cuts sentences on the cleaned
+ * audio, and SenseVoice decodes each one (non-streaming).
  * With [interim] set, the unfinished utterance is re-decoded about once a second for live captions.
  * Callbacks run on [LocalSpeechModel.executor]; callers post onto their own threads as with the cloud round.
  */
@@ -140,6 +141,7 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     @Volatile private var finishing = false
     // Executor-thread state.
     private var vad: Vad? = null
+    private var denoiser: OnlineSpeechDenoiser? = null
     private var recognizer: OfflineRecognizer? = null
     private val window = FloatArray(WINDOW)
     private var windowSize = 0
@@ -168,6 +170,7 @@ internal class LocalASR(private val context: Context, config: JSONObject,
             if (ended) return@execute
             attempt {
                 val detector = prepare()
+                windows(detector, checkNotNull(denoiser).flush().samples)
                 if (windowSize > 0) { detector.acceptWaveform(window.copyOf(windowSize)); windowSize = 0 }
                 detector.flush(); drain(detector)
                 ended = true; release(); completed()
@@ -184,17 +187,25 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     private fun prepare(): Vad {
         vad?.let { return it }
         if (recognizer == null) recognizer = LocalSpeechModel.acquire(context)
+        if (denoiser == null) denoiser = OnlineSpeechDenoiser(context.assets, OnlineSpeechDenoiserConfig(OfflineSpeechDenoiserModelConfig(
+            gtcrn = OfflineSpeechDenoiserGtcrnModelConfig("voice-models/gtcrn-simple.onnx"), numThreads = 1)))
+        // A slightly longer silence keeps short pauses inside one sentence instead of decoding fragments.
         return Vad(context.assets, VadModelConfig(
-            sileroVadModelConfig = SileroVadModelConfig("voice-models/silero-vad.onnx", minSilenceDuration = 0.4f, maxSpeechDuration = 12f),
+            sileroVadModelConfig = SileroVadModelConfig("voice-models/silero-vad.onnx", minSilenceDuration = 0.5f, maxSpeechDuration = 12f),
             sampleRate = 16000, numThreads = 1)).also { vad = it }
     }
     private fun release() {
         vad?.release(); vad = null
+        denoiser?.release(); denoiser = null
         if (recognizer != null) { recognizer = null; LocalSpeechModel.releaseUser() }
     }
 
     private fun feed(samples: FloatArray) {
         val detector = prepare()
+        windows(detector, checkNotNull(denoiser).run(samples, 16000).samples)
+    }
+
+    private fun windows(detector: Vad, samples: FloatArray) {
         var first = 0
         while (first < samples.size) {
             val count = minOf(WINDOW - windowSize, samples.size - first)
@@ -252,7 +263,10 @@ internal class LocalASR(private val context: Context, config: JSONObject,
             val result = recognizer.getResult(stream)
             val text = result.text.trim()
             val lang = result.lang.removePrefix("<|").removeSuffix("|>")
-            if (text.isEmpty() || allowed.isNotEmpty() && lang.isNotEmpty() && lang !in allowed) return null
+            if (text.isEmpty()) return null
+            // The language tag can be wrong on noisy audio; Hangul text is still Korean speech.
+            val hangul = "ko" in allowed && text.any { it in '가'..'힣' }
+            if (allowed.isNotEmpty() && lang.isNotEmpty() && lang !in allowed && !hangul) return null
             return text to lang
         } finally { stream.release() }
     }
