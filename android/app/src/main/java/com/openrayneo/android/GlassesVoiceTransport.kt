@@ -13,6 +13,8 @@ internal class GlassesVoiceTransport(
     /** Per-frame speech flags (vpuMask | vadMask) of an always-on batch, delivered before its audio. */
     private val activity: (List<Boolean>) -> Unit,
     private val failure: (String) -> Unit,
+    /** App log for assistant control messages we send (live partials excluded). */
+    private val trace: (String) -> Unit = {},
 ) {
     var source: ConversationSource? = null; private set
     var wakeId: String? = null; private set
@@ -117,6 +119,7 @@ internal class GlassesVoiceTransport(
         return true
     }
     private fun send(protocol: Int, type: Int, body: JSONObject) {
+        if (protocol == 0x0d && !(type == 5 && !body.optBoolean("final"))) trace("음성 이벤트 송신 type=$type ${body.toString().take(160)}")
         try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
             result.onFailure { failure("안경 음성 제어 전송 실패: ${it.message}") }
         } } catch (error: Exception) { failure("안경 음성 제어 전송 실패: ${error.message}") }

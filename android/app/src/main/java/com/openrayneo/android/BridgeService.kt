@@ -92,6 +92,10 @@ internal class BridgeService : Service() {
             { frame, source -> runCatching {
                 teleprompter.observe(frame)
                 requests.receive(frame)
+                // Assistant control events (not audio) go to the app log, to see how the firmware behaves around barge-in.
+                if (frame.protocol == 0x0d) ProtocolCodec.message(frame.payload).let { m ->
+                    if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} ${m.json.orEmpty().take(160)}")
+                }
                 voiceTransport.receive(frame)
                 display.receive(frame, source)
             }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
@@ -123,7 +127,7 @@ internal class BridgeService : Service() {
             voiceAudio.stop(); conversations.voiceRoundBoundary(); voiceAudio.start(1); conversations.nextRound()
         }, { ended ->
             if (ended) conversations.stop() else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
-        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) })
+        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
         translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
             if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
