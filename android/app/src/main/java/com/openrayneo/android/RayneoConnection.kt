@@ -55,22 +55,22 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var bleWriting = false
     private var generation = 0
     private var bondReceiver: BroadcastReceiver? = null
-    private var connectionStage = "等待连接"
-    private val timeout = Runnable { fail("连接超时：$connectionStage") }
-    private val stopScanTask = Runnable { stopScan(); state("扫描结束，选择眼镜连接") }
+    private var connectionStage = "연결 대기 중"
+    private val timeout = Runnable { fail("연결 시간 초과: $connectionStage") }
+    private val stopScanTask = Runnable { stopScan(); state("스캔 완료, 연결할 안경을 선택하세요") }
 
     fun showBonded() {
-        check(adapter.isEnabled) { "请先开启手机蓝牙" }
+        check(adapter.isEnabled) { "먼저 휴대폰 블루투스를 켜세요" }
         adapter.bondedDevices.filter { it.name?.contains("RayNeo", true) == true }.forEach {
             listener.onDevice(Device(it.name ?: "RayNeo iO", it, it.address))
         }
     }
 
     fun scan() {
-        check(adapter.isEnabled) { "请先开启手机蓝牙" }
-        check(gatt == null) { "请先断开当前连接" }
+        check(adapter.isEnabled) { "먼저 휴대폰 블루투스를 켜세요" }
+        check(gatt == null) { "먼저 현재 연결을 끊으세요" }
         stopScan()
-        state("正在扫描眼镜…", busy = true)
+        state("스캔 중: 안경 찾는 중…", busy = true)
         scanning = true
         adapter.bluetoothLeScanner.startScan(null,
             ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
@@ -94,7 +94,7 @@ internal class RayneoConnection(private val context: Context, private val listen
             }
         }
         override fun onScanFailed(errorCode: Int) {
-            main.post { stopScan(); state("BLE 扫描失败：$errorCode") }
+            main.post { stopScan(); state("BLE 스캔 실패: $errorCode") }
         }
     }
 
@@ -115,34 +115,34 @@ internal class RayneoConnection(private val context: Context, private val listen
 
     private fun startBle(device: Device) {
         main.removeCallbacks(timeout)
-        state("正在连接 BLE…", busy = true)
+        state("연결 중: BLE…", busy = true)
         main.postDelayed(timeout, 25_000)
         gatt = device.bluetooth.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE,
             BluetoothDevice.PHY_LE_1M_MASK, main)
-        check(gatt != null) { "无法创建 GATT 连接" }
+        check(gatt != null) { "GATT 연결을 만들 수 없음" }
     }
 
     private fun ensureBond(target: BluetoothDevice, continuation: () -> Unit) {
         if (target.bondState == BluetoothDevice.BOND_BONDED) {
-            log("经典蓝牙已配对")
+            log("클래식 블루투스 페어링됨")
             continuation()
             return
         }
-        state("请完成手机上的系统蓝牙配对…", busy = true)
+        state("휴대폰에서 시스템 블루투스 페어링을 완료하세요…", busy = true)
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 if (bondReceiver !== this || intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
                 val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
                 if (device?.address != target.address) return
                 val bond = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
-                log("经典蓝牙配对状态=$bond")
+                log("클래식 블루투스 페어링 상태=$bond")
                 when (bond) {
                     BluetoothDevice.BOND_BONDED -> {
                         stopObservingBond()
                         main.removeCallbacks(timeout)
                         guarded(continuation)
                     }
-                    BluetoothDevice.BOND_NONE -> fail("经典蓝牙配对未完成，请保持眼镜可配对并重新连接")
+                    BluetoothDevice.BOND_NONE -> fail("클래식 블루투스 페어링이 완료되지 않았습니다. 안경을 페어링 가능 상태로 두고 다시 연결하세요")
                 }
             }
         }
@@ -156,7 +156,7 @@ internal class RayneoConnection(private val context: Context, private val listen
             main.removeCallbacks(timeout)
             continuation()
         } else if (target.bondState == BluetoothDevice.BOND_NONE) {
-            if (!target.createBond()) fail("系统没有受理经典蓝牙配对请求")
+            if (!target.createBond()) fail("시스템이 클래식 블루투스 페어링 요청을 받아들이지 않음")
         }
     }
 
@@ -170,25 +170,25 @@ internal class RayneoConnection(private val context: Context, private val listen
         override fun onConnectionStateChange(connection: BluetoothGatt, status: Int, newState: Int) {
             if (connection !== gatt) return
             if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
-                fail("BLE 连接结束：status=$status，state=$newState")
+                fail("BLE 연결 종료: status=$status, state=$newState")
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) guarded {
-                state("BLE 已连接，发现服务…", busy = true)
-                check(connection.discoverServices()) { "无法启动服务发现" }
+                state("BLE 연결됨, 서비스 탐색 중…", busy = true)
+                check(connection.discoverServices()) { "서비스 탐색을 시작할 수 없음" }
             }
         }
 
         override fun onServicesDiscovered(connection: BluetoothGatt, status: Int) {
             if (connection !== gatt) return
             guarded {
-                check(status == BluetoothGatt.GATT_SUCCESS) { "服务发现失败：$status" }
-                val service = checkNotNull(connection.getService(SERVICE)) { "设备没有 B81D 服务" }
-                send = checkNotNull(service.getCharacteristic(SEND)) { "缺少发送特征" }
-                checkNotNull(service.getCharacteristic(RECEIVE)) { "缺少接收特征" }
-                checkNotNull(service.getCharacteristic(PAIR_INFO)) { "缺少身份特征" }
-                state("发现 B81D，协商 BLE MTU…", busy = true)
-                check(connection.requestMtu(512)) { "无法启动 MTU 协商" }
+                check(status == BluetoothGatt.GATT_SUCCESS) { "서비스 탐색 실패: $status" }
+                val service = checkNotNull(connection.getService(SERVICE)) { "기기에 B81D 서비스가 없음" }
+                send = checkNotNull(service.getCharacteristic(SEND)) { "송신 특성이 없음" }
+                checkNotNull(service.getCharacteristic(RECEIVE)) { "수신 특성이 없음" }
+                checkNotNull(service.getCharacteristic(PAIR_INFO)) { "신원 특성이 없음" }
+                state("B81D 발견, 협상 중: BLE MTU…", busy = true)
+                check(connection.requestMtu(512)) { "MTU 협상을 시작할 수 없음" }
             }
         }
 
@@ -196,13 +196,13 @@ internal class RayneoConnection(private val context: Context, private val listen
             if (connection !== gatt) return
             guarded {
                 check(status == BluetoothGatt.GATT_SUCCESS && mtu >= 160) {
-                    "BLE MTU 不足：mtu=$mtu，status=$status"
+                    "BLE MTU  부족: mtu=$mtu, status=$status"
                 }
                 log("BLE MTU=$mtu")
                 blePayloadSize = mtu - 3
-                state("正在读取眼镜身份…", busy = true)
+                state("안경 신원 읽는 중…", busy = true)
                 check(connection.readCharacteristic(connection.getService(SERVICE).getCharacteristic(PAIR_INFO))) {
-                    "无法读取身份特征"
+                    "신원 특성을 읽을 수 없음"
                 }
             }
         }
@@ -211,22 +211,22 @@ internal class RayneoConnection(private val context: Context, private val listen
                                           value: ByteArray, status: Int) {
             if (connection !== gatt || characteristic.uuid != PAIR_INFO) return
             guarded {
-                check(status == BluetoothGatt.GATT_SUCCESS && value.size >= 13) { "眼镜身份读取失败：$status" }
+                check(status == BluetoothGatt.GATT_SUCCESS && value.size >= 13) { "안경 신원 읽기 실패: $status" }
                 classicAddress = value.copyOfRange(0, 6)
                 val address = addressString(classicAddress)
-                check(expectedAddress == null || expectedAddress.equals(address, true)) { "BLE 与所选经典蓝牙设备不匹配" }
+                check(expectedAddress == null || expectedAddress.equals(address, true)) { "BLE 가 선택한 클래식 블루투스 기기와 일치하지 않음" }
                 expectedAddress = address
                 val bound = value.copyOfRange(7, 13)
                 // Preserve the Mac bridge's bound-identity baseline; unbound devices use the
                 // official Android client's six-byte Android ID convention (last 12 hex digits).
                 identity = if (bound.any { it != 0.toByte() }) bound else androidIdentity()
-                log("身份已读取；状态=${value[6].toInt() and 255}；身份来源=${if (bound.any { it != 0.toByte() }) "眼镜绑定" else "本应用 Android ID"}")
+                log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (bound.any { it != 0.toByte() }) "안경 바인딩" else "이 앱의 Android ID"}")
                 val receive = connection.getService(SERVICE).getCharacteristic(RECEIVE)
-                check(connection.setCharacteristicNotification(receive, true)) { "无法启用 BLE 通知" }
-                val descriptor = checkNotNull(receive.getDescriptor(CCCD)) { "缺少 CCCD" }
-                state("正在订阅 BLE 通知…", busy = true)
+                check(connection.setCharacteristicNotification(receive, true)) { "BLE 알림을 켤 수 없음" }
+                val descriptor = checkNotNull(receive.getDescriptor(CCCD)) { "누락: CCCD" }
+                state("BLE 알림 구독 중…", busy = true)
                 check(connection.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS) {
-                    "无法写入 CCCD"
+                    "쓰기 불가: CCCD"
                 }
             }
         }
@@ -234,8 +234,8 @@ internal class RayneoConnection(private val context: Context, private val listen
         override fun onDescriptorWrite(connection: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (connection !== gatt || descriptor.uuid != CCCD) return
             guarded {
-                check(status == BluetoothGatt.GATT_SUCCESS) { "订阅 BLE 通知失败：$status" }
-                state("正在交换设备信息…", busy = true)
+                check(status == BluetoothGatt.GATT_SUCCESS) { "BLE 알림 구독 실패: $status" }
+                state("기기 정보 교환 중…", busy = true)
                 writePairing(17, listOf(
                     16 to byteArrayOf(1), 17 to identity,
                     18 to (adapter.name ?: "OpenRayneo Android").toByteArray(),
@@ -248,7 +248,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         override fun onCharacteristicWrite(connection: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (connection !== gatt || characteristic.uuid != SEND) return
             guarded {
-                check(status == BluetoothGatt.GATT_SUCCESS) { "BLE 写入失败：$status" }
+                check(status == BluetoothGatt.GATT_SUCCESS) { "BLE  쓰기 실패: $status" }
                 bleWriting = false
                 bleWrites.removeFirstOrNull()?.completion?.let(::log)
                 writeNextBleChunk()
@@ -260,7 +260,7 @@ internal class RayneoConnection(private val context: Context, private val listen
             guarded {
                 bleDecoder.append(value).forEach { frame ->
                     if (frame.acknowledgement) {
-                        if (bleOnly) log("收到 BLE 传输确认：seq=${frame.sequence}")
+                        if (bleOnly) log("BLE 전송 확인 수신: seq=${frame.sequence}")
                     } else {
                         if (frame.flags and 1 != 0) {
                             enqueueBleFrame(ProtocolCodec.acknowledgement(frame), null)
@@ -274,39 +274,39 @@ internal class RayneoConnection(private val context: Context, private val listen
     }
 
     private fun processPairing(frame: ProtocolCodec.Frame) {
-        check(frame.payload.size >= 3) { "认证响应不完整" }
+        check(frame.payload.size >= 3) { "인증 응답이 불완전함" }
         val command = frame.payload[0].toInt() and 255
-        log("收到 BLE 命令 $command")
+        log("BLE 명령 수신 $command")
         when (command) {
             17 -> {
                 val fields = ProtocolCodec.pairingFields(frame.payload)
-                check(25 !in fields) { "眼镜要求账户绑定 ECDH，当前验证版不支持" }
+                check(25 !in fields) { "안경이 계정 바인딩 ECDH를 요구하지만 현재 검증 버전은 지원하지 않음" }
                 val random = ByteArray(4).also { SecureRandom().nextBytes(it) }
-                state("正在进行应用认证…", busy = true)
+                state("앱 인증 진행 중…", busy = true)
                 writePairing(24, listOf(16 to random, 17 to authentication(random)))
             }
             25 -> {
                 val fields = ProtocolCodec.pairingFields(frame.payload)
-                val random = checkNotNull(fields[16]) { "认证响应缺少挑战值" }
-                check(random.size == 4) { "认证挑战值长度错误" }
-                check(fields[17]?.contentEquals(authentication(random)) == true) { "应用认证被拒绝" }
+                val random = checkNotNull(fields[16]) { "인증 응답에 챌린지 값이 없음" }
+                check(random.size == 4) { "인증 챌린지 값 길이 오류" }
+                check(fields[17]?.contentEquals(authentication(random)) == true) { "앱 인증이 거부됨" }
                 if (!authenticationHandled) {
                     authenticationHandled = true
-                    log("BLE 应用认证通过")
+                    log("BLE  앱 인증 통과")
                     if (bleOnly) {
                         main.removeCallbacks(timeout)
                         ready = true
-                        state("BLE 已认证，可尝试通知（完整配对未验证）", ready = true)
+                        state("BLE  인증됨, 알림 시도 가능 (완전한 페어링은 미검증)", ready = true)
                     } else openRfcomm()
                 }
             }
-            22, 23 -> log("眼镜状态=${frame.payload.getOrNull(3)?.toInt()?.and(255)}")
+            22, 23 -> log("안경 상태=${frame.payload.getOrNull(3)?.toInt()?.and(255)}")
         }
     }
 
     private fun writePairing(command: Int, fields: List<Pair<Int, ByteArray>>) {
         val bytes = ProtocolCodec.pairing(pairingSequence++, command, fields)
-        enqueueBleFrame(bytes, "发出 BLE 命令 $command（${bytes.size} 字节）")
+        enqueueBleFrame(bytes, "BLE 명령 전송 $command (${bytes.size}바이트)")
     }
 
     private fun enqueueBleFrame(bytes: ByteArray, completion: String?) {
@@ -324,7 +324,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         val connection = checkNotNull(gatt)
         bleWriting = true
         check(connection.writeCharacteristic(checkNotNull(send), bleWrites.first().bytes,
-            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothStatusCodes.SUCCESS) { "BLE 发送未受理" }
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothStatusCodes.SUCCESS) { "BLE  전송이 받아들여지지 않음" }
     }
 
     private fun authentication(random: ByteArray): ByteArray =
@@ -332,7 +332,7 @@ internal class RayneoConnection(private val context: Context, private val listen
 
     private fun androidIdentity(): ByteArray {
         val id = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-        check(!id.isNullOrEmpty() && id.length >= 12) { "本应用 Android ID 不可用" }
+        check(!id.isNullOrEmpty() && id.length >= 12) { "이 앱의 Android ID를 사용할 수 없음" }
         return id.takeLast(12).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
@@ -342,9 +342,9 @@ internal class RayneoConnection(private val context: Context, private val listen
     }
 
     private fun connectRfcomm(target: BluetoothDevice) {
-        state("BLE 已认证，正在连接 SPP…", busy = true)
+        state("BLE  인증됨, 연결 중: SPP…", busy = true)
         val session = generation
-        log("经典蓝牙配对状态=${target.bondState}；RFCOMM 服务 UUID=$SPP")
+        log("클래식 블루투스 페어링 상태=${target.bondState}; RFCOMM 서비스 UUID=$SPP")
         val pending = target.createRfcommSocketToServiceRecord(SPP)
         socket = pending
         main.removeCallbacks(timeout)
@@ -357,11 +357,11 @@ internal class RayneoConnection(private val context: Context, private val listen
                     if (session != generation || socket !== pending) return@post
                     main.removeCallbacks(timeout)
                     ready = true
-                    state("已连接：BLE 认证与 RFCOMM 均正常", ready = true)
+                    state("연결됨: BLE 인증과 RFCOMM 모두 정상", ready = true)
                     startReader(pending, session)
                 }
             } catch (error: Exception) {
-                main.post { if (session == generation) fail("SPP 连接失败：${error.message}") }
+                main.post { if (session == generation) fail("SPP  연결 실패: ${error.message}") }
             }
         }
     }
@@ -373,7 +373,7 @@ internal class RayneoConnection(private val context: Context, private val listen
             try {
                 while (socket === connection) {
                     val count = connection.inputStream.read(buffer)
-                    check(count >= 0) { "眼镜关闭了数据流" }
+                    check(count >= 0) { "안경이 데이터 스트림을 닫음" }
                     val frames = decoder.append(buffer.copyOf(count))
                     main.post {
                         if (session == generation) frames.forEach {
@@ -382,15 +382,15 @@ internal class RayneoConnection(private val context: Context, private val listen
                     }
                 }
             } catch (error: Exception) {
-                main.post { if (session == generation) fail("数据连接结束：${error.message}") }
+                main.post { if (session == generation) fail("데이터 연결 종료: ${error.message}") }
             }
         }, "rayneo-reader").start()
     }
 
-    fun sendTestNotification() = sendNotification("来自小米 13", "安卓直连验证：你好，雷鸟眼镜。")
+    fun sendTestNotification() = sendNotification("Xiaomi 13에서", "Android 직접 연결 테스트: 안녕하세요, RayNeo 안경.")
 
     fun sendNotification(title: String, body: String) {
-        check(ready) { "请先连接眼镜" }
+        check(ready) { "먼저 안경을 연결하세요" }
         val timestamp = System.currentTimeMillis().toString()
         val payload = JSONObject().apply {
             put("notificationUID", timestamp)
@@ -406,28 +406,28 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
         val frame = ProtocolCodec.notification(notificationSequence++, payload.toString())
         if (bleOnly) {
-            enqueueBleFrame(frame, "BLE 通知已写出，请在眼镜上确认显示")
+            enqueueBleFrame(frame, "BLE 알림을 전송했습니다. 안경에서 표시를 확인하세요")
             return
         }
         sendFrame(frame) { result ->
-            result.onSuccess { log("通知已写出，请在眼镜上确认显示") }.onFailure { log("通知发送失败：${it.message}") }
+            result.onSuccess { log("알림을 전송했습니다. 안경에서 표시를 확인하세요") }.onFailure { log("알림 전송 실패: ${it.message}") }
         }
     }
 
     fun sendFrame(frame: ByteArray, completion: (Result<Unit>) -> Unit) {
-        check(ready && !bleOnly) { "此功能需要完整的 RFCOMM 连接，请关闭 BLE-only 模式" }
+        check(ready && !bleOnly) { "이 기능은 완전한 RFCOMM 연결이 필요합니다. BLE-only 모드를 끄세요" }
         val session = generation
         val connection = checkNotNull(socket)
         io.execute {
             try {
-                check(socket === connection) { "连接已更换" }
+                check(socket === connection) { "연결이 변경됨" }
                 connection.outputStream.write(frame)
                 connection.outputStream.flush()
-                main.post { completion(if (session == generation) Result.success(Unit) else Result.failure(IllegalStateException("连接已更换"))) }
+                main.post { completion(if (session == generation) Result.success(Unit) else Result.failure(IllegalStateException("연결이 변경됨"))) }
             } catch (error: Exception) {
                 main.post {
                     completion(Result.failure(error))
-                    if (session == generation) fail("数据发送失败：${error.message}")
+                    if (session == generation) fail("데이터 전송 실패: ${error.message}")
                 }
             }
         }
@@ -457,7 +457,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         socket = null
         runCatching { oldSocket?.close() }
         send = null
-        state("已断开")
+        state("연결 끊김")
     }
 
     fun close() { disconnect(); io.shutdownNow() }

@@ -35,14 +35,14 @@ internal fun OnboardingScreen(
     val step = model.onboardingStep
     val scroll = rememberScrollState()
     LaunchedEffect(step) { scroll.scrollTo(0) }
-    val titles = listOf("开始使用 OpenRayneo", "连接眼镜", "开启导航跟随", "配置助手", "检查设置")
+    val titles = listOf("OpenRayneo 시작하기", "안경 연결", "내비게이션 추종 켜기", "어시스턴트 설정", "설정 확인")
     val subtitles =
         listOf(
-            "欢迎使用 OpenRayneo。用几步完成设置，也可以稍后继续。",
-            "用手机直接连接 RayNeo iO，导航与回答便能显示在眼前。",
-            "路线由高德规划，OpenRayneo 读取通知，把方向、距离与路名带到眼镜。",
-            "手机通过本机 Agent 处理任务，并独立记录与总结；电脑在线时，也可以把任务交给 Codex。",
-            "下面是当前准备情况。未完成的项目随时可以在设置中继续。",
+            "OpenRayneo에 오신 것을 환영합니다. 몇 단계로 설정을 마치거나 나중에 계속할 수 있습니다.",
+            "휴대폰으로 RayNeo iO에 직접 연결하면 내비게이션과 답변이 눈앞에 표시됩니다.",
+            "경로는 Amap이 계획하고, OpenRayneo가 알림을 읽어 방향, 거리, 도로명을 안경에 보여 줍니다.",
+            "휴대폰은 로컬 Agent로 작업을 처리하고 독립적으로 기록·요약합니다. 컴퓨터가 온라인이면 작업을 다음에도 맡길 수 있습니다: Codex.",
+            "아래는 현재 준비 상태입니다. 완료하지 않은 항목은 언제든 설정에서 계속할 수 있습니다.",
         )
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -51,7 +51,7 @@ internal fun OnboardingScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text("OpenRayneo", style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = model::finishSetup) { Text("稍后设置") }
+            TextButton(onClick = model::finishSetup) { Text("나중에 설정") }
         }
         LinearProgressIndicator(
             progress = { (step + 1) / 5f },
@@ -62,7 +62,7 @@ internal fun OnboardingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "开始使用 · ${step + 1} / 5",
+                "시작하기: · ${step + 1} / 5",
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -74,9 +74,9 @@ internal fun OnboardingScreen(
                         Modifier.fillMaxWidth().height(90.dp),
                         MaterialTheme.colorScheme.primary,
                     )
-                    SetupRow(Icons.Outlined.NearMe, "抬眼看导航", "跟随手机高德的真实导航通知")
-                    SetupRow(Icons.Outlined.AutoAwesome, "随时问助手", "连接手机本机 Agent 与电脑 Codex")
-                    SetupRow(Icons.Outlined.Tune, "由你掌控", "显示与收音可以随时暂停")
+                    SetupRow(Icons.Outlined.NearMe, "눈을 들어 내비게이션 보기", "휴대폰 Amap의 실제 내비게이션 알림을 따라감")
+                    SetupRow(Icons.Outlined.AutoAwesome, "언제든 어시스턴트에게 질문", "휴대폰 로컬 Agent와 컴퓨터 연결: Codex")
+                    SetupRow(Icons.Outlined.Tune, "직접 제어", "표시와 음성 수신은 언제든 일시정지 가능")
                 }
                 1 -> {
                     ContentCard {
@@ -85,102 +85,102 @@ internal fun OnboardingScreen(
                             MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            if (model.state.glasses.link.phase == LinkPhase.FULL) "眼镜已连接"
-                            else "连接前的小准备",
+                            if (model.state.glasses.link.phase == LinkPhase.FULL) "안경 연결됨"
+                            else "연결 전 준비",
                             style = MaterialTheme.typography.titleLarge,
                         )
-                        Note("1. 唤醒眼镜并靠近手机\n2. 断开官方 App 或电脑的眼镜连接\n3. 在手机上确认系统配对提示")
+                        Note("1. 안경을 깨워 휴대폰 가까이 두기\n2. 공식 앱이나 컴퓨터와의 안경 연결 끊기\n3. 휴대폰에서 시스템 페어링 안내 확인")
                         ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                if (model.state.glasses.link.phase == LinkPhase.FULL) "查看连接"
-                                else "连接眼镜"
+                                if (model.state.glasses.link.phase == LinkPhase.FULL) "연결 보기"
+                                else "안경 연결"
                             )
                         }
                     }
-                    Note("只在连接时申请“附近设备”权限。未连接也可以先配置助手。")
+                    Note("'근처 기기' 권한은 연결할 때만 요청합니다. 연결하지 않아도 어시스턴트를 먼저 설정할 수 있습니다.")
                 }
                 2 -> {
                     ContentCard {
                         Text(
-                            if (model.notificationAllowed) "通知使用权已开启" else "允许读取高德导航通知",
+                            if (model.notificationAllowed) "알림 접근 허용됨" else "Amap 내비게이션 알림 읽기 허용",
                             style = MaterialTheme.typography.titleMedium,
                         )
                         if (model.notificationAllowed) Note(model.state.notificationReadStatus)
-                        Note("系统会授予通知使用权，应用只处理高德导航通知。通知正文不会发送给模型。")
+                        Note("시스템이 알림 접근 권한을 부여하며, 앱은 Amap 내비게이션 알림만 처리합니다. 알림 본문은 모델로 전송되지 않습니다.")
                         ToolOutlinedButton(
                             onClick = actions.notificationAccess,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(if (model.notificationAllowed) "查看通知权限" else "前往开启通知使用权")
+                            Text(if (model.notificationAllowed) "알림 권한 보기" else "알림 접근 허용하러 가기")
                         }
                     }
                     var example by rememberSaveable { mutableIntStateOf(0) }
                     val samples =
                         listOf(
-                            Triple("直行", 300, "沿中山路"),
-                            Triple("右转", 80, "进入人民路"),
-                            Triple("左转", 20, "沿滨河路"),
+                            Triple("직진", 300, "세종대로 따라"),
+                            Triple("우회전", 80, "을지로 진입"),
+                            Triple("좌회전", 20, "강변북로 따라"),
                         )
                     val sample = samples[example]
                     GridPreview(
                         NavigationFrame.render(sample.first, sample.second, sample.third),
-                        "演示 · 与眼镜相同的导航网格",
+                        "데모 · 안경과 같은 내비게이션 그리드",
                     )
                     TextButton(onClick = { example = (example + 1) % samples.size }) {
-                        Text("切换演示指令")
+                        Text("데모 안내 전환")
                     }
-                    Note("以上是界面演示，不会发送到眼镜或启动导航。真实导航请在高德 App 中开始。")
+                    Note("위 화면은 데모이며 안경으로 전송되거나 내비게이션을 시작하지 않습니다. 실제 내비게이션은 Amap 앱에서 시작하세요.")
                 }
                 3 -> {
                     SetupOption(
-                        "本机 Agent",
-                        "启用本机入口，在 DSH Go 插件中连接眼镜。",
+                        "로컬 Agent",
+                        "로컬 엔드포인트를 켜고 DSH Go 플러그인에서 안경을 연결하세요.",
                         model.state.agentServer.enabled,
                         Icons.Outlined.Smartphone,
                     ) {
                         configure("agent-api")
                     }
                     SetupOption(
-                        "电脑 Codex",
-                        "导入电脑生成的配置文件，或填写连接参数。USB 联调需电脑开启转发。",
+                        "컴퓨터 Codex",
+                        "컴퓨터가 생성한 설정 파일을 가져오거나 연결 매개변수를 입력하세요. USB 연동 시 컴퓨터에서 포워딩을 켜야 합니다.",
                         model.config.optString("codexToken").isNotBlank(),
                         Icons.Outlined.Computer,
                     ) {
                         configure("computer")
                     }
-                    Note("本机 Agent 的语义策略与模型在 DSH Go 配置；记录总结模型可在语音与总结设置中单独配置。手机语音输入使用手机的识别服务。")
+                    Note("로컬 Agent의 의미 전략과 모델은 DSH Go에서 설정합니다. 기록 요약 모델은 '음성 및 요약' 설정에서 따로 설정할 수 있습니다. 휴대폰 음성 입력은 휴대폰의 인식 서비스를 사용합니다.")
                 }
                 4 -> {
                     ContentCard {
                         CompletionRow(
-                            "眼镜连接",
+                            "안경 연결",
                             model.state.glasses.link.phase == LinkPhase.FULL,
-                            "已连接",
-                            "稍后连接",
+                            "연결됨",
+                            "나중에 연결",
                         )
-                        CompletionRow("导航通知权限", model.notificationAllowed, "已开启", "稍后授权")
+                        CompletionRow("내비게이션 알림 권한", model.notificationAllowed, "허용됨", "나중에 허용")
                         CompletionRow(
-                            "本机 Agent",
+                            "로컬 Agent",
                             model.state.agentServer.enabled,
-                            "入口已启用",
-                            "可选，稍后配置",
+                            "엔드포인트 켜짐",
+                            "선택 사항, 나중에 설정",
                         )
                         CompletionRow(
-                            "电脑 Codex",
+                            "컴퓨터 Codex",
                             model.config.optString("codexToken").isNotBlank(),
-                            "已保存配置",
-                            "可选，稍后配置",
+                            "설정 저장됨",
+                            "선택 사항, 나중에 설정",
                         )
                     }
                     if (!model.backgroundNotifications)
                         ContentCard {
-                            Text("在后台也能看到连接状态", style = MaterialTheme.typography.titleMedium)
-                            Note("允许状态通知后，可在系统通知栏查看眼镜连接并停止服务。")
+                            Text("백그라운드에서도 연결 상태 확인", style = MaterialTheme.typography.titleMedium)
+                            Note("상태 알림을 허용하면 시스템 알림 표시줄에서 안경 연결을 확인하고 서비스를 중지할 수 있습니다.")
                             ToolOutlinedButton(onClick = actions.notificationPermission) {
-                                Text("允许状态通知")
+                                Text("상태 알림 허용")
                             }
                         }
-                    Note("在“设置 → 再看一次使用引导”中，随时回到这里。")
+                    Note("'설정 → 사용 안내 다시 보기'에서 언제든 여기로 돌아올 수 있습니다.")
                 }
             }
         }
@@ -189,12 +189,12 @@ internal fun OnboardingScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (step > 0) ToolOutlinedButton(onClick = { model.step(step - 1) }) { Text("上一步") }
+            if (step > 0) ToolOutlinedButton(onClick = { model.step(step - 1) }) { Text("이전") }
             ToolButton(
                 onClick = { if (step == 4) model.finishSetup() else model.step(step + 1) },
                 modifier = Modifier.weight(1f).heightIn(min = 52.dp),
             ) {
-                Text(if (step == 0) "开始设置" else if (step == 4) "进入 OpenRayneo" else "继续")
+                Text(if (step == 0) "설정 시작" else if (step == 4) "OpenRayneo 시작" else "계속")
             }
         }
     }
@@ -226,9 +226,9 @@ private fun SetupOption(
         Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
         Text(title, style = MaterialTheme.typography.titleLarge)
         Note(description)
-        if (saved) StatusPill("已保存配置")
+        if (saved) StatusPill("설정 저장됨")
         ToolOutlinedButton(onClick = click, modifier = Modifier.fillMaxWidth()) {
-            Text(if (saved) "查看配置" else "配置$title")
+            Text(if (saved) "설정 보기" else "설정: $title")
         }
     }
 }
@@ -265,55 +265,55 @@ internal fun SettingsScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SectionLabel("连接你的服务")
+        SectionLabel("서비스 연결")
         SettingsRow(
-            "记录总结模型",
-            if (!model.mobileModelConfigured) "尚未配置"
-            else model.config.optString("modelName").ifBlank { "已保存配置" },
+            "기록 요약 모델",
+            if (!model.mobileModelConfigured) "아직 설정되지 않음"
+            else model.config.optString("modelName").ifBlank { "설정 저장됨" },
             Icons.Outlined.Smartphone,
         ) {
             open("model")
         }
         SettingsRow(
-            "电脑 Codex",
-            if (model.state.computerConnected) "已连接" else "连接参数与配置导入",
+            "컴퓨터 Codex",
+            if (model.state.computerConnected) "연결됨" else "연결 매개변수 및 설정 가져오기",
             Icons.Outlined.Computer,
         ) {
             open("computer")
         }
-        SettingsRow("DSH Go 与外部 Agent", "语音派任务、眼镜工具与本机API", Icons.Outlined.Hub) { open("agent-api") }
-        SectionLabel("权限与设备")
-        SettingsRow("语音与总结", "眼镜ASR、人物分析与记录总结", Icons.Outlined.Mic) { open("voice-settings") }
-        SettingsRow("眼镜设置", "亮度、画面位置与唤醒", Icons.Outlined.Settings) { open("device-settings") }
-        SettingsRow("首页与内容", "小组件、待办、日程与天气", Icons.Outlined.Dashboard) { open("content") }
-        SettingsRow("提词稿库", "本地稿件、眼镜播放与控制", Icons.Outlined.Description) { open("teleprompter") }
-        SettingsRow("声音与人物", "本人登记、联系人与声音档案", Icons.Outlined.People) { open("voice-profiles") }
+        SettingsRow("DSH Go 및 외부 Agent", "음성 작업 위임, 안경 도구 및 로컬 API", Icons.Outlined.Hub) { open("agent-api") }
+        SectionLabel("권한 및 기기")
+        SettingsRow("음성 및 요약", "안경 ASR, 인물 분석 및 기록 요약", Icons.Outlined.Mic) { open("voice-settings") }
+        SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
+        SettingsRow("홈 화면 및 콘텐츠", "위젯, 할 일, 일정 및 날씨", Icons.Outlined.Dashboard) { open("content") }
+        SettingsRow("프롬프터 원고함", "로컬 원고, 안경 재생 및 제어", Icons.Outlined.Description) { open("teleprompter") }
+        SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }
         SettingsRow(
-            "附近设备",
-            if (model.bluetoothAllowed) "已授权" else "连接眼镜时需要",
+            "근처 기기",
+            if (model.bluetoothAllowed) "허용됨" else "안경 연결 시 필요",
             Icons.Outlined.Bluetooth,
         ) {
             actions.appSettings()
         }
         SettingsRow(
-            "高德通知使用权",
-            if (model.notificationAllowed) "已授权 · ${model.state.notificationReadStatus}"
-            else "导航跟随时需要",
+            "Amap 알림 접근 권한",
+            if (model.notificationAllowed) "허용됨 · ${model.state.notificationReadStatus}"
+            else "내비게이션 추종 시 필요",
             Icons.Outlined.NotificationsNone,
             actions.notificationAccess,
         )
         SettingsRow(
-            "后台状态通知",
-            if (model.backgroundNotifications) "已允许" else "可选，查看后台连接状态",
+            "백그라운드 상태 알림",
+            if (model.backgroundNotifications) "허용됨" else "선택 사항, 백그라운드 연결 상태 확인",
             Icons.Outlined.NotificationsActive,
         ) {
             if (model.backgroundNotifications) actions.appSettings()
             else actions.notificationPermission()
         }
-        SettingsRow("设备与诊断", "连接日志、测试通知与音频恢复", Icons.Outlined.Tune) { open("diagnostics") }
-        SectionLabel("外观")
+        SettingsRow("기기 및 진단", "연결 로그, 테스트 알림 및 오디오 복구", Icons.Outlined.Tune) { open("diagnostics") }
+        SectionLabel("화면 모드")
         ContentCard {
-            listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (key, title) ->
+            listOf("system" to "시스템 설정 따르기", "light" to "라이트", "dark" to "다크").forEach { (key, title) ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = model.appearance == key,
@@ -323,10 +323,10 @@ internal fun SettingsScreen(
                 }
             }
         }
-        SectionLabel("了解 OpenRayneo")
-        SettingsRow("再看一次使用引导", "连接眼镜、导航演示与助手配置", Icons.Outlined.Explore, replay)
+        SectionLabel("정보: OpenRayneo")
+        SettingsRow("사용 안내 다시 보기", "안경 연결, 내비게이션 데모 및 어시스턴트 설정", Icons.Outlined.Explore, replay)
         Note(
-            "OpenRayneo ${BuildConfig.VERSION_NAME}\n记录音频在手机加密保存，转写与说话人分析完成后交付。系统语音输入使用手机识别服务。",
+            "OpenRayneo ${BuildConfig.VERSION_NAME}\n기록 오디오는 휴대폰에 암호화 저장되며 전사와 화자 분석이 끝난 뒤 전달됩니다. 시스템 음성 입력은 휴대폰 인식 서비스를 사용합니다.",
             Modifier.padding(vertical = 12.dp),
         )
     }
@@ -374,46 +374,46 @@ internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig:
             Modifier.size(40.dp),
             tint = MaterialTheme.colorScheme.primary,
         )
-        Text(if (mobile) "记录总结模型配置" else "电脑连接配置", style = MaterialTheme.typography.headlineMedium)
+        Text(if (mobile) "기록 요약 모델 설정" else "컴퓨터 연결 설정", style = MaterialTheme.typography.headlineMedium)
         Note(
-            if (mobile) "供应用内记录总结使用，支持兼容 Chat Completions 的云端或手机本机服务。本机服务未启用鉴权时，API Key 可留空。"
-            else "先在电脑运行 OpenRayneo 的 Codex 连接脚本，再导入它生成的配置。USB 模式还需要开启端口转发。"
+            if (mobile) "앱 내 기록 요약에 사용되며 Chat Completions 호환 클라우드 또는 휴대폰 로컬 서비스를 지원합니다. 로컬 서비스에 인증이 없으면 API Key를 비워 둘 수 있습니다."
+            else "먼저 컴퓨터에서 OpenRayneo의 Codex 연결 스크립트를 실행한 뒤 생성된 설정을 가져오세요. USB 모드는 포트 포워딩도 켜야 합니다."
         )
         if (!mobile) {
             ToolButton(onClick = importConfig, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.FileOpen, null)
                 Spacer(Modifier.width(8.dp))
-                Text("导入电脑配置文件")
+                Text("컴퓨터 설정 파일 가져오기")
             }
-            Note("选择 OpenRayneo-setup.json。它包含访问凭据，导入完成后请删除下载目录中的副本。")
+            Note("OpenRayneo-setup.json을 선택하세요. 액세스 자격 증명이 들어 있으므로 가져온 뒤 다운로드 폴더의 사본을 삭제하세요.")
             HorizontalDivider()
-            Text("或手动填写", style = MaterialTheme.typography.titleMedium)
+            Text("또는 직접 입력", style = MaterialTheme.typography.titleMedium)
         }
         OutlinedTextField(
             url,
             { model.formDrafts[urlKey] = it },
             Modifier.fillMaxWidth(),
-            label = { Text(if (mobile) "服务地址" else "电脑服务地址") },
+            label = { Text(if (mobile) "서비스 주소" else "컴퓨터 서비스 주소") },
             keyboardOptions =
                 KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-            placeholder = { Text(if (mobile) "https://服务商/v1" else "ws://127.0.0.1:4500") },
+            placeholder = { Text(if (mobile) "https://서비스 제공자/v1" else "ws://127.0.0.1:4500") },
             singleLine = true,
             supportingText = {
-                Text(if (mobile) "远端使用 HTTPS；手机本机可使用 HTTP，不要把密钥放进地址中" else "USB：本机地址；无线连接：使用 WSS")
+                Text(if (mobile) "원격은 HTTPS 사용, 휴대폰 로컬은 HTTP 가능. 키를 주소에 넣지 마세요" else "USB: 로컬 주소, 무선 연결: 다음 사용 WSS")
             },
         )
         OutlinedTextField(
             name,
             { model.formDrafts[nameKey] = it },
             Modifier.fillMaxWidth(),
-            label = { Text(if (mobile) "模型名称" else "电脑工作目录（可选）") },
+            label = { Text(if (mobile) "모델 이름" else "컴퓨터 작업 디렉터리 (선택)") },
             singleLine = true,
         )
         OutlinedTextField(
             secret,
             { model.formDrafts[secretKey] = it },
             Modifier.fillMaxWidth(),
-            label = { Text(if (mobile && localModel) "API Key（本机服务可留空）" else if (mobile) "API Key" else "连接令牌") },
+            label = { Text(if (mobile && localModel) "API Key (로컬 서비스는 비워 둘 수 있음)" else if (mobile) "API Key" else "연결 토큰") },
             keyboardOptions =
                 KeyboardOptions(
                     keyboardType = KeyboardType.Password,
@@ -428,7 +428,7 @@ internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig:
                 IconButton(onClick = { showSecret = !showSecret }) {
                     Icon(
                         if (showSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        if (showSecret) "隐藏密钥" else "显示密钥",
+                        if (showSecret) "키 숨기기" else "키 보기",
                     )
                 }
             },
@@ -443,14 +443,14 @@ internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig:
             enabled = ready,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
-            Text("保存配置")
+            Text("설정 저장")
         }
-        Note("凭据使用 Android Keystore 加密保存。保存不会发起模型请求或电脑任务，连接结果请在助手页查看。")
+        Note("자격 증명은 Android Keystore로 암호화 저장됩니다. 저장해도 모델 요청이나 컴퓨터 작업은 실행되지 않으며 연결 결과는 어시스턴트 탭에서 확인하세요.")
         if (!mobile)
             ContentCard {
-                Text("USB 连接步骤", style = MaterialTheme.typography.titleMedium)
+                Text("USB 연결 단계", style = MaterialTheme.typography.titleMedium)
                 Note(
-                    "1. 电脑安装并登录 Codex CLI\n2. 运行仓库中的 scripts/phone-codex.py\n3. 电脑执行 adb reverse tcp:4500 tcp:4500\n4. 在助手页选择电脑 Codex，点击连接"
+                    "1. 컴퓨터에 Codex CLI 설치 및 로그인\n2. 저장소의 scripts/phone-codex.py 실행\n3. 컴퓨터에서 adb reverse tcp:4500 tcp:4500 실행\n4. 어시스턴트 탭에서 컴퓨터 Codex를 선택하고 연결 누르기"
                 )
             }
     }
@@ -467,13 +467,13 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         ContentCard {
-            Text("通知读取", style = MaterialTheme.typography.titleMedium)
-            Note(if (model.notificationAllowed) "系统权限已授权" else "系统权限未授权")
+            Text("알림 읽기", style = MaterialTheme.typography.titleMedium)
+            Note(if (model.notificationAllowed) "시스템 권한 허용됨" else "시스템 권한 미허용")
             Note(s.notificationReadStatus)
-            Note("当前高德候选：${s.navigationEntries.size} 条")
+            Note("현재 Amap 후보: ${s.navigationEntries.size}개")
             if (s.notificationSnapshotAt > 0)
                 Note(
-                    "最近快照同步：" +
+                    "최근 스냅샷 동기화: " +
                         java.text
                             .SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
                             .format(java.util.Date(s.notificationSnapshotAt))
@@ -486,7 +486,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 },
                 enabled = model.notificationAllowed,
             ) {
-                Text("恢复通知读取")
+                Text("알림 읽기 복구")
             }
         }
         ContentCard {
@@ -498,7 +498,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 onClick = { model.attempt { model.service().connection.sendTestNotification() } },
                 enabled = ready,
             ) {
-                Text("发送测试通知")
+                Text("테스트 알림 보내기")
             }
             ToolOutlinedButton(
                 onClick = { model.attempt { model.service().retryAudio() } },
@@ -506,27 +506,27 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                     s.glasses.session?.phase in
                         setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY),
             ) {
-                Text("重启音频解码，保持页面")
+                Text("오디오 디코딩 재시작 (페이지 유지)")
             }
             ToolOutlinedButton(
                 onClick = { model.attempt { model.service().disconnect() } },
                 enabled = ready || s.glasses.link.phase == LinkPhase.CONNECTING,
             ) {
-                Text("断开眼镜")
+                Text("안경 연결 해제")
             }
         }
         ContentCard {
-            Text("高级连接诊断", style = MaterialTheme.typography.titleMedium)
+            Text("고급 연결 진단", style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(bleOnly, { bleOnly = it }, enabled = !ready)
-                Text("仅 BLE 诊断", Modifier.padding(start = 12.dp))
+                Text("BLE 진단 전용", Modifier.padding(start = 12.dp))
             }
-            Note("仅用于连接排查；导航和助手显示需要完整连接。")
+            Note("연결 문제 해결 전용입니다. 내비게이션과 어시스턴트 표시는 완전한 연결이 필요합니다.")
             if (bleOnly) {
-                ToolOutlinedButton(onClick = actions.scan, enabled = !ready) { Text("扫描设备") }
+                ToolOutlinedButton(onClick = actions.scan, enabled = !ready) { Text("기기 스캔") }
                 s.devices.forEach { device ->
                     TextButton(onClick = { model.connect(device, true) }, enabled = !ready) {
-                        Text("诊断连接 ${device.name}")
+                        Text("진단 연결 ${device.name}")
                     }
                 }
             }
@@ -536,7 +536,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            SectionLabel("连接日志")
+            SectionLabel("연결 로그")
             TextButton(
                 onClick = {
                     context
@@ -544,12 +544,12 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                         .setPrimaryClip(
                             ClipData.newPlainText("OpenRayneo", s.logs.joinToString("\n"))
                         )
-                    model.notice = "日志已复制"
+                    model.notice = "로그가 복사됨"
                 }
             ) {
-                Text("复制日志")
+                Text("로그 복사")
             }
         }
-        ContentCard { Note(s.logs.joinToString("\n").ifBlank { "暂无连接日志" }) }
+        ContentCard { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
     }
 }

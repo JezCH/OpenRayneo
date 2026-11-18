@@ -15,7 +15,7 @@ internal sealed interface DisplayIntent {
 }
 internal enum class DisplayOwnership { APP, YIELDED }
 internal enum class LinkPhase { DISCONNECTED, SCANNING, CONNECTING, BLE_ONLY, FULL, RETRY_WAIT, CLOSING }
-internal data class LinkState(val phase: LinkPhase = LinkPhase.DISCONNECTED, val detail: String = "等待连接眼镜")
+internal data class LinkState(val phase: LinkPhase = LinkPhase.DISCONNECTED, val detail: String = "안경 연결 대기 중")
 internal enum class PageMode { NAVIGATION, PROMPT }
 internal enum class PagePhase { STARTING, LAYOUT, SETTLING, READY, CLOSING }
 internal data class PageContent(val key: String, val text: String, val answer: String? = null)
@@ -25,7 +25,7 @@ internal data class PageSession(
 )
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
 internal enum class AudioPhase { STOPPED, WAITING_PACKET, WAITING_PCM, RECEIVING, STALLED, FAILED }
-internal data class AudioState(val phase: AudioPhase = AudioPhase.STOPPED, val detail: String = "眼镜收音已停止")
+internal data class AudioState(val phase: AudioPhase = AudioPhase.STOPPED, val detail: String = "안경 음성 수신이 중지됨")
 internal data class AnswerPermit(val ref: AnswerRef, val revision: Long)
 internal data class GlassesState(
     val intent: DisplayIntent = DisplayIntent.Idle,
@@ -44,21 +44,21 @@ internal data class GlassesState(
     val disconnecting: Boolean = false,
 ) {
     val displayDescription: String get() = when {
-        disconnecting -> "正在关闭眼镜会话"
-        ownership == DisplayOwnership.YIELDED -> "已让出眼镜显示，请主动选择要恢复的功能"
+        disconnecting -> "안경 세션 닫는 중"
+        ownership == DisplayOwnership.YIELDED -> "안경 표시를 양보했습니다. 재개할 기능을 선택하세요"
         error != null -> error
-        session?.phase == PagePhase.CLOSING -> "正在关闭原页面"
-        link.phase == LinkPhase.BLE_ONLY -> "仅 BLE 诊断连接，未启动显示或收音"
+        session?.phase == PagePhase.CLOSING -> "이전 페이지 닫는 중"
+        link.phase == LinkPhase.BLE_ONLY -> "BLE 진단 연결 전용, 표시나 음성 수신은 시작하지 않음"
         link.phase != LinkPhase.FULL -> link.detail
-        session == null -> "已连接，眼镜显示空闲"
-        session.phase == PagePhase.STARTING -> "等待眼镜确认启动"
-        session.phase == PagePhase.LAYOUT -> "正在确认导航布局"
-        session.phase == PagePhase.SETTLING -> "页面已确认，正在发送内容"
-        session.writtenContent != session.content -> "正在更新眼镜内容"
-        session.mode == PageMode.NAVIGATION -> "导航会话已就绪"
-        intent == DisplayIntent.BlankPrompt -> "屏幕已清空，收音保持开启"
-        intent is DisplayIntent.Answer -> "回答会话已就绪"
-        else -> "实时提示会话已就绪"
+        session == null -> "연결됨, 안경 표시 유휴"
+        session.phase == PagePhase.STARTING -> "안경의 시작 확인 대기"
+        session.phase == PagePhase.LAYOUT -> "내비게이션 레이아웃 확인 중"
+        session.phase == PagePhase.SETTLING -> "페이지 확인됨, 내용 전송 중"
+        session.writtenContent != session.content -> "안경 내용 업데이트 중"
+        session.mode == PageMode.NAVIGATION -> "내비게이션 세션 준비됨"
+        intent == DisplayIntent.BlankPrompt -> "화면을 지웠고 음성 수신은 유지됨"
+        intent is DisplayIntent.Answer -> "답변 세션 준비됨"
+        else -> "실시간 힌트 세션 준비됨"
     }
 }
 internal sealed interface PageSignal {

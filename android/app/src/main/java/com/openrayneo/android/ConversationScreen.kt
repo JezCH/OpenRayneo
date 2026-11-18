@@ -53,51 +53,51 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
-                Text("记录与记忆", style = MaterialTheme.typography.headlineSmall)
-                Note("全天智记以时间线和总结呈现，独立记录保留各自的起止时间与内容。本人、其他人及未知／混叠发言均保存；点击原话可更正人物归属。")
+                Text("기록 및 기억", style = MaterialTheme.typography.headlineSmall)
+                Note("종일 기록은 타임라인과 요약으로 표시되며, 개별 기록은 각자의 시작·종료 시간과 내용을 보존합니다. 본인, 타인, 미상／겹친 발화를 모두 저장하며, 원문을 탭하면 인물 귀속을 수정할 수 있습니다.")
                 if (!state.running) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ConversationSource.entries.forEach { option -> FilterChip(source == option, { source = option }, label = { Text(option.title) }) }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ToolButton(onClick = { model.attempt { model.service().startConversation(ConversationMode.DAILY, source) } },
-                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("开始日常") }
+                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("일상 기록 시작") }
                         ToolOutlinedButton(onClick = { model.attempt { model.service().startConversation(ConversationMode.MEETING, source) } },
-                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("开始会议") }
+                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("회의 기록 시작") }
                     }
                 } else {
-                    Text("${state.mode.title} · ${state.source.title} · 已接收${state.decodedSeconds.toInt()}秒音频")
-                    ToolButton(onClick = { model.service().conversations.stop() }, enabled = !state.stopping) { Text(if (state.stopping) "正在收尾…" else "停止记录与收音") }
+                    Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
+                    ToolButton(onClick = { model.service().conversations.stop() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (!state.modelReady) Note("本地声音模型正在准备；加载失败时请查看上方错误。")
+                if (!state.modelReady) Note("로컬 음성 모델을 준비 중입니다. 로드에 실패하면 위의 오류를 확인하세요.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { open("voice-settings") }) { Text("语音与总结") }
-                    TextButton(onClick = { open("voice-profiles") }) { Text("声音与人物") }
+                    TextButton(onClick = { open("voice-settings") }) { Text("음성 및 요약") }
+                    TextButton(onClick = { open("voice-profiles") }) { Text("목소리 및 인물") }
                 }
             }
         }
         if (state.lastHint.isNotBlank()) item {
-            ContentCard { Text("最近短提示", style = MaterialTheme.typography.titleMedium); Text(state.lastHint) }
+            ContentCard { Text("최근 짧은 힌트", style = MaterialTheme.typography.titleMedium); Text(state.lastHint) }
         }
         if (state.running && state.segments.isNotEmpty()) {
-            item { SectionLabel("当前对话") }
+            item { SectionLabel("현재 대화") }
             items(state.segments.takeLast(12), key = { it.id }) { segment -> SpeechRow(segment, state.people, state.activeRecord) { liveSpeaker = segment } }
         }
         item {
-            SectionLabel("记录日程")
+            SectionLabel("기록 일정")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(!monthly, { monthly = false }, label = { Text("按天") })
-                FilterChip(monthly, { monthly = true }, label = { Text("按月") })
-                TextButton(onClick = { dateText = LocalDate.now().toString() }) { Text("今天") }
+                FilterChip(!monthly, { monthly = false }, label = { Text("일별") })
+                FilterChip(monthly, { monthly = true }, label = { Text("월별") })
+                TextButton(onClick = { dateText = LocalDate.now().toString() }) { Text("오늘") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { dateText = (if (monthly) date.minusMonths(1) else date.minusDays(1)).toString() }) { Text("上一${if (monthly) "月" else "天"}") }
-                Text(if (monthly) "${date.year}年${date.monthValue}月" else "${date.monthValue}月${date.dayOfMonth}日")
-                TextButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }) { Text("下一${if (monthly) "月" else "天"}") }
+                TextButton(onClick = { dateText = (if (monthly) date.minusMonths(1) else date.minusDays(1)).toString() }) { Text(if (monthly) "이전 달" else "이전 날") }
+                Text(if (monthly) "${date.year}년 ${date.monthValue}월" else "${date.monthValue}월 ${date.dayOfMonth}일")
+                TextButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }) { Text(if (monthly) "다음 달" else "다음 날") }
             }
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("搜索本时段原话、人物或记忆") }, singleLine = true)
+            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("이 기간의 원문, 인물, 기억 검색") }, singleLine = true)
         }
         val begin = (if (monthly) date.withDayOfMonth(1) else date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val end = (if (monthly) date.withDayOfMonth(1).plusMonths(1) else date.plusDays(1)).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -118,14 +118,14 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             .filter { (day, _) -> day >= localDate(begin) && day < localDate(end) }
             .groupBy({ it.first }, { it.second })
         val days = (recordsByDay.keys + summariesByDay.keys).sorted()
-        if (days.isEmpty()) item { Note("这个时段还没有匹配的记录。可切换日期，或开始一条记录。") }
+        if (days.isEmpty()) item { Note("이 기간에는 일치하는 기록이 없습니다. 날짜를 바꾸거나 새 기록을 시작하세요.") }
         days.forEach { day ->
             val dayRecords = recordsByDay[day].orEmpty()
             val dayBegin = day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val dayEnd = day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            item(key = "day:$day") { SectionLabel("${day.monthValue}月${day.dayOfMonth}日 · ${dayRecords.size}条记录") }
+            item(key = "day:$day") { SectionLabel("${day.monthValue}월 ${day.dayOfMonth}일 · ${dayRecords.size}개 기록") }
             summariesByDay[day].orEmpty().forEach { summary -> item {
-                ContentCard { Text("日总结", style = MaterialTheme.typography.titleMedium); Text(summary.text); if (summary.stale) Note("关联内容有更正，等待刷新") }
+                ContentCard { Text("일일 요약", style = MaterialTheme.typography.titleMedium); Text(summary.text); if (summary.stale) Note("연결된 내용이 수정되어 새로 고침 대기") }
             } }
             dayRecords.groupBy { timePeriod(it.createdAt.coerceAtLeast(dayBegin)) }.forEach { (period, periodRecords) ->
                 item(key = "period:$day:$period") { Note(period) }
@@ -136,13 +136,13 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                     OutlinedCard(Modifier.fillMaxWidth().clickable { selected = row.id }) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(row.title, style = MaterialTheme.typography.titleMedium)
-                            Note("${row.source.title} · ${recordTime(row)} · 当天${daySegments.size}条原话")
-                            if (row.processingPending) Note("音频已保存，转写与说话人分析待补齐")
+                            Note("${row.source.title} · ${recordTime(row)} · 당일 ${daySegments.size}개 원문")
+                            if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
                             if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
                                 Note("${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(row.timeOf(segment)))} · ${segment.text}")
                             } else if (row.summary.isNotBlank()) Text(row.summary.take(160))
-                            if (row.summaryStale) Note("归属有修改，摘要等待重新整理")
-                            if (row.derived.any { it.stale }) Note("关联 Agent 结果需要刷新")
+                            if (row.summaryStale) Note("귀속이 수정되어 요약 재정리 대기")
+                            if (row.derived.any { it.stale }) Note("연결된 Agent 결과를 새로 고쳐야 함")
                         }
                     }
                 }
@@ -155,19 +155,19 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
 private fun SpeechRow(segment: SpeechSegment, people: List<VoicePerson>, record: ConversationRecord? = null, action: (() -> Unit)? = null) {
     OutlinedCard(Modifier.fillMaxWidth().then(if (action != null) Modifier.clickable(onClick = action) else Modifier)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val name = people.firstOrNull { it.id == segment.personId }?.name ?: if (segment.speaker == "未知") "未知说话人" else "说话人${segment.speaker}"
+            val name = people.firstOrNull { it.id == segment.personId }?.name ?: if (segment.speaker == "未知") "알 수 없는 화자" else "화자 ${segment.speaker}"
             val start = record?.timeOf(segment) ?: segment.timelineAt.takeIf { it > 0 }
             val end = record?.endTimeOf(segment) ?: segment.timelineEndAt.takeIf { it > 0 }
             val clock = SimpleDateFormat("HH:mm:ss", Locale.CHINA)
             val time = start?.let { clock.format(Date(it)) + (end?.let { until -> "–${clock.format(Date(until))}" } ?: "") } ?: formatOffset(segment.beginMS)
-            Note((if (segment.timeBasis == "legacy-estimate") "历史时间估计" else "手机接收时间") + if (segment.processingMode == "backfill") " · 历史音频补齐" else "")
-            Note("通道${segment.sourceChannel} · " + (when (segment.identityBasis) { "channel1_default_self" -> "通道1默认本人"; "voiceprint" -> "声纹匹配"; "manual" -> "人工更正"; "mixed" -> "混合识别"; else -> "身份待识别" }))
-            Note("$time · $name${if (segment.mixed) " · 重叠或混合" else if (!segment.stable) " · 暂定" else ""}")
+            Note((if (segment.timeBasis == "legacy-estimate") "과거 시각 추정" else "휴대폰 수신 시각") + if (segment.processingMode == "backfill") " · 과거 오디오 보충" else "")
+            Note("채널 ${segment.sourceChannel} · " + (when (segment.identityBasis) { "channel1_default_self" -> "채널 1 기본 본인"; "voiceprint" -> "음성 지문 일치"; "manual" -> "수동 수정"; "mixed" -> "혼합 식별"; else -> "신원 식별 대기" }))
+            Note("$time · $name${if (segment.mixed) " · 겹침 또는 혼합" else if (!segment.stable) " · 잠정" else ""}")
             if (segment.candidates.isNotEmpty()) {
-                Note("声纹候选 · " + segment.candidates.joinToString(" · ") { match ->
-                    "${people.firstOrNull { it.id == match.personId }?.name ?: "已移除人物"} ${"%.2f".format(match.score)}"
+                Note("음성 지문 후보 · " + segment.candidates.joinToString(" · ") { match ->
+                    "${people.firstOrNull { it.id == match.personId }?.name ?: "삭제된 인물"} ${"%.2f".format(match.score)}"
                 })
-            } else segment.matchScore?.let { Note("声音相似度 ${"%.2f".format(it)}") }
+            } else segment.matchScore?.let { Note("목소리 유사도 ${"%.2f".format(it)}") }
             if (segment.matchReason.isNotBlank()) Note(segment.matchReason)
             Text(segment.text)
         }
@@ -182,70 +182,70 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
     var filter by rememberSaveable(record.id) { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            TextButton(back) { Text("返回记录") }
+            TextButton(back) { Text("기록으로 돌아가기") }
             Text(record.title, style = MaterialTheme.typography.headlineSmall)
             Note("${record.source.title} · ${recordTime(record)}")
-            Note(if (record.source == ConversationSource.ALWAYS_ON) "全天智记时间线与总结；点击原话可更正人物。" else "${record.mode.title} · 点击原话可更正说话人，点击记忆可更正叙述对象。")
-            if (record.processingPending) Note("原始音频已保存，转写与说话人分析待补齐；完成后一起显示。")
+            Note(if (record.source == ConversationSource.ALWAYS_ON) "종일 기록 타임라인과 요약. 원문을 탭하면 인물을 수정할 수 있습니다." else "${record.mode.title} · 원문을 탭하면 화자를, 기억을 탭하면 서술 대상을 수정할 수 있습니다.")
+            if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
             ToolButton(onClick = { model.service().conversations.summarize(record.id) }, enabled = !state.summarizing && record.segments.isNotEmpty()) {
-                Text(if (state.summarizing) "正在整理…" else "整理摘要与记忆")
+                Text(if (state.summarizing) "정리 중…" else "요약 및 기억 정리")
             }
             if (record.audioSamples > 0) {
-                Note("已保存${record.audioSamples / 16000}秒${record.audioChannels}声道原始音频，在手机加密存储，电脑按需取得。")
+                Note("${record.audioChannels}채널 원본 오디오 ${record.audioSamples / 16000}초 저장됨. 휴대폰에 암호화 저장되며 컴퓨터는 필요할 때 가져옵니다.")
                 Row {
-                    TextButton(onClick = { actions.exportRecording(record.id) }) { Text("导出WAV") }
-                    TextButton(onClick = { model.attempt { model.service().conversations.retranscribe(record.id) } }, enabled = !state.running) { Text("从原音频补齐缺失片段") }
+                    TextButton(onClick = { actions.exportRecording(record.id) }) { Text("내보내기: WAV") }
+                    TextButton(onClick = { model.attempt { model.service().conversations.retranscribe(record.id) } }, enabled = !state.running) { Text("원본 오디오에서 누락 구간 보충") }
                 }
             }
             if (record.summary.isNotBlank()) Text(record.summary)
-            if (record.summaryStale) Note("内容有更新，请重新整理摘要。")
+            if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
             record.summaries.filter { it.kind != "rolling" }.forEach { summary ->
-                Text(if (summary.kind == "day_end") "${summary.day.ifBlank { "日期未记录" }} 日总结" else "记录结束总结", style = MaterialTheme.typography.titleSmall)
+                Text(if (summary.kind == "day_end") "${summary.day.ifBlank { "날짜 미기록" }} 일일 요약" else "기록 종료 요약", style = MaterialTheme.typography.titleSmall)
                 Text(summary.text)
-                if (summary.stale) Note("来源有更正，等待刷新")
+                if (summary.stale) Note("출처가 수정되어 새로 고침 대기")
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-        if (record.derived.isNotEmpty()) item { SectionLabel("关联的 Agent 分析与笔记") }
+        if (record.derived.isNotEmpty()) item { SectionLabel("연결된 Agent 분석 및 메모") }
         items(record.derived, key = { "derived:${it.id}" }) { derived ->
             ContentCard {
-                Text(when (derived.kind) { "analysis" -> "分析"; "tags" -> "标签"; else -> "补充笔记" }, style = MaterialTheme.typography.titleSmall)
+                Text(when (derived.kind) { "analysis" -> "분석"; "tags" -> "태그"; else -> "추가 메모" }, style = MaterialTheme.typography.titleSmall)
                 if (derived.text.isNotBlank()) Text(derived.text)
                 if (derived.tags.isNotEmpty()) Note(derived.tags.joinToString(" · "))
-                if (derived.stale) Note("来源有更正，需要由原 Agent 刷新")
+                if (derived.stale) Note("출처가 수정되어 원래 Agent가 새로 고쳐야 함")
             }
         }
         if (record.speakerSamples.isNotEmpty()) item {
-            SectionLabel("已采集的声音 · 点击命名")
+            SectionLabel("수집된 목소리 · 탭하여 이름 지정")
             record.speakerSamples.forEach { (label, samples) ->
                 val segment = record.segments.firstOrNull { it.speaker == label }
-                    ?: SpeechSegment("voice:$label", 0, 0, "本次会话已自动提取${samples.size}段声音特征", speaker = label, personId = record.speakerPeople[label])
+                    ?: SpeechSegment("voice:$label", 0, 0, "이번 세션에서 자동 추출: ${samples.size}개 음성 특징", speaker = label, personId = record.speakerPeople[label])
                 TextButton(onClick = { speakerEdit = segment }) {
-                    Text("说话人$label · ${state.people.firstOrNull { it.id == segment.personId }?.name ?: "待标注"} · ${samples.size}段样本")
+                    Text("화자 $label · ${state.people.firstOrNull { it.id == segment.personId }?.name ?: "라벨 대기"} · ${samples.size}개 샘플")
                 }
             }
         }
-        if (record.memories.isNotEmpty()) item { SectionLabel("有来源的记忆") }
+        if (record.memories.isNotEmpty()) item { SectionLabel("출처가 있는 기억") }
         items(record.memories, key = { it.id }) { memory ->
             OutlinedCard(Modifier.fillMaxWidth().clickable { memoryEdit = memory }) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("${memory.subject} · ${memory.kind}", style = MaterialTheme.typography.titleSmall)
                     Text(memory.text)
-                    memory.sourceIds.forEach { id -> record.segments.firstOrNull { it.id == id }?.let { source -> Note("原话：${source.text}") } }
+                    memory.sourceIds.forEach { id -> record.segments.firstOrNull { it.id == id }?.let { source -> Note("원문: ${source.text}") } }
                 }
             }
         }
         item {
-            SectionLabel("原话时间线")
+            SectionLabel("원문 타임라인")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(filter == null, { filter = null }, label = { Text("全部") })
+                FilterChip(filter == null, { filter = null }, label = { Text("전체") })
                 record.segments.map { it.speaker }.distinct().take(6).forEach { name ->
                     FilterChip(filter == name, { filter = name }, label = { Text(name) })
                 }
             }
         }
         record.segments.filter { filter == null || it.speaker == filter }.groupBy { localDate(record.timeOf(it)) }.forEach { (day, segments) ->
-            item(key = "timeline:$day") { SectionLabel("${day.monthValue}月${day.dayOfMonth}日") }
+            item(key = "timeline:$day") { SectionLabel("${day.monthValue}월 ${day.dayOfMonth}일") }
             items(segments, key = { it.id }) { segment ->
                 SpeechRow(segment, state.people, record) { speakerEdit = segment }
             }
@@ -255,15 +255,15 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
     memoryEdit?.let { memory ->
         var subject by remember(memory.id) { mutableStateOf(memory.subject) }
         var text by remember(memory.id) { mutableStateOf(memory.text) }
-        AlertDialog(onDismissRequest = { memoryEdit = null }, title = { Text("更正记忆归属") }, text = {
+        AlertDialog(onDismissRequest = { memoryEdit = null }, title = { Text("기억 귀속 수정") }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(subject, { subject = it }, label = { Text("这件事说的是谁") })
-                OutlinedTextField(text, { text = it }, label = { Text("记忆内容") })
-                Note("说话人和原文来源保留；保存后需重新整理摘要。")
+                OutlinedTextField(subject, { subject = it }, label = { Text("이 일은 누구에 대한 것인가") })
+                OutlinedTextField(text, { text = it }, label = { Text("기억 내용") })
+                Note("화자와 원문 출처는 유지됩니다. 저장 후 요약을 다시 정리해야 합니다.")
             }
         }, confirmButton = { TextButton(onClick = {
             model.service().conversations.correctMemory(record.id, memory.id, subject.trim(), text.trim()); memoryEdit = null
-        }, enabled = subject.isNotBlank() && text.isNotBlank()) { Text("保存更正") } }, dismissButton = { TextButton(onClick = { memoryEdit = null }) { Text("取消") } })
+        }, enabled = subject.isNotBlank() && text.isNotBlank()) { Text("수정 저장") } }, dismissButton = { TextButton(onClick = { memoryEdit = null }) { Text("취소") } })
     }
 }
 
@@ -281,21 +281,21 @@ private fun SpeakerBindingDialog(model: AppModel, record: ConversationRecord, se
     var rememberVoice by remember { mutableStateOf(record.speakerSamples[segment.speaker]?.isNotEmpty() == true) }
     val picked = model.selectedContact
     LaunchedEffect(picked) { if (picked != null) { name = picked.name; personId = null } }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("说话人${segment.speaker}") }, text = {
+    AlertDialog(onDismissRequest = dismiss, title = { Text("화자 ${segment.speaker}") }, text = {
         Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Note(segment.text)
-            TextButton(onClick = { history = true }) { Text("选择历史发言并批量更正") }
-            Row { Checkbox(all, { all = it }, enabled = segment.speaker != "未知"); Text("应用到本次记录的同一说话人") }
+            TextButton(onClick = { history = true }) { Text("과거 발화를 선택해 일괄 수정") }
+            Row { Checkbox(all, { all = it }, enabled = segment.speaker != "未知"); Text("이번 기록의 같은 화자에게 적용") }
             people.forEach { person ->
                 Row(Modifier.fillMaxWidth().clickable { personId = person.id }) {
                     RadioButton(personId == person.id, { personId = person.id }); Text(person.name)
                 }
             }
-            OutlinedTextField(name, { name = it; personId = null }, label = { Text("或新建人物名称") })
-            TextButton(onClick = { model.selectedContact = null; actions.contact() }) { Text("从联系人选择") }
+            OutlinedTextField(name, { name = it; personId = null }, label = { Text("또는 새 인물 이름") })
+            TextButton(onClick = { model.selectedContact = null; actions.contact() }) { Text("연락처에서 선택") }
             Row { Checkbox(rememberVoice, { rememberVoice = it }, enabled = all && record.speakerSamples[segment.speaker]?.isNotEmpty() == true)
-                Text("记住这个声音，供下次识别") }
-            Note("已自动采集${record.speakerSamples[segment.speaker].orEmpty().size}段声纹。勾选后，命名的声音将在下次会话参与匹配；关闭则只改本次标签。相似度是声音对比得分。")
+                Text("이 목소리를 기억해 다음에 식별") }
+            Note("자동 수집됨: ${record.speakerSamples[segment.speaker].orEmpty().size}개 음성 지문. 체크하면 이름 붙인 목소리가 다음 세션 매칭에 사용되고, 끄면 이번 라벨만 변경됩니다. 유사도는 목소리 비교 점수입니다.")
         }
     }, confirmButton = { TextButton(onClick = {
         val person = people.firstOrNull { it.id == personId } ?: VoicePerson(name = name.trim(), contactUri = picked?.uri)
@@ -304,8 +304,8 @@ private fun SpeakerBindingDialog(model: AppModel, record: ConversationRecord, se
             model.service().conversations.correctSpeaker(record.id, setOf(segment.id), person.id, person)
         }
         model.selectedContact = null; dismiss()
-    }, enabled = personId != null || name.isNotBlank()) { Text("保存") } }, dismissButton = {
-        TextButton(onClick = { model.selectedContact = null; dismiss() }) { Text("取消") }
+    }, enabled = personId != null || name.isNotBlank()) { Text("저장") } }, dismissButton = {
+        TextButton(onClick = { model.selectedContact = null; dismiss() }) { Text("취소") }
     })
 }
 
@@ -322,14 +322,14 @@ private fun calendarRecordDays(record: ConversationRecord, begin: Long, end: Lon
     return generateSequence(localDate(start)) { day -> day.plusDays(1).takeIf { it <= lastDay } }.toList()
 }
 private fun timePeriod(time: Long): String = when (Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).hour) {
-    in 0..5 -> "凌晨 00:00–06:00"
-    in 6..11 -> "上午 06:00–12:00"
-    in 12..17 -> "下午 12:00–18:00"
-    else -> "晚间 18:00–24:00"
+    in 0..5 -> "새벽 00:00–06:00"
+    in 6..11 -> "오전 06:00–12:00"
+    in 12..17 -> "오후 12:00–18:00"
+    else -> "저녁 18:00–24:00"
 }
 private fun recordTime(record: ConversationRecord): String {
-    val format = SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
-    return format.format(Date(record.createdAt)) + " → " + (record.endedAt?.let { format.format(Date(it)) } ?: "结束时间未记录")
+    val format = SimpleDateFormat("M월 d일 HH:mm", Locale.CHINA)
+    return format.format(Date(record.createdAt)) + " → " + (record.endedAt?.let { format.format(Date(it)) } ?: "종료 시각 미기록")
 }
 
 /** Select exact historical turns before changing identity; original ASR and audio remain intact. */
@@ -352,14 +352,14 @@ internal fun HistoricalSpeakerDialog(
     var name by remember { mutableStateOf("") }
     val selected = selection.filterValues { it.isNotEmpty() }
     val count = selected.values.sumOf { it.size }
-    AlertDialog(onDismissRequest = dismiss, title = { Text(if (split) "拆分人物的历史发言" else "批量更正历史人物归属") }, text = {
+    AlertDialog(onDismissRequest = dismiss, title = { Text(if (split) "인물의 과거 발화 분리" else "과거 인물 귀속 일괄 수정") }, text = {
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Note("先选择记录或展开挑选发言。此次将修改 ${selected.size} 条记录、$count 段原话；相关总结和 Agent 结果将标记需刷新，原文与音频保留。")
-            if (split) OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("拆分出的新人物名称") })
+            Note("먼저 기록을 선택하거나 펼쳐서 발화를 고르세요. 이번에 수정할 항목: 기록 ${selected.size}개, $count개 원문. 관련 요약과 Agent 결과는 새로 고침 필요로 표시되며 원문과 오디오는 유지됩니다.")
+            if (split) OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("분리할 새 인물 이름") })
             else {
-                Text("更正为", style = MaterialTheme.typography.titleSmall)
+                Text("다음으로 수정", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth().clickable { targetId = null }) {
-                    RadioButton(targetId == null, { targetId = null }); Text("未知说话人")
+                    RadioButton(targetId == null, { targetId = null }); Text("알 수 없는 화자")
                 }
                 state.people.filter { it.mergedInto == null }.forEach { person ->
                     Row(Modifier.fillMaxWidth().clickable { targetId = person.id }) {
@@ -368,7 +368,7 @@ internal fun HistoricalSpeakerDialog(
                 }
             }
             HorizontalDivider()
-            if (rows.isEmpty()) Note("没有可更正的关联发言。")
+            if (rows.isEmpty()) Note("수정할 수 있는 연결 발화가 없습니다.")
             rows.forEach { (record, turns) ->
                 val ids = turns.map { it.id }.toSet()
                 Row(Modifier.fillMaxWidth()) {
@@ -377,9 +377,9 @@ internal fun HistoricalSpeakerDialog(
                     })
                     Column(Modifier.weight(1f)) {
                         Text(record.title, style = MaterialTheme.typography.titleSmall)
-                        Note("${recordTime(record)} · ${selection[record.id].orEmpty().size}/${turns.size}段")
+                        Note("${recordTime(record)} · ${selection[record.id].orEmpty().size}/${turns.size}개")
                         TextButton(onClick = { expanded = if (record.id in expanded) expanded - record.id else expanded + record.id }) {
-                            Text(if (record.id in expanded) "收起发言" else "挑选发言")
+                            Text(if (record.id in expanded) "발화 접기" else "발화 고르기")
                         }
                     }
                 }
@@ -401,6 +401,6 @@ internal fun HistoricalSpeakerDialog(
             else model.service().conversations.correctSpeakers(selected, targetId)
         }
         dismiss()
-    }, enabled = count > 0 && (!split || name.isNotBlank())) { Text("确认${if (split) "拆分" else "更正"}$count 段") } },
-        dismissButton = { TextButton(onClick = dismiss) { Text("取消") } })
+    }, enabled = count > 0 && (!split || name.isNotBlank())) { Text("${count}개 ${if (split) "분리" else "수정"} 확인") } },
+        dismissButton = { TextButton(onClick = dismiss) { Text("취소") } })
 }

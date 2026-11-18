@@ -28,14 +28,14 @@ internal class ConversationASR(config: JSONObject,
     private val seen = mutableSetOf<String>()
 
     @Synchronized fun start() {
-        require(key.isNotEmpty()) { "请先填写百炼 ASR API Key" }
-        require(address.startsWith("wss://")) { "ASR 服务地址需使用 WSS" }
+        require(key.isNotEmpty()) { "먼저 Bailian ASR API Key" }
+        require(address.startsWith("wss://")) { "ASR 서비스 주소는 다음을 사용해야 합니다: WSS" }
         socket = http.newWebSocket(Request.Builder().url(address).header("Authorization", "Bearer $key").build(), this)
     }
     @Synchronized fun canAcceptAudio() = !ended && !finishing && pending.size + (socket?.queueSize() ?: 0) < 128000
     @Synchronized fun append(samples: FloatArray) {
         if (ended || finishing) return
-        check(pending.size + samples.size * 2 <= 480000) { "ASR 待发送音频超过15秒，已停止本轮以保留错误状态" }
+        check(pending.size + samples.size * 2 <= 480000) { "ASR 전송 대기 오디오가 15초를 넘어 이번 라운드를 중지했습니다(오류 상태 유지)" }
         for (sample in samples) pending.writeShortLe((sample * 32768).toInt().coerceIn(-32768, 32767))
         pump()
     }
@@ -71,29 +71,29 @@ internal class ConversationASR(config: JSONObject,
                 }
             }
             "task-finished" -> { ended = true; socket?.close(1000, null); release(); completed() }
-            "task-failed" -> fail("ASR 请求失败：" + header.optString("error_code", "unknown"))
+            "task-failed" -> fail("ASR 요청 실패: " + header.optString("error_code", "unknown"))
         }
-        } catch (error: Exception) { fail("ASR 响应处理失败：${error.message}") }
+        } catch (error: Exception) { fail("ASR 응답 처리 실패: ${error.message}") }
     }
     override fun onMessage(webSocket: WebSocket, bytes: ByteString) = onMessage(webSocket, bytes.utf8())
     @Synchronized override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        if (!ended) fail("ASR 连接中断：" + (response?.code?.let { "HTTP $it" } ?: t.javaClass.simpleName))
+        if (!ended) fail("ASR 연결 끊김: " + (response?.code?.let { "HTTP $it" } ?: t.javaClass.simpleName))
     }
     @Synchronized override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        if (!ended) fail("ASR 在完整结束前关闭：$code")
+        if (!ended) fail("ASR 정상 종료 전에 닫힘: $code")
     }
     private fun header(action: String) = JSONObject().put("action", action).put("task_id", task).put("streaming", "duplex")
     private fun pump() {
         val target = socket ?: return
         if (!started || ended) return
-        check(target.queueSize() <= 480000) { "ASR 网络发送积压超过15秒" }
+        check(target.queueSize() <= 480000) { "ASR 네트워크 전송 적체가 15초를 초과함" }
         while (pending.size >= 6400 || finishing && pending.size > 0) {
-            check(target.send(pending.readByteString(minOf(pending.size, 6400)))) { "ASR 音频发送失败" }
+            check(target.send(pending.readByteString(minOf(pending.size, 6400)))) { "ASR 오디오 전송 실패" }
         }
         if (finishing && !finishSent) {
             finishSent = true
             check(target.send(JSONObject().put("header", header("finish-task"))
-                .put("payload", JSONObject().put("input", JSONObject())).toString())) { "ASR 结束发送失败" }
+                .put("payload", JSONObject().put("input", JSONObject())).toString())) { "ASR 종료 신호 전송 실패" }
         }
     }
     private fun fail(message: String) { ended = true; pending.clear(); socket?.cancel(); release(); failed(message) }

@@ -30,17 +30,17 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
         val token = generation; val allowed = schedulingAllowed
         worker.execute {
             operationGeneration = token; operationAllowed = allowed
-            val result = runCatching { check(token == generation && allowed()) { "设备操作已取消" }; work() }
+            val result = runCatching { check(token == generation && allowed()) { "기기 작업이 취소됨" }; work() }
             main.post { completion(result) }
         }
     }
     fun request(protocol: Int, type: Int, body: JSONObject, wait: Boolean = true,
                 matches: (Int, JSONObject) -> Boolean = { reply, _ -> reply == type }): JSONObject? {
-        check(Looper.myLooper() != Looper.getMainLooper()) { "设备请求不能阻塞界面" }
+        check(Looper.myLooper() != Looper.getMainLooper()) { "기기 요청이 UI를 막아서는 안 됨" }
         val operation = Pending(protocol, matches, CountDownLatch(1))
         val token = operationGeneration; val allowed = operationAllowed
         main.post {
-            if (token != generation || !allowed()) { operation.error = IllegalStateException("设备连接已切换，旧操作已取消"); operation.latch.countDown(); return@post }
+            if (token != generation || !allowed()) { operation.error = IllegalStateException("기기 연결이 전환되어 이전 작업이 취소됨"); operation.latch.countDown(); return@post }
             pending = operation
             try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
                 if (result.isFailure) { operation.error = result.exceptionOrNull(); operation.latch.countDown() }
@@ -50,7 +50,7 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
         val replied = operation.latch.await(6, TimeUnit.SECONDS)
         main.post { if (pending === operation) pending = null }
         operation.error?.let { throw it }
-        if (!replied) throw IllegalStateException("设备未及时回包；修改结果待回读确认")
+        if (!replied) throw IllegalStateException("기기가 제때 응답하지 않았습니다. 변경 결과는 재조회 확인 대기")
         return operation.result
     }
     fun sendRaw(frame: ByteArray) {
@@ -58,11 +58,11 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
         val token = operationGeneration; val allowed = operationAllowed
         val latch = CountDownLatch(1); var error: Throwable? = null
         main.post {
-            if (token != generation || !allowed()) { error = IllegalStateException("连接已切换，传输取消"); latch.countDown(); return@post }
+            if (token != generation || !allowed()) { error = IllegalStateException("연결이 전환되어 전송 취소됨"); latch.countDown(); return@post }
             try { write(frame) { result -> error = result.exceptionOrNull(); latch.countDown() } }
             catch (failure: Exception) { error = failure; latch.countDown() }
         }
-        check(latch.await(6, TimeUnit.SECONDS)) { "数据发送超时" }
+        check(latch.await(6, TimeUnit.SECONDS)) { "데이터 전송 시간 초과" }
         error?.let { throw it }
     }
     fun receive(frame: ProtocolCodec.Frame) {
@@ -75,6 +75,6 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
             current.result = body; pending = null; current.latch.countDown()
         }
     }
-    fun disconnected() { generation++; pending?.let { it.error = IllegalStateException("眼镜连接已断开"); it.latch.countDown() }; pending = null }
+    fun disconnected() { generation++; pending?.let { it.error = IllegalStateException("안경 연결이 끊김"); it.latch.countDown() }; pending = null }
     fun close() { disconnected(); worker.shutdownNow() }
 }

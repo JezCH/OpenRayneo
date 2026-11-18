@@ -44,7 +44,7 @@ internal object GlassesCoordinator {
                 setIntent(DisplayIntent.Idle)
                 state = state.copy(navigation = state.navigation.copy(enabled = false, frame = null))
                 effects += GlassesEffect.StopFollowing
-                state = state.copy(link = LinkState(LinkPhase.CONNECTING, "正在连接眼镜"), disconnecting = false)
+                state = state.copy(link = LinkState(LinkPhase.CONNECTING, "안경에 연결 중"), disconnecting = false)
             }
             is GlassesEvent.LinkChanged -> {
                 val lost = state.link.phase == LinkPhase.FULL && event.state.phase != LinkPhase.FULL
@@ -86,7 +86,7 @@ internal object GlassesCoordinator {
                 state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP &&
                     !state.disconnecting && it.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)
             }?.let {
-                state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "解码器已重启，等待新的眼镜音频包"))
+                state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "디코더 재시작됨, 새 안경 오디오 패킷 대기"))
                 effects += GlassesEffect.StopAudio
                 effects += GlassesEffect.StartAudio(it.id, if (it.mode == PageMode.NAVIGATION) 1 else 2)
             }
@@ -121,7 +121,7 @@ internal object GlassesCoordinator {
                     }
                     else -> if (session.phase != PagePhase.CLOSING) when (signal) {
                         is PageSignal.AudioAccepted -> {
-                            state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "音频会话已确认，等待眼镜音频"))
+                            state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "오디오 세션 확인됨, 안경 오디오 대기"))
                             effects += GlassesEffect.StartAudio(session.id, signal.channels)
                         }
                         PageSignal.LayoutPending -> state = state.copy(session = session.copy(phase = PagePhase.LAYOUT))
@@ -155,7 +155,7 @@ internal object GlassesCoordinator {
             }
             is GlassesEvent.CloseTimedOut -> if (state.session?.id == event.id && state.session?.phase == PagePhase.CLOSING) {
                 resetSession()
-                state = state.copy(error = "页面关闭未完成，请主动重试；眼镜实际页面未知", blockedRevision = state.revision)
+                state = state.copy(error = "페이지 닫기가 완료되지 않았습니다. 다시 시도하세요. 안경의 실제 페이지는 알 수 없습니다", blockedRevision = state.revision)
             }
             is GlassesEvent.ExternalPage -> {
                 if (state.ownership == DisplayOwnership.YIELDED && state.session == null && state.intent == DisplayIntent.Idle)
@@ -186,7 +186,7 @@ internal object GlassesCoordinator {
             }
         }
         if (state.disconnecting && state.session == null && state.link.phase != LinkPhase.CLOSING) {
-            state = state.copy(link = LinkState(LinkPhase.CLOSING, "正在断开眼镜"))
+            state = state.copy(link = LinkState(LinkPhase.CLOSING, "안경 연결 해제 중"))
             effects += GlassesEffect.DisconnectTransport
         }
         return GlassesTransition(state, effects)
@@ -197,7 +197,7 @@ internal object GlassesCoordinator {
         return when (val intent = state.intent) {
             DisplayIntent.Idle -> null
             DisplayIntent.BlankPrompt -> PageMode.PROMPT to PageContent("blank", "　", "　")
-            DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby", "OpenRayneo", "实时提示已就绪")
+            DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby", "OpenRayneo", "실시간 힌트 준비됨")
             DisplayIntent.Navigation -> state.navigation.frame?.takeIf { state.navigation.enabled }?.let {
                 PageMode.NAVIGATION to PageContent("navigation", it)
             }

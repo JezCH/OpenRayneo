@@ -23,7 +23,7 @@ internal class VoiceModePolicy(context: Context) {
                     .put("text", segment.text).put("sourceChannel", segment.sourceChannel).put("identityBasis", segment.identityBasis).put("speaker", segment.speaker).put("mixed", segment.mixed).put("personId", segment.personId)
                     .put("person_name", person?.name ?: JSONObject.NULL)
                     .put("is_self", person?.self == true && segment.stable)
-                    .put("identity_note", if (segment.identityBasis == "channel1_default_self") "双通道中通道1按用户策略默认本人，不是声纹确认；另一通道可能录到同一人，不要仅按文字相似删原话" else "按本段身份出处理解").put("identity_stable", segment.stable && person != null)
+                    .put("identity_note", if (segment.identityBasis == "channel1_default_self") "2채널 중 채널 1은 사용자 정책상 기본 본인이며 음성 지문으로 확인한 것이 아님. 다른 채널에 같은 사람이 녹음될 수 있으니 텍스트가 비슷하다는 이유만으로 원문을 삭제하지 말 것" else "이 구간의 신원 출처에 따라 이해할 것").put("identity_stable", segment.stable && person != null)
                     .put("timelineAt", segment.timelineAt.takeIf { it > 0 } ?: segment.receivedAt).put("timeBasis", segment.timeBasis)
                     .put("processingMode", segment.processingMode).put("asrCompletedAt", segment.receivedAt)
                     .put("age_seconds", (now - (segment.timelineAt.takeIf { it > 0 } ?: segment.receivedAt)).coerceAtLeast(0) / 1000)

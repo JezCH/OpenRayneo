@@ -12,7 +12,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 internal data class CompanionContentState(val dashboard: JSONObject? = null, val todos: List<JSONObject> = emptyList(),
-    val schedules: List<JSONObject> = emptyList(), val busy: Boolean = false, val notice: String = "连接后读取眼镜内容",
+    val schedules: List<JSONObject> = emptyList(), val busy: Boolean = false, val notice: String = "연결 후 안경 콘텐츠 읽기",
     val weatherCities: List<JSONObject> = emptyList(), val weather: JSONObject? = null, val automaticWeather: Boolean = false)
 
 /** Device-backed content shared by manual pages, model tools and the local Agent API. */
@@ -23,7 +23,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
     private val local = context.getSharedPreferences("device-content", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
-    private fun device() = checkNotNull(address()) { "请先完整连接眼镜" }
+    private fun device() = checkNotNull(address()) { "먼저 안경을 완전히 연결하세요" }
     private fun cacheKey() = "todos:" + device()
     private fun cachedTodos() = JSONArray(local.getString(cacheKey(), "[]")).objects()
     private fun cache(items: List<JSONObject>) { check(local.edit().putString(cacheKey(), JSONArray(items).toString()).commit()) }
@@ -47,9 +47,9 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
     fun refresh() = run { dashboard(); events(1); events(0); JSONObject().put("readBack", true) }
     fun disconnected() { weatherAttemptAt = 0; state = CompanionContentState(); changed() }
     fun run(work: () -> JSONObject) {
-        check(!state.busy) { "请等待当前眼镜操作" }
-        state = state.copy(busy = true, notice = "正在与眼镜同步…"); changed()
-        execute(work) { result -> state = state.copy(busy = false, notice = result.fold({ it.optString("message").ifBlank { if (it.optBoolean("readBack")) "设备回读已确认" else "已发送，具体状态见结果" } }, { it.message ?: "操作失败" })); changed() }
+        check(!state.busy) { "현재 안경 작업을 기다리세요" }
+        state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
+        execute(work) { result -> state = state.copy(busy = false, notice = result.fold({ it.optString("message").ifBlank { if (it.optBoolean("readBack")) "기기 재조회로 확인됨" else "전송됨, 자세한 상태는 결과 참조" } }, { it.message ?: "작업 실패" })); changed() }
     }
     fun execute(work: () -> JSONObject, completion: (Result<JSONObject>) -> Unit) = requests.perform(work, completion)
     fun execute(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) = execute({ tool(name, args) }, completion)
@@ -69,7 +69,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         if (6 in added) pushClock()
         val actual = dashboard()
         val same = actual.optInt("simple_mode") == mode && actual.optJSONArray("widgets").ints() == widgets
-        return JSONObject().put("readBack", same).put("config", actual).put("message", if (same) "首页布局已回读确认" else "设备布局与请求不同，请核对组件内容是否已配置")
+        return JSONObject().put("readBack", same).put("config", actual).put("message", if (same) "홈 레이아웃이 재조회로 확인됨" else "기기 레이아웃이 요청과 다릅니다. 위젯 콘텐츠가 설정되었는지 확인하세요")
     }
     fun events(eventType: Int): List<JSONObject> {
         val rows = mutableListOf<JSONObject>(); var last: JSONObject? = null
@@ -82,7 +82,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         }
         val response = checkNotNull(last)
         check(response.optBoolean("needFullData") && response.getInt(if (eventType == 1) "todoTotal" else "scheduleTotal") == rows.size &&
-            rows.map { it.getLong("eventID") }.distinct().size == rows.size) { "设备列表未完整返回，未执行修改" }
+            rows.map { it.getLong("eventID") }.distinct().size == rows.size) { "기기 목록이 완전히 반환되지 않아 변경하지 않았습니다" }
         if (eventType == 1) {
             val completed = cachedTodos().filter { it.optInt("status") == 1 && rows.none { row -> row.getLong("eventID") == it.getLong("eventID") } }
             cache(rows + completed); state = state.copy(todos = rows + completed)
@@ -93,15 +93,15 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         val key = "mutation:" + device() + ":" + args.optString("request_id").ifBlank { UUID.randomUUID().toString() }
         local.getString(key, null)?.let { saved ->
             val old = JSONObject(saved); return JSONObject().put("eventID", old.getLong("id")).put("duplicate", true)
-                .put("items", JSONArray(events(1))).put("readBack", false).put("message", "同一请求已发送过，请根据回读核对；没有重复修改")
+                .put("items", JSONArray(events(1))).put("readBack", false).put("message", "같은 요청이 이미 전송되었습니다. 재조회 결과로 확인하세요. 중복 변경은 없습니다")
         }
         val before = events(1)
         val old = cachedTodos().firstOrNull { it.getLong("eventID") == args.optLong("event_id", -1) }
         val now = System.currentTimeMillis()
         val id = if (action == "add") {
             val reserved = cachedTodos().map { it.getLong("eventID") }.toSet()
-            (80000L until 90000L).firstOrNull { it !in reserved } ?: error("手机本地待办ID已用完")
-        } else checkNotNull(old) { "未找到该待办，请先读取列表" }.getLong("eventID")
+            (80000L until 90000L).firstOrNull { it !in reserved } ?: error("휴대폰 로컬 할 일 ID가 모두 소진됨")
+        } else checkNotNull(old) { "해당 할 일을 찾을 수 없습니다. 먼저 목록을 읽으세요" }.getLong("eventID")
         val target = if (action == "add") JSONObject().put("eventType", 1).put("eventID", id).put("createTime", now)
             .put("title", args.getString("title")).put("isImportant", args.optBoolean("important")).put("status", 0).put("eventSource", 0)
             else JSONObject(old.toString())
@@ -126,25 +126,25 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
             else found?.let { it.optString("title") == target.optString("title") && it.optInt("status") == target.optInt("status") && it.optBoolean("isImportant") == target.optBoolean("isImportant") } == true
         if (action == "delete" && confirmed) cache(cachedTodos().filter { it.getLong("eventID") != id })
         return JSONObject().put("eventID", id).put("readBack", confirmed).put("pendingRemoved", old != null && found == null)
-            .put("items", JSONArray(state.todos)).put("message", if (confirmed) "待办已回读确认" else "已发送待办修改；待完成列表已回读，操作结果仍需核对")
+            .put("items", JSONArray(state.todos)).put("message", if (confirmed) "할 일이 재조회로 확인됨" else "할 일 변경을 전송했습니다. 미완료 목록은 재조회했지만 결과는 추가 확인이 필요합니다")
     }
     fun schedule(action: String, args: JSONObject): JSONObject {
         val mutationKey = "scheduleMutation:" + device() + ":" + args.optString("request_id").ifBlank { UUID.randomUUID().toString() }
         local.getString(mutationKey, null)?.let { prior ->
             return JSONObject().put("eventID", prior.toLong()).put("duplicate", true).put("readBack", false)
-                .put("items", JSONArray(events(0))).put("message", "该请求已发送过；请核对日程列表，没有重复写入")
+                .put("items", JSONArray(events(0))).put("message", "해당 요청은 이미 전송되었습니다. 일정 목록을 확인하세요. 중복 기록은 없습니다")
         }
         val items = events(0).map { JSONObject(it.toString()) }.toMutableList()
         val id = if (action == "add") generateSequence(System.currentTimeMillis()) { it + 1 }.first { id -> items.none { it.getLong("eventID") == id } }
             else args.getLong("event_id")
         val existing = items.firstOrNull { it.getLong("eventID") == id }
         val target = if (action == "add") JSONObject().put("eventType", 0).put("eventID", id).put("status", 0).put("eventSource", 0).put("createTime", System.currentTimeMillis())
-            else JSONObject(checkNotNull(existing) { "日程不存在" }.toString())
+            else JSONObject(checkNotNull(existing) { "일정이 없습니다" }.toString())
         if (action == "delete") items.remove(existing) else {
             if (args.has("title")) target.put("title", args.getString("title"))
             if (args.has("start_time")) target.put("startTime", args.getLong("start_time"))
             if (args.has("end_time")) target.put("endTime", args.getLong("end_time"))
-            require(target.optString("title").isNotBlank() && target.getLong("endTime") > target.getLong("startTime")) { "日程需要明确标题、开始和结束时间" }
+            require(target.optString("title").isNotBlank() && target.getLong("endTime") > target.getLong("startTime")) { "일정에는 제목, 시작 시간, 종료 시간이 필요합니다" }
             val instant = Instant.ofEpochSecond(target.getLong("startTime")); val zone = ZoneId.systemDefault()
             target.put("localTimeOffset", zone.rules.getOffset(instant).totalSeconds)
                 .put("isTomorrowSchedule", instant.atZone(zone).toLocalDate() == LocalDate.now(zone).plusDays(1)).put("lastModifiedTime", System.currentTimeMillis())
@@ -178,7 +178,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         val currentTime = current.getString("time")
         val indices = (0 until hourly.getJSONArray("time").length()).filter { hourly.getJSONArray("time").getString(it) >= currentTime }.take(5)
         for (index in indices) {
-            val time = LocalDateTime.parse(hourly.getJSONArray("time").getString(index)).hour.toString() + "时"
+            val time = LocalDateTime.parse(hourly.getJSONArray("time").getString(index)).hour.toString() + "시"
             data.put(time, JSONArray().put(kotlin.math.round(hourly.getJSONArray("temperature_2m").getDouble(index)).toInt())
                 .put(icon(hourly.getJSONArray("weather_code").getInt(index), hourly.getJSONArray("is_day").getInt(index) == 1)))
         }
@@ -187,19 +187,19 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
             .put("temp", kotlin.math.round(current.getDouble("temperature_2m")).toInt()).put("icon", icon(current.getInt("weather_code"), day))
             .put("des", description(current.getInt("weather_code"))).put("temp_range", "${kotlin.math.round(daily.getJSONArray("temperature_2m_max").getDouble(0)).toInt()}°/${kotlin.math.round(daily.getJSONArray("temperature_2m_min").getDouble(0)).toInt()}°")
             .put("hourly", data)
-        check(address() == deviceId) { "设备连接已变化，未保存旧请求的天气" }
+        check(address() == deviceId) { "기기 연결이 바뀌어 이전 요청의 날씨는 저장하지 않았습니다" }
         card.put("fetchedAt", System.currentTimeMillis())
         state = state.copy(weather = card)
         check(local.edit().putString("weatherCity:" + device(), city.toString()).putString("weatherCard:" + device(), card.toString()).commit())
         return JSONObject().put("weather", card)
     }
     fun pushWeather(): JSONObject {
-        val card = checkNotNull(state.weather) { "请先选择城市并获取天气" }
+        val card = checkNotNull(state.weather) { "먼저 도시를 선택하고 날씨를 가져오세요" }
         launcher("current_weather_update", JSONObject().put("location", card.getString("location")).put("temp", card.getInt("temp")).put("icon", card.getInt("icon")).toString())
         launcher("weather_update", JSONArray().put(card).toString())
-        return JSONObject().put("sent", "weather").put("readBack", false).put("message", "首页温度与天气卡均已收到回包，眼镜显示待确认")
+        return JSONObject().put("sent", "weather").put("readBack", false).put("message", "홈 온도와 날씨 카드 모두 응답을 받았습니다. 안경 표시는 확인이 필요합니다")
     }
-    fun pushClock(): JSONObject = launcher("clock_update", JSONArray().put(JSONObject().put("location", "本地时间")
+    fun pushClock(): JSONObject = launcher("clock_update", JSONArray().put(JSONObject().put("location", "현지 시간")
         .put("location_id", ZoneId.systemDefault().id).put("timezone", ZoneId.systemDefault().id).put("offset", ZonedDateTime.now().offset.totalSeconds)).toString())
     fun launcher(command: String, data: String, timestamp: String = (System.currentTimeMillis() / 1000).toString()): JSONObject {
         return checkNotNull(requests.request(15, 18, JSONObject().put("cmd", command).put("payload", JSONObject()
@@ -217,7 +217,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         "weather_push" -> pushWeather()
         "dashboard_read" -> dashboard()
         "dashboard_update" -> layout(args.getInt("mode"), args.getJSONArray("widgets").ints())
-        else -> error("未实现的设备工具：$name")
+        else -> error("구현되지 않은 기기 도구: $name")
     }
     fun observe(type: Int, body: JSONObject) {
         if (type !in setOf(4,10) || address() == null) return
@@ -232,7 +232,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
     }
     fun close() { http.dispatcher.cancelAll(); http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
     private fun get(url: String): JSONObject = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-        check(response.isSuccessful) { "天气请求失败：HTTP ${response.code}" }; JSONObject(checkNotNull(response.body).string())
+        check(response.isSuccessful) { "날씨 요청 실패: HTTP ${response.code}" }; JSONObject(checkNotNull(response.body).string())
     }
     private fun icon(code: Int, day: Boolean): Int = when (code) {
         0 -> if (day) 100 else 150; 1 -> if (day) 103 else 153; 2 -> if (day) 101 else 151; 3 -> 104
@@ -240,7 +240,7 @@ internal class CompanionContent(context: Context, private val requests: GlassesR
         71 -> 400; 73 -> 401; 75,77 -> 402; 80 -> if (day) 300 else 350; 81,82 -> if (day) 301 else 351
         85,86 -> if (day) 407 else 457; 95,97 -> 302; 96,99 -> 304; else -> 104
     }
-    private fun description(code: Int) = when (code) { 0 -> "晴"; 1,2 -> "多云"; 3 -> "阴"; 45,48 -> "雾"; in 51..67, in 80..82 -> "雨"; in 71..77,85,86 -> "雪"; in 95..99 -> "雷雨"; else -> "天气" }
+    private fun description(code: Int) = when (code) { 0 -> "맑음"; 1,2 -> "구름 많음"; 3 -> "흐림"; 45,48 -> "안개"; in 51..67, in 80..82 -> "비"; in 71..77,85,86 -> "눈"; in 95..99 -> "뇌우"; else -> "날씨" }
 }
 internal fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { getJSONObject(it) }
 internal fun JSONArray?.ints(): List<Int> = if (this == null) emptyList() else List(length()) { getInt(it) }

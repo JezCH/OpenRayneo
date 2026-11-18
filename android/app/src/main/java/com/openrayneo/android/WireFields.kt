@@ -22,7 +22,7 @@ internal object WireFields {
             var result = 0L
             for (shift in 0..63 step 7) { require(offset < payload.size); val next = payload[offset++].toInt() and 255
                 result = result or ((next and 127).toLong() shl shift); if (next and 128 == 0) return result }
-            error("文件协议字段过长")
+            error("파일 프로토콜 필드가 너무 김")
         }
         val result = mutableListOf<Value>()
         while (offset < payload.size) {
@@ -31,7 +31,7 @@ internal object WireFields {
                 0 -> result += Value(tag ushr 3, integer = variable())
                 2 -> { val size = variable().toInt(); require(size >= 0 && size <= payload.size - offset)
                     result += Value(tag ushr 3, bytes = payload.copyOfRange(offset, offset + size)); offset += size }
-                else -> error("文件协议字段类型不支持")
+                else -> error("지원하지 않는 파일 프로토콜 필드 타입")
             }
         }
         return result

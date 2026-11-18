@@ -21,9 +21,9 @@ internal class PhoneLocation(private val context: Context) {
     }
     @SuppressLint("MissingPermission")
     fun current(): JSONObject {
-        check(allowed(context)) { "请在OpenRayneo语音设置中允许位置访问，然后再查询当地天气；也可以直接告诉我城市" }
+        check(allowed(context)) { "OpenRayneo 음성 설정에서 위치 접근을 허용한 뒤 현지 날씨를 조회하세요. 도시를 직접 알려 주셔도 됩니다" }
         val manager = context.getSystemService(LocationManager::class.java)
-        check(manager.isLocationEnabled) { "手机定位已关闭，请打开系统定位，或告诉我城市" }
+        check(manager.isLocationEnabled) { "휴대폰 위치가 꺼져 있습니다. 시스템 위치를 켜거나 도시를 알려 주세요" }
         val providers = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             .filter { manager.isProviderEnabled(it) }
         val cached = providers.mapNotNull { manager.getLastKnownLocation(it) }
@@ -31,7 +31,7 @@ internal class PhoneLocation(private val context: Context) {
             .maxByOrNull { it.elapsedRealtimeNanos }
         var result: Location? = cached
         if (result == null) {
-            check(providers.isNotEmpty()) { "手机没有可用的定位来源，请打开定位或告诉我城市" }
+            check(providers.isNotEmpty()) { "휴대폰에 사용할 수 있는 위치 소스가 없습니다. 위치를 켜거나 도시를 알려 주세요" }
             val done = CountDownLatch(1)
             val signals = providers.map { CancellationSignal() }
             try {
@@ -43,9 +43,9 @@ internal class PhoneLocation(private val context: Context) {
                 done.await(10, TimeUnit.SECONDS)
             } finally { signals.forEach { it.cancel() } }
         }
-        val location = checkNotNull(result) { "这次没有取得手机位置，请到室外重试或告诉我城市" }
+        val location = checkNotNull(result) { "이번에는 휴대폰 위치를 얻지 못했습니다. 실외에서 다시 시도하거나 도시를 알려 주세요" }
         return JSONObject().put("latitude", location.latitude).put("longitude", location.longitude)
             .put("accuracyMeters", location.accuracy).put("locatedAt", location.time)
-            .put("source", "phone_location").put("name", "当前位置")
+            .put("source", "phone_location").put("name", "현재 위치")
     }
 }

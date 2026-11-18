@@ -69,7 +69,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     bottomStart = 8.dp,
                 ),
             ) {
-                Text(if (s.phoneRunning) "本机 Agent · 处理中" else "本机 Agent")
+                Text(if (s.phoneRunning) "로컬 Agent · 처리 중" else "로컬 Agent")
             }
             SegmentedButton(
                 !mobile,
@@ -80,8 +80,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 ),
             ) {
                 Text(
-                    if (s.approvals.isNotEmpty()) "电脑 · 待回复"
-                    else if (s.computerRunning) "电脑 · 处理中" else "电脑 Codex"
+                    if (s.approvals.isNotEmpty()) "컴퓨터 · 응답 대기"
+                    else if (s.computerRunning) "컴퓨터 · 처리 중" else "컴퓨터 Codex"
                 )
             }
         }
@@ -91,7 +91,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                if (mobile && configured && question.isBlank() && !running) "任务交给本机 Agent · 请保持 DSH Go 插件运行"
+                if (mobile && configured && question.isBlank() && !running) "작업은 로컬 Agent가 처리 · DSH Go 플러그인을 계속 실행해 두세요"
                 else status,
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,
@@ -102,7 +102,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 onClick = { model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
             ) {
-                Icon(Icons.Outlined.AddComment, "新建对话")
+                Icon(Icons.Outlined.AddComment, "새 대화")
             }
         }
         LazyColumn(
@@ -121,30 +121,30 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            if (mobile) "请启用本机 Agent 入口" else "电脑尚未配置",
+                            if (mobile) "로컬 Agent 엔드포인트를 활성화하세요" else "컴퓨터가 아직 설정되지 않음",
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Note(
-                            if (mobile) "启用本机入口并在 DSH Go 连接眼镜。回复、短提示与任务由本机 Agent 处理。"
-                            else "连接电脑上的 Codex，查看任务进度，在这里完成审批并接收回答。"
+                            if (mobile) "로컬 엔드포인트를 활성화하고 DSH Go에서 안경을 연결하세요. 답변, 짧은 힌트, 작업은 로컬 Agent가 처리합니다."
+                            else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
                         )
                         ToolButton(onClick = { configure(if (mobile) "agent-api" else "computer") }) {
-                            Text(if (mobile) "配置本机 Agent" else "配置电脑连接")
+                            Text(if (mobile) "로컬 Agent 설정" else "컴퓨터 연결 설정")
                         }
                     }
                 }
             else if (!mobile && !s.computerConnected)
                 item {
                     ContentCard {
-                        Text("连接电脑 Codex", style = MaterialTheme.typography.titleLarge)
-                        Note("确认电脑连接程序正在运行。USB 模式需要数据线和端口转发。")
+                        Text("컴퓨터 Codex 연결", style = MaterialTheme.typography.titleLarge)
+                        Note("컴퓨터 연결 프로그램이 실행 중인지 확인하세요. USB 모드는 데이터 케이블과 포트 포워딩이 필요합니다.")
                         ToolButton(
                             onClick = { model.attempt { model.service().connectCodex() } },
                             enabled = s.available,
                         ) {
-                            Text("连接／恢复会话")
+                            Text("연결／세션 복구")
                         }
-                        TextButton(onClick = { configure("computer") }) { Text("检查连接配置") }
+                        TextButton(onClick = { configure("computer") }) { Text("연결 설정 확인") }
                     }
                 }
             else if (question.isBlank() && history.isEmpty())
@@ -160,8 +160,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             Modifier.size(48.dp),
                             tint = MaterialTheme.colorScheme.primary,
                         )
-                        Text("新对话", style = MaterialTheme.typography.headlineSmall)
-                        Note(if (mobile) "试着问：现在眼镜的导航跟随状态如何？" else "写下任务，让电脑 Codex 帮你处理。")
+                        Text("새 대화", style = MaterialTheme.typography.headlineSmall)
+                        Note(if (mobile) "이렇게 물어보세요: 지금 안경의 내비게이션 추종 상태는 어때?" else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
                     }
                 }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
@@ -175,7 +175,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Note(if (!mobile && s.approvals.isNotEmpty()) "等待你的回复" else "正在处理…")
+                            Note(if (!mobile && s.approvals.isNotEmpty()) "응답을 기다리는 중" else "처리 중…")
                         }
                     } else if (answer.isNotBlank()) {
                         Row(
@@ -188,18 +188,18 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                                 },
                                 enabled = s.glasses.link.phase == LinkPhase.FULL,
                             ) {
-                                Text("显示到眼镜")
+                                Text("안경에 표시")
                             }
                             val context = LocalContext.current
                             TextButton(
                                 onClick = {
                                     context
                                         .getSystemService(ClipboardManager::class.java)
-                                        .setPrimaryClip(ClipData.newPlainText("回答", answer))
-                                    model.notice = "回答已复制"
+                                        .setPrimaryClip(ClipData.newPlainText("답변", answer))
+                                    model.notice = "답변이 복사됨"
                                 }
                             ) {
-                                Text("复制")
+                                Text("복사")
                             }
                         }
                     }
@@ -211,17 +211,17 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             if ((s.glasses.intent as? DisplayIntent.Answer)?.ref?.source == source)
                 item {
                     ContentCard {
-                        Text("眼镜输出", style = MaterialTheme.typography.titleSmall)
+                        Text("안경 출력", style = MaterialTheme.typography.titleSmall)
                         GlassesOutputPreview(s.glasses)
                         if (
                             (s.glasses.intent as? DisplayIntent.Answer)?.returnTo ==
                                 ReturnTarget.NAVIGATION
                         )
-                            Note("回答写出约 12 秒后返回导航；也可以现在结束回答。")
+                            Note("답변 표시 약 12초 후 내비게이션으로 돌아갑니다. 지금 답변을 종료할 수도 있습니다.")
                         TextButton(
                             onClick = { model.attempt { model.service().dismissAnswer() } }
                         ) {
-                            Text("结束眼镜回答")
+                            Text("안경 답변 종료")
                         }
                     }
                 }
@@ -240,7 +240,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         draft,
                         { if (mobile) model.phoneDraft = it else model.computerDraft = it },
                         Modifier.weight(1f),
-                        placeholder = { Text(if (mobile) "交给本机 Agent 的任务…" else "交给电脑的任务…") },
+                        placeholder = { Text(if (mobile) "로컬 Agent에게 맡길 작업…" else "컴퓨터에 맡길 작업…") },
                         maxLines = 5,
                         shape = MaterialTheme.shapes.large,
                     )
@@ -249,7 +249,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             onClick = { model.attempt { model.service().cancelAnswer(source) } },
                             Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Outlined.Stop, "停止当前任务")
+                            Icon(Icons.Outlined.Stop, "현재 작업 중지")
                         }
                     else
                         FilledIconButton(
@@ -262,7 +262,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.Send,
-                                "发送至${if (mobile) "本机 Agent" else "电脑 Codex"}",
+                                "${if (mobile) "로컬 Agent" else "컴퓨터 Codex"}(으)로 보내기",
                             )
                         }
                 }
@@ -277,10 +277,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     ) {
                         Icon(Icons.Outlined.MicNone, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("手机语音输入", style = MaterialTheme.typography.labelMedium)
+                        Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
-                        if (mobile) "发送至本机 Agent" else "发送至电脑 Codex",
+                        if (mobile) "로컬 Agent로 보내기" else "컴퓨터 Codex로 보내기",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -349,7 +349,7 @@ private fun ApprovalCard(model: AppModel, request: CodexClient.Request) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Icon(Icons.AutoMirrored.Outlined.HelpOutline, null)
-            Text("电脑需要你的回复", style = MaterialTheme.typography.titleLarge)
+            Text("컴퓨터가 응답을 기다립니다", style = MaterialTheme.typography.titleLarge)
             if (request.method == "item/tool/requestUserInput") {
                 val questions = request.params.getJSONArray("questions")
                 for (index in 0 until questions.length()) {
@@ -372,7 +372,7 @@ private fun ApprovalCard(model: AppModel, request: CodexClient.Request) {
                         answers[id].orEmpty(),
                         { answers[id] = it },
                         Modifier.fillMaxWidth(),
-                        label = { Text("你的回复") },
+                        label = { Text("내 응답") },
                         keyboardOptions =
                             KeyboardOptions(
                                 keyboardType =
@@ -408,7 +408,7 @@ private fun ApprovalCard(model: AppModel, request: CodexClient.Request) {
                                 true
                         },
                 ) {
-                    Text("提交回复")
+                    Text("응답 제출")
                 }
             } else {
                 SelectionContainer {
@@ -424,7 +424,7 @@ private fun ApprovalCard(model: AppModel, request: CodexClient.Request) {
                         }
                     }
                 ) {
-                    Text("允许这一次")
+                    Text("이번만 허용")
                 }
                 ToolOutlinedButton(
                     onClick = {
@@ -436,7 +436,7 @@ private fun ApprovalCard(model: AppModel, request: CodexClient.Request) {
                         }
                     }
                 ) {
-                    Text("拒绝")
+                    Text("거부")
                 }
             }
         }

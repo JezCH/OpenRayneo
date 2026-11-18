@@ -21,7 +21,7 @@ internal class RecordSyncServer(private val settings: AppSettings, private val r
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     @Volatile private var socket: ServerSocket? = null
     @Volatile private var token = ""
-    @Volatile var state = AgentServerState(notice = "相遇同步已关闭"); private set
+    @Volatile var state = AgentServerState(notice = "근거리 동기화가 꺼져 있음"); private set
     fun tokenForUser() = token
     fun addresses(): List<String> = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
         .filter { !it.isLoopbackAddress && it is java.net.Inet4Address }.map { "http://${it.hostAddress}:${state.port}" }
@@ -34,20 +34,20 @@ internal class RecordSyncServer(private val settings: AppSettings, private val r
         val server = ServerSocket(config.optInt("recordSyncPort", 8767), 8, InetAddress.getByName("0.0.0.0"))
         socket = server
         config.put("recordSyncToken", token).put("recordSyncEnabled", true); settings.save(config)
-        state = AgentServerState(true, server.localPort, "等待电脑相遇同步 · 音频仅按需传输"); changed()
+        state = AgentServerState(true, server.localPort, "컴퓨터 근거리 동기화 대기 중 · 오디오는 필요할 때만 전송"); changed()
         network.execute {
             try { while (!server.isClosed) {
                 val client = server.accept(); clients.add(client)
                 network.execute { try { handle(client) } finally { clients.remove(client); client.close() } }
             } } catch (error: java.io.IOException) {
-                if (!server.isClosed) main.post { state = state.copy(notice = "同步入口中断：${error.message}"); changed() }
+                if (!server.isClosed) main.post { state = state.copy(notice = "동기화 엔드포인트 중단: ${error.message}"); changed() }
             }
         }
     }
     fun stop() {
         closeSocket()
         val config = settings.read(); config.put("recordSyncEnabled", false); settings.save(config)
-        state = AgentServerState(notice = "相遇同步已关闭"); changed()
+        state = AgentServerState(notice = "근거리 동기화가 꺼져 있음"); changed()
     }
     fun rotate() { stop(); val config = settings.read(); config.remove("recordSyncToken"); settings.save(config); start() }
     private fun closeSocket() { socket?.close(); socket = null; clients.forEach { it.close() }; clients.clear(); token = "" }
@@ -71,8 +71,8 @@ internal class RecordSyncServer(private val settings: AppSettings, private val r
             val headers = mutableMapOf<String, String>(); var total = 0
             while (true) { val row = line(); if (row.isEmpty()) break; total += row.length; require(total <= 16384)
                 headers[row.substringBefore(':').lowercase()] = row.substringAfter(':').trim() }
-            if (token.isEmpty() || headers["authorization"] != "Bearer $token") { json(401, JSONObject().put("error", "同步令牌无效")); return }
-            if (headers.containsKey("origin")) { json(403, JSONObject().put("error", "不接受网页跨域调用")); return }
+            if (token.isEmpty() || headers["authorization"] != "Bearer $token") { json(401, JSONObject().put("error", "동기화 토큰이 유효하지 않음")); return }
+            if (headers.containsKey("origin")) { json(403, JSONObject().put("error", "웹 페이지의 교차 출처 호출은 허용하지 않음")); return }
             val path = request[1].substringBefore('?')
             if (request[0] == "POST" && path == "/v1/sync/exchange") {
                 require(!headers.containsKey("transfer-encoding"))
@@ -82,16 +82,16 @@ internal class RecordSyncServer(private val settings: AppSettings, private val r
                 val incoming = body.optJSONArray("derived")?.let { a -> List(a.length()) { RecordDerived.parse(a.getJSONObject(it)) } } ?: emptyList()
                 val result = repository.exchange(body.optLong("cursor"), body.optInt("limit", 100), incoming)
                 json(200, result)
-                main.post { state = state.copy(notice = "上次同步 ${java.time.LocalTime.now().withNano(0)} · 原记录保存在手机"); changed() }
+                main.post { state = state.copy(notice = "마지막 동기화 ${java.time.LocalTime.now().withNano(0)} · 원본 기록은 휴대폰에 저장됨"); changed() }
             } else if (request[0] == "GET" && path == "/v1/sync/audio") {
                 val args = request[1].substringAfter('?', "").split('&').associate { row -> row.substringBefore('=') to URLDecoder.decode(row.substringAfter('=', ""), "UTF-8") }
                 val record = repository.records.firstOrNull { it.id == args["recordId"] }
-                if (record == null) { json(404, JSONObject().put("error", "没有可用音频")); return }
-                if (record.audioPending) { json(409, JSONObject().put("error", "音频尚在写入")); return }
-                if (record.audioSamples == 0L) { json(404, JSONObject().put("error", "没有可用音频")); return }
+                if (record == null) { json(404, JSONObject().put("error", "사용 가능한 오디오 없음")); return }
+                if (record.audioPending) { json(409, JSONObject().put("error", "오디오 기록 중")); return }
+                if (record.audioSamples == 0L) { json(404, JSONObject().put("error", "사용 가능한 오디오 없음")); return }
                 output.write("HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: ${44 + record.audioSamples * 2 * record.audioChannels}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray())
                 audio.exportWav(record.audioId ?: record.id, record.audioSamples, output); output.flush()
-            } else json(404, JSONObject().put("error", "没有这个同步入口"))
-        } catch (error: Exception) { if (!client.isClosed) runCatching { json(400, JSONObject().put("error", error.message ?: "同步未完成")) } }
+            } else json(404, JSONObject().put("error", "해당 동기화 엔드포인트가 없음"))
+        } catch (error: Exception) { if (!client.isClosed) runCatching { json(400, JSONObject().put("error", error.message ?: "동기화가 완료되지 않음")) } }
     }
 }

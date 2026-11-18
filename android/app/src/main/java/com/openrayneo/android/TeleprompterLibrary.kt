@@ -13,7 +13,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 internal data class TeleprompterState(val documents: List<JSONObject> = emptyList(), val active: String? = null,
-    val paused: Boolean = false, val busy: Boolean = false, val notice: String = "保存稿件后发送到眼镜")
+    val paused: Boolean = false, val busy: Boolean = false, val notice: String = "원고를 저장한 뒤 안경으로 전송")
 internal class TeleprompterLibrary(context: Context, private val requests: GlassesRequests, private val changed: () -> Unit) {
     private val folder = File(context.filesDir, "scripts").apply { mkdirs() }
     @Volatile var state = TeleprompterState(documents = folder.listFiles().orEmpty().filter { it.extension == "json" }.map { JSONObject(it.readText()) }); private set
@@ -35,13 +35,13 @@ internal class TeleprompterLibrary(context: Context, private val requests: Glass
             WireFields.parse(frame.payload).firstOrNull()?.let { field ->
                 val fields = field.bytes?.let(WireFields::parse).orEmpty()
                 if (fields.firstOrNull { it.number == 1 }?.bytes?.toString(Charsets.UTF_8) == task)
-                    check(transfer.offer(field)) { "提词文件回包队列已满" }
+                    check(transfer.offer(field)) { "프롬프터 파일 응답 대기열이 가득 참" }
             }
         } else if (frame.protocol == 0x14) {
             val message = ProtocolCodec.message(frame.payload); val body = message.json?.let(::JSONObject) ?: return
             if (body.optInt("action") == 2) { if (!messages.offer(message.type to body)) { messages.poll(); messages.offer(message.type to body) } }
             if (body.optInt("action") == 1 && body.optString("did") == state.active && message.type == 6) {
-                state = state.copy(active = null, paused = false, notice = "眼镜已结束提词"); changed()
+                state = state.copy(active = null, paused = false, notice = "안경이 프롬프터를 종료함"); changed()
             }
         }
     }
@@ -69,12 +69,12 @@ internal class TeleprompterLibrary(context: Context, private val requests: Glass
             val info = WireFields.string(1, taskId) + WireFields.string(2, id) + WireFields.integer(3, content.size.toLong()) + WireFields.string(4, md5) + WireFields.integer(5, 17)
             requests.sendRaw(ProtocolCodec.frame(17, 0, WireFields.bytes(1, info)))
             while (true) {
-                check(!disconnected) { "连接断开，提词传输已取消" }
-                val field = checkNotNull(transfer.poll(30, TimeUnit.SECONDS)) { "眼镜未请求文件数据，传输超时" }
+                check(!disconnected) { "연결이 끊겨 프롬프터 전송이 취소됨" }
+                val field = checkNotNull(transfer.poll(30, TimeUnit.SECONDS)) { "안경이 파일 데이터를 요청하지 않아 전송 시간 초과" }
                 val values = WireFields.parse(checkNotNull(field.bytes))
                 fun number(n: Int) = values.firstOrNull { it.number == n }?.integer
-                if (field.number == 6) error("眼镜取消提词文件传输")
-                if (field.number == 5) { check(number(2) == 0L) { "眼镜拒绝文件传输" }; break }
+                if (field.number == 6) error("안경이 프롬프터 파일 전송을 취소함")
+                if (field.number == 5) { check(number(2) == 0L) { "안경이 파일 전송을 거부함" }; break }
                 if (field.number != 3) continue
                 val offset = number(3) ?: 0; val size = minOf(checkNotNull(number(4)), content.size - offset)
                 require(offset in 0 until content.size.toLong() && size in 1..60000)
@@ -90,38 +90,38 @@ internal class TeleprompterLibrary(context: Context, private val requests: Glass
                 .put("pageOffset", 0).put("highLightOffset", 0).put("code", 1).put("checksum", checksum.toString(16).padStart(8, '0')))
             accepted(3, id)
             state = state.copy(active = id, paused = false)
-            return JSONObject().put("did", id).put("accepted", true).put("message", "眼镜已确认提词播放")
+            return JSONObject().put("did", id).put("accepted", true).put("message", "안경이 프롬프터 재생을 확인함")
         } finally { task = null }
     }
     private fun accepted(type: Int, id: String) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
         while (true) {
-            check(!disconnected) { "眼镜已断开" }
-            val remaining = deadline - System.nanoTime(); check(remaining > 0) { "眼镜未确认提词请求$type" }
-            val (received, body) = checkNotNull(messages.poll(remaining, TimeUnit.NANOSECONDS)) { "提词确认超时" }
+            check(!disconnected) { "안경 연결이 끊김" }
+            val remaining = deadline - System.nanoTime(); check(remaining > 0) { "안경이 프롬프터 요청을 확인하지 않음$type" }
+            val (received, body) = checkNotNull(messages.poll(remaining, TimeUnit.NANOSECONDS)) { "프롬프터 확인 시간 초과" }
             if (received != type || body.optString("did") != id) continue
-            check(body.optInt("code") == 1 || type == 2 && body.optInt("code") == 7) { "眼镜拒绝提词：${body.optInt("code")}" }; return
+            check(body.optInt("code") == 1 || type == 2 && body.optInt("code") == 7) { "안경이 프롬프터를 거부함: ${body.optInt("code")}" }; return
         }
     }
     fun control(action: String, completion: (Result<JSONObject>) -> Unit) = operation({ controlBlocking(action) }, completion)
     private fun controlBlocking(action: String): JSONObject {
-        val id = checkNotNull(state.active) { "没有本应用启动的提词" }
-        val type = when (action) { "pause" -> 4; "resume" -> 5; "stop" -> 6; else -> error("提词操作应为pause/resume/stop") }
+        val id = checkNotNull(state.active) { "이 앱이 시작한 프롬프터가 없음" }
+        val type = when (action) { "pause" -> 4; "resume" -> 5; "stop" -> 6; else -> error("프롬프터 동작은 다음 중 하나여야 함: pause/resume/stop") }
         messages.clear()
         send(type, JSONObject().put("action", 1).put("did", id).apply { if (type == 4) put("offset", 0).put("code", 1).put("isCompleted", false) })
         val actual = checkNotNull(requests.request(20, 10, JSONObject().put("action", 1).put("checksum", "").put("state", JSONObject.NULL).put("pageOffset", 0).put("highLightOffset", 0)) { reply, body -> reply == 10 && body.optInt("action") == 2 })
-        check(!actual.has("code") || actual.optInt("code") == 1) { "眼镜未接受提词状态查询" }
+        check(!actual.has("code") || actual.optInt("code") == 1) { "안경이 프롬프터 상태 조회를 받아들이지 않음" }
         val expected = when (action) { "pause" -> 2; "resume" -> 1; else -> 3 }
         val matched = actual.optInt("state") == expected && (expected == 3 || actual.optString("did") == id)
         if (matched) state = state.copy(active = if (expected == 3) null else id, paused = expected == 2)
         return JSONObject().put("did", id).put("readBack", matched).put("deviceState", actual)
-            .put("message", if (matched) "提词状态已回读确认" else "提词控制已发送，当前回读与请求不同")
+            .put("message", if (matched) "프롬프터 상태가 재조회로 확인됨" else "프롬프터 제어를 전송했지만 현재 재조회 값이 요청과 다름")
     }
     private fun send(type: Int, body: JSONObject) = requests.sendRaw(ProtocolCodec.display(20, sequence++ and 65535, type, body.toString(), byteArrayOf()))
     private fun operation(work: () -> JSONObject, completion: (Result<JSONObject>) -> Unit) {
-        check(!state.busy) { "请等待提词传输结束" }; state = state.copy(busy = true, notice = "正在与眼镜同步稿件…"); changed()
-        requests.perform(work) { result -> state = state.copy(busy = false, notice = result.fold({ it.optString("message").ifBlank { "设备已确认" } }, { it.message ?: "提词失败" })); changed(); completion(result) }
+        check(!state.busy) { "프롬프터 전송이 끝날 때까지 기다리세요" }; state = state.copy(busy = true, notice = "안경과 원고 동기화 중…"); changed()
+        requests.perform(work) { result -> state = state.copy(busy = false, notice = result.fold({ it.optString("message").ifBlank { "기기에서 확인됨" } }, { it.message ?: "프롬프터 실패" })); changed(); completion(result) }
     }
     fun disconnected() { disconnected = true; task = null; transfer.offer(WireFields.Value(6)); messages.offer(0 to JSONObject())
-        state = state.copy(active = null, paused = false, notice = "眼镜已断开，稿件保存在手机"); changed() }
+        state = state.copy(active = null, paused = false, notice = "안경 연결이 끊겼습니다. 원고는 휴대폰에 저장되어 있습니다"); changed() }
 }

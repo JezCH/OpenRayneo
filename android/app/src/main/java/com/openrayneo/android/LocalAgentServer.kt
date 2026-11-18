@@ -17,7 +17,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal data class AgentServerState(val enabled: Boolean = false, val port: Int = 0, val notice: String = "本机Agent入口已关闭")
+internal data class AgentServerState(val enabled: Boolean = false, val port: Int = 0, val notice: String = "로컬 Agent 엔드포인트 꺼짐")
 /** Explicitly enabled, loopback-only API. No model credentials, raw audio or voice vectors are returned. */
 internal class LocalAgentServer(private val main: Handler, private val settings: AppSettings, private val changed: () -> Unit,
     private val status: () -> JSONObject, private val records: () -> JSONArray,
@@ -45,12 +45,12 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         }
         config.put("localAgentEnabled", true); settings.save(config)
         val server = ServerSocket(config.optInt("localAgentPort", 8766), 8, InetAddress.getByName("127.0.0.1")); socket = server
-        state = AgentServerState(true, server.localPort, "仅本机监听 · 请求需独立Bearer令牌"); changed()
+        state = AgentServerState(true, server.localPort, "로컬에서만 수신 · 요청에는 전용 Bearer 토큰 필요"); changed()
         network.execute {
             try { while (!server.isClosed) { val client = server.accept(); if (!slots.tryAcquire()) client.close() else {
                 clients.add(client); network.execute { try { handle(client) } finally { clients.remove(client); client.close(); slots.release() } }
             } } }
-            catch (error: java.io.IOException) { if (!server.isClosed) main.post { state = state.copy(notice = "Agent入口中断：${error.message}"); stop() } }
+            catch (error: java.io.IOException) { if (!server.isClosed) main.post { state = state.copy(notice = "Agent 엔드포인트 중단: ${error.message}"); stop() } }
         }
     }
     fun stop(persistSetting: Boolean = true) {
@@ -68,17 +68,17 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             val input = BufferedInputStream(connection.getInputStream())
             fun line(): String {
                 val out = java.io.ByteArrayOutputStream()
-                while (true) { val b = input.read(); require(b >= 0) { "HTTP头未结束" }; if (b == 10) break; out.write(b); require(out.size() <= 8192) }
+                while (true) { val b = input.read(); require(b >= 0) { "HTTP 헤더가 끝나지 않음" }; if (b == 10) break; out.write(b); require(out.size() <= 8192) }
                 return out.toString(Charsets.US_ASCII.name()).trimEnd('\r')
             }
             val request = line().split(' '); require(request.size == 3)
             val headers = mutableMapOf<String, String>(); var headerBytes = 0
             while (true) { val value = line(); headerBytes += value.length; require(headerBytes <= 16384); if (value.isEmpty()) break
                 require(value.contains(':')); headers[value.substringBefore(':').lowercase()] = value.substringAfter(':').trim() }
-            if (token.isEmpty() || headers["authorization"] != "Bearer $token") { code = 401; JSONObject().put("error", "Bearer令牌无效") }
-            else if (headers.containsKey("origin")) { code = 403; JSONObject().put("error", "不接受网页跨域调用") }
+            if (token.isEmpty() || headers["authorization"] != "Bearer $token") { code = 401; JSONObject().put("error", "Bearer 토큰이 유효하지 않음") }
+            else if (headers.containsKey("origin")) { code = 403; JSONObject().put("error", "웹 페이지의 교차 출처 호출은 허용하지 않음") }
             else {
-                require(!headers.containsKey("transfer-encoding")) { "请使用Content-Length" }
+                require(!headers.containsKey("transfer-encoding")) { "다음을 사용하세요: Content-Length" }
                 val length = headers["content-length"]?.toInt() ?: 0; require(length in 0..262144)
                 val bytes = input.readNBytes(length); require(bytes.size == length)
                 val body = if (bytes.isEmpty()) JSONObject() else JSONObject(bytes.toString(Charsets.UTF_8))
@@ -86,12 +86,12 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                 if (request[0] == "GET" && request[1] == "/v1/harness/next") {
                     harness().next { socket != null && authorized == "Bearer $token" }
                 } else mainResult {
-                    check(socket != null && authorized == "Bearer $token") { "Agent入口已关闭或令牌已变更" }
+                    check(socket != null && authorized == "Bearer $token") { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
                     tasks.entries.removeAll { System.currentTimeMillis() - it.value.createdAt > 120_000 }
                     val path = request[1]
                     when {
                         path.substringBefore('?').startsWith("/v1/records") || path.startsWith("/v1/conversations/") || path.startsWith("/v1/conversations?") ->
-                            recordAPI(request[0], path, body) ?: JSONObject().put("error", "没有这个记录入口").also { code = 404 }
+                            recordAPI(request[0], path, body) ?: JSONObject().put("error", "해당 기록 엔드포인트가 없음").also { code = 404 }
                         request[0] == "GET" && path == "/v1/status" -> status()
                         request[0] == "GET" && path == "/v1/tools" -> JSONObject().put("tools", CompanionTools.definitions())
                         request[0] == "GET" && path == "/v1/conversations" -> JSONObject().put("items", records())
@@ -99,27 +99,27 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                         request[0] == "GET" && path == "/v1/tasks" -> JSONObject().put("items", JSONArray(tasks.values.map { taskJSON(it).put("createdAt", it.createdAt) }))
                         request[0] == "GET" && path.startsWith("/v1/harness/requests/") -> harness().status(path.substringAfterLast('/'))
                         request[0] == "POST" && path.startsWith("/v1/harness/requests/") -> harness().update(path.substringAfterLast('/'), body)
-                        request[0] == "GET" && path.startsWith("/v1/tasks/") -> taskJSON(checkNotNull(tasks[path.substringAfterLast('/')]) { "任务不存在或已过期" })
+                        request[0] == "GET" && path.startsWith("/v1/tasks/") -> taskJSON(checkNotNull(tasks[path.substringAfterLast('/')]) { "작업이 없거나 만료됨" })
                         request[0] == "POST" && path.startsWith("/v1/tasks/") && path.endsWith("/cancel") -> {
                             val task = checkNotNull(tasks[path.removeSuffix("/cancel").substringAfterLast('/')]); task.cancelled = true; task.state = "cancelled"
-                            taskJSON(task).put("message", "后续设备写入已取消，已经执行的操作会保留")
+                            taskJSON(task).put("message", "이후 기기 쓰기는 취소되었으며 이미 실행된 작업은 유지됨")
                         }
                         request[0] == "POST" && path == "/v1/tools/call" -> {
-                            check(tasks.size < 32) { "待处理任务过多，请等待或取消" }
+                            check(tasks.size < 32) { "대기 중인 작업이 너무 많습니다. 기다리거나 취소하세요" }
                             val name = body.getString("name"); val args = body.optJSONObject("arguments") ?: JSONObject()
-                            require((0 until CompanionTools.definitions().length()).any { CompanionTools.definitions().getJSONObject(it).getJSONObject("function").getString("name") == name }) { "未知工具" }
-                            if (CompanionTools.mutates(name)) require(args.optString("request_id").isNotBlank()) { "写入操作须提供稳定request_id以避免重试重复" }
+                            require((0 until CompanionTools.definitions().length()).any { CompanionTools.definitions().getJSONObject(it).getJSONObject("function").getString("name") == name }) { "알 수 없는 도구" }
+                            if (CompanionTools.mutates(name)) require(args.optString("request_id").isNotBlank()) { "쓰기 작업에는 재시도 중복 방지를 위한 고정 request_id가 필요함" }
                             val task = Task(); tasks[task.id] = task
                             try { execute(name, args, { !task.cancelled && System.currentTimeMillis() - task.createdAt < 120_000 }) { result ->
                                 if (!task.cancelled) { task.state = if (result.isSuccess) "completed" else "failed"; task.result = result.getOrNull(); task.error = result.exceptionOrNull()?.message }
                             } } catch (error: Exception) { task.state = "failed"; task.error = error.message }
                             taskJSON(task)
                         }
-                        else -> { code = 404; JSONObject().put("error", "没有这个API入口") }
+                        else -> { code = 404; JSONObject().put("error", "해당 API 엔드포인트가 없음") }
                     }
                 }
             }
-        } catch (error: Exception) { code = 400; JSONObject().put("error", error.message ?: "请求未完成") }
+        } catch (error: Exception) { code = 400; JSONObject().put("error", error.message ?: "요청이 완료되지 않음") }
         val bytes = response.toString().toByteArray(Charsets.UTF_8)
         try { connection.getOutputStream().apply {
             write("HTTP/1.1 $code ${if (code == 200) "OK" else "Error"}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray(Charsets.US_ASCII)); write(bytes); flush()
@@ -128,7 +128,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private fun mainResult(action: () -> JSONObject): JSONObject {
         val latch = CountDownLatch(1); var result: Result<JSONObject>? = null
         main.post { result = runCatching(action); latch.countDown() }
-        check(latch.await(5, TimeUnit.SECONDS)) { "主服务未响应" }; return checkNotNull(result).getOrThrow()
+        check(latch.await(5, TimeUnit.SECONDS)) { "메인 서비스가 응답하지 않음" }; return checkNotNull(result).getOrThrow()
     }
     private fun taskJSON(task: Task) = JSONObject().put("id", task.id).put("state", task.state).put("result", task.result).put("error", task.error)
     fun close() { stop(false); network.shutdownNow() }

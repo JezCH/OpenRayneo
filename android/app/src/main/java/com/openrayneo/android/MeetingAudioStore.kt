@@ -65,7 +65,7 @@ internal class MeetingAudioStore(context: Context) {
         return when (magic.toString(Charsets.US_ASCII)) {
             "ORPCM1" -> 1
             "ORPCM2" -> input.readInt().also { require(it in 1..2) }
-            else -> error("不支持的本地录音格式")
+            else -> error("지원하지 않는 로컬 녹음 형식")
         }
     }
     fun channelCount(id: String): Int = DataInputStream(file(id).inputStream().buffered()).use(::header)
@@ -90,7 +90,7 @@ internal class MeetingAudioStore(context: Context) {
         }
     }
     fun open(id: String): InputStream {
-        check(id != recordingId) { "请先停止录音" }
+        check(id != recordingId) { "먼저 녹음을 중지하세요" }
         val input = DataInputStream(file(id).inputStream().buffered()); header(input)
         return object : InputStream() {
             private var current = ByteArrayInputStream(byteArrayOf())
@@ -100,7 +100,7 @@ internal class MeetingAudioStore(context: Context) {
                 if (current.available() > 0) return true
                 val length = input.readInt(); if (length == 0) { ended = true; return false }
                 require(length in 28..128000)
-                val bytes = input.readNBytes(length); check(bytes.size == length) { "音频未完整保存" }
+                val bytes = input.readNBytes(length); check(bytes.size == length) { "오디오가 완전히 저장되지 않음" }
                 current = ByteArrayInputStream(decrypt(bytes)); return true
             }
             override fun read(): Int = if (advance()) current.read() else -1
@@ -138,7 +138,7 @@ internal class MeetingAudioStore(context: Context) {
     fun openAt(id: String, offsetSamples: Long): InputStream = open(id).apply {
         var remaining = offsetSamples * 2 * channelCount(id)
         val bytes = ByteArray(32768)
-        while (remaining > 0) { val count = read(bytes, 0, minOf(remaining, bytes.size.toLong()).toInt()); check(count > 0) { "音频偏移超出已保存范围" }; remaining -= count }
+        while (remaining > 0) { val count = read(bytes, 0, minOf(remaining, bytes.size.toLong()).toInt()); check(count > 0) { "오디오 오프셋이 저장된 범위를 벗어남" }; remaining -= count }
     }
     @JvmOverloads fun readSamples(id: String, beginMS: Long, endMS: Long, sourceChannel: Int = 1): FloatArray = openAt(id, beginMS * 16).use { input ->
         val count = channelCount(id); require(sourceChannel in 1..count)
@@ -150,7 +150,7 @@ internal class MeetingAudioStore(context: Context) {
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
             .put("RIFF".toByteArray()).putInt(size.toInt() + 36).put("WAVEfmt ".toByteArray()).putInt(16).putShort(1).putShort(count.toShort())
             .putInt(16000).putInt(32000 * count).putShort((2 * count).toShort()).putShort(16).put("data".toByteArray()).putInt(size.toInt()).array()
-        destination.write(header); open(id).use { check(it.copyTo(destination) == size) { "音频长度与记录不符" } }
+        destination.write(header); open(id).use { check(it.copyTo(destination) == size) { "오디오 길이가 기록과 일치하지 않음" } }
     }
     private fun key(): SecretKey {
         val alias = "openrayneo.meeting-audio"

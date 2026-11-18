@@ -37,7 +37,7 @@ internal class MainActivity : ComponentActivity() {
             if (model.wantsScan) {
                 model.wantsScan = false
                 if (model.bluetoothAllowed) model.scan()
-                else model.error = "连接眼镜需要附近设备权限。可以稍后在设置中授权，其他配置仍可使用。"
+                else model.error = "안경 연결에는 근처 기기 권한이 필요합니다. 나중에 설정에서 허용할 수 있으며 다른 설정은 계속 사용할 수 있습니다."
             }
         }
     private val locationPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -48,7 +48,7 @@ internal class MainActivity : ComponentActivity() {
             if (uri != null)
                 model.attempt {
                     val bytes = contentResolver.openInputStream(uri)!!.use { it.readNBytes(16385) }
-                    require(bytes.size <= 16384) { "配置文件过大" }
+                    require(bytes.size <= 16384) { "설정 파일이 너무 큼" }
                     model.importConfig(JSONObject(String(bytes, Charsets.UTF_8)))
                 }
         }
@@ -120,7 +120,7 @@ internal class MainActivity : ComponentActivity() {
                                             NavigationFeed.PACKAGE
                                         )
                                     ) {
-                                        "请先在手机安装高德地图"
+                                        "먼저 휴대폰에 Amap(가오더 지도)을 설치하세요"
                                     }
                                 )
                             }

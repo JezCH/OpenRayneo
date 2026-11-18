@@ -5,7 +5,7 @@ package com.openrayneo.android
 import org.json.JSONObject
 
 internal data class DeviceSettingsState(val status: JSONObject = JSONObject(), val settings: JSONObject = JSONObject(),
-    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "连接眼镜后读取设置")
+    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기")
 internal fun JSONObject.deviceInt(key: String): Int? = (opt(key) as? Number)?.toInt()
 internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = opt(key)) {
     is Boolean -> value; is Number -> value.toInt() == 1; else -> null
@@ -13,7 +13,7 @@ internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = op
 internal class GlassesDeviceSettings(private val requests: GlassesRequests, private val changed: () -> Unit) {
     @Volatile var state = DeviceSettingsState(); private set
     private val reported = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    fun refresh() = perform { readAll(); "已读取眼镜当前设置" }
+    fun refresh() = perform { readAll(); "안경의 현재 설정을 읽음" }
     fun disconnected() { state = DeviceSettingsState(); reported.clear(); changed() }
     private fun readAll() {
         requests.request(15, 1, envelope("request_general_status")) { type, body -> type == 1 && body.has("generalStatus") }
@@ -80,8 +80,8 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             (body.optString("cmd") == command || type == 16 && body.optString("cmd") == "sync_ai_settings") } }
         catch (error: IllegalStateException) { acknowledgementMissing = true }
         readAll()
-        return if ((reported[field] ?: 0) < before) "已发送，设备尚未回报该设置的新值"
-            else if (matches(state)) "已由眼镜回读确认" else if (acknowledgementMissing) "未收到修改回包，当前回读与请求不同" else "设备回读与请求不同，请核对当前值"
+        return if ((reported[field] ?: 0) < before) "전송됨, 기기가 아직 새 값을 보고하지 않음"
+            else if (matches(state)) "안경 재조회로 확인됨" else if (acknowledgementMissing) "변경 응답을 받지 못했고 현재 재조회 값이 요청과 다름" else "기기 재조회 값이 요청과 다릅니다. 현재 값을 확인하세요"
     }
     fun readForTool(): JSONObject { readAll(); return JSONObject().put("status", state.status).put("settings", state.settings) }
     fun tool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
@@ -97,16 +97,16 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
                     applyBlocking("display_config", 5, 6, payload(data = JSONObject().put("height", height).put("distance", distance).toString()), "displayConfig") {
                         it.settings.optJSONObject("displayConfig")?.let { v -> v.deviceInt("height") == height && v.deviceInt("distance") == distance } == true }
                 }
-                else -> error("未知设备工具：$name")
+                else -> error("알 수 없는 기기 도구: $name")
             }
             JSONObject().put("message", message).put("status", state.status).put("settings", state.settings)
         }, completion)
     }
     private fun perform(work: () -> String) {
-        check(!state.busy) { "请等待当前设备操作" }
-        state = state.copy(busy = true, notice = "正在与眼镜同步…"); changed()
+        check(!state.busy) { "현재 기기 작업을 기다리세요" }
+        state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
         requests.perform(work) { result ->
-            state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "设备操作失败" }); changed()
+            state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
         }
     }
     fun observe(type: Int, body: JSONObject) {

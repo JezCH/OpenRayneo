@@ -9,48 +9,48 @@ internal object CompanionTools {
     private fun field(type: String, description: String) = JSONObject().put("type", type).put("description", description)
     private fun definition(name: String, description: String, required: List<String> = emptyList(), vararg properties: Pair<String, JSONObject>): JSONObject =
         JSONObject().put("type", "function").put("function", JSONObject().put("name", name).put("description", description)
-            .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().apply { properties.forEach { put(it.first, it.second) }; if (mutates(name)) put("request_id", field("string", "同一写入重试使用同一ID；外部Agent必填，手机Agent自动提供")) })
+            .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().apply { properties.forEach { put(it.first, it.second) }; if (mutates(name)) put("request_id", field("string", "같은 쓰기를 재시도할 때는 같은 ID 사용. 외부 Agent는 필수, 휴대폰 Agent는 자동 제공")) })
                 .put("required", JSONArray(required)).put("additionalProperties", false)))
     fun definitions(): JSONArray = JSONArray().apply {
-        put(definition("navigation_status", "读取高德通知跟随状态；不推断路线"))
-        put(definition("stop_navigation_mirroring", "停止眼镜跟随；高德导航仍继续"))
-        put(definition("show_notification", "向眼镜发送短通知；排队成功不保证可见", listOf("title", "body"),
-            "title" to field("string", "标题"), "body" to field("string", "正文")))
-        put(definition("display_clear", "清空实时提示的回答，保留正在进行的收音"))
-        put(definition("device_read", "主动读取眼镜状态与设置"))
-        put(definition("device_brightness", "修改亮度并回读；不要把发送成功说成设备已修改", listOf("value"), "value" to field("integer", "亮度1至17")))
-        put(definition("device_display", "修改画面高度和距离并回读", listOf("height", "distance"),
-            "height" to field("integer", "高度1至6"), "distance" to field("integer", "距离1至3")))
-        put(definition("todo_read", "读取眼镜待完成列表与手机保留的已完成项"))
-        put(definition("todo_add", "添加待办；用户须明确提出此需求", listOf("title"), "title" to field("string", "标题"), "important" to field("boolean", "重要标记")))
-        put(definition("todo_update", "按查询得到的ID修改待办；完成结果以回读为准", listOf("event_id"),
-            "event_id" to field("integer", "实际待办ID"), "title" to field("string", "新标题"), "important" to field("boolean", "重要"), "completed" to field("boolean", "完成或撤销完成")))
-        put(definition("todo_delete", "删除用户明确指定的待办；先读取核对ID", listOf("event_id"), "event_id" to field("integer", "实际待办ID")))
-        put(definition("schedule_read", "读取眼镜日程"))
-        val scheduleFields = arrayOf("event_id" to field("integer", "更新或删除时使用实际ID"), "title" to field("string", "标题"),
-            "start_time" to field("integer", "明确开始时间的Unix秒，按当前时区理解"), "end_time" to field("integer", "明确结束时间的Unix秒"))
-        put(definition("schedule_add", "添加日程。缺日期、开始或结束时间先澄清，不擅自猜时间", listOf("title", "start_time", "end_time"), *scheduleFields.filter { it.first != "event_id" }.toTypedArray()))
-        put(definition("schedule_update", "修改已查询的日程", listOf("event_id"), *scheduleFields))
-        put(definition("schedule_delete", "删除用户明确指定的日程", listOf("event_id"), "event_id" to field("integer", "实际日程ID")))
-        put(definition("location_current", "读取手机当前位置、精度和获取时间。位置未指定时先查此工具，失败后再询问城市"))
-        put(definition("weather_current", "直接获取手机当前位置的当前天气、未来小时及3天预报。用户问今天天气、会下雨吗且未指定城市时优先调用，无需参数，不修改眼镜天气设置"))
-        put(definition("weather_search_cities", "用户明确指定城市时查询坐标和真实城市ID；未指定城市优先weather_current", listOf("query"), "query" to field("string", "城市名")))
-        put(definition("weather_get", "获取选定城市天气，同时设置眼镜天气城市；city使用搜索结果原对象", listOf("city"), "city" to field("object", "搜索结果的id/name/latitude/longitude")))
-        put(definition("weather_push", "把已获取的天气同时发送到首页温度和天气卡"))
-        put(definition("dashboard_read", "读取眼镜首页模式和组件顺序"))
-        put(definition("dashboard_update", "设置首页模式和顺序。保留未要求移除的组件；天气先配置城市", listOf("mode", "widgets"),
-            "mode" to field("integer", "0标准、1简洁、2斜分"), "widgets" to field("array", "1天气2待办3日程4股票5邮件6世界时钟，1至5项").put("items", JSONObject().put("type", "integer"))))
-        put(definition("record_query", "读取手机完整记录及关联分析/标签/笔记，可按时间范围或原文检索", emptyList(),
-            "recordId" to field("string", "指定记录ID"), "from" to field("integer", "开始Unix毫秒"), "to" to field("integer", "结束Unix毫秒"), "text" to field("string", "检索文字")))
-        put(definition("record_annotate", "将分析、标签、笔记关联原记录并持久保存，后续同步到电脑", listOf("recordId", "sourceRevision", "kind"),
-            "recordId" to field("string", "已查询的记录ID"), "sourceRevision" to field("integer", "查询返回的record.revision"),
-            "kind" to field("string", "analysis/note/tags"), "text" to field("string", "正文"),
-            "tags" to field("array", "标签").put("items", field("string", "标签")), "id" to field("string", "稳定派生ID用于重试"),
-            "revision" to field("integer", "派生项版本"), "agent" to field("string", "写入Agent名称")))
-        put(definition("memory_search", "检索允许留存的原话与有来源记忆；不推断人物关系", listOf("query"), "query" to field("string", "关键词")))
-        put(definition("teleprompter_start", "将用户要求显示的稿件传输到眼镜并开始自动滚动", listOf("title", "text"),
-            "title" to field("string", "稿件名"), "text" to field("string", "全文"), "speed" to field("integer", "滚动速度1至10，默认2")))
-        put(definition("teleprompter_control", "控制本应用启动的提词", listOf("action"), "action" to field("string", "pause、resume、stop")))
+        put(definition("navigation_status", "Amap 알림 추종 상태 읽기. 경로는 추론하지 않음"))
+        put(definition("stop_navigation_mirroring", "안경 추종 중지. Amap 내비게이션은 계속됨"))
+        put(definition("show_notification", "안경에 짧은 알림 전송. 대기열 등록 성공이 표시를 보장하지 않음", listOf("title", "body"),
+            "title" to field("string", "제목"), "body" to field("string", "본문")))
+        put(definition("display_clear", "실시간 힌트의 답변을 지우고 진행 중인 음성 수신은 유지"))
+        put(definition("device_read", "안경 상태와 설정을 직접 읽기"))
+        put(definition("device_brightness", "밝기를 변경하고 재조회. 전송 성공을 기기 변경 완료라고 말하지 말 것", listOf("value"), "value" to field("integer", "밝기 1~17")))
+        put(definition("device_display", "화면 높이와 거리를 변경하고 재조회", listOf("height", "distance"),
+            "height" to field("integer", "높이 1~6"), "distance" to field("integer", "거리 1~3")))
+        put(definition("todo_read", "안경의 미완료 목록과 휴대폰에 보관된 완료 항목 읽기"))
+        put(definition("todo_add", "할 일 추가. 사용자가 명시적으로 요청한 경우에만", listOf("title"), "title" to field("string", "제목"), "important" to field("boolean", "중요 표시")))
+        put(definition("todo_update", "조회로 얻은 ID로 할 일 수정. 완료 여부는 재조회 결과 기준", listOf("event_id"),
+            "event_id" to field("integer", "실제 할 일 ID"), "title" to field("string", "새 제목"), "important" to field("boolean", "중요"), "completed" to field("boolean", "완료 또는 완료 취소")))
+        put(definition("todo_delete", "사용자가 명시한 할 일 삭제. 먼저 읽어서 ID 확인", listOf("event_id"), "event_id" to field("integer", "실제 할 일 ID")))
+        put(definition("schedule_read", "안경 일정 읽기"))
+        val scheduleFields = arrayOf("event_id" to field("integer", "수정 또는 삭제 시 실제 ID 사용"), "title" to field("string", "제목"),
+            "start_time" to field("integer", "명확한 시작 시각의 Unix 초, 현재 시간대 기준"), "end_time" to field("integer", "명확한 종료 시각의 Unix 초"))
+        put(definition("schedule_add", "일정 추가. 날짜, 시작 또는 종료 시간이 없으면 먼저 확인하고 임의로 추측하지 말 것", listOf("title", "start_time", "end_time"), *scheduleFields.filter { it.first != "event_id" }.toTypedArray()))
+        put(definition("schedule_update", "조회한 일정 수정", listOf("event_id"), *scheduleFields))
+        put(definition("schedule_delete", "사용자가 명시한 일정 삭제", listOf("event_id"), "event_id" to field("integer", "실제 일정 ID")))
+        put(definition("location_current", "휴대폰의 현재 위치, 정확도, 획득 시각 읽기. 위치가 지정되지 않으면 먼저 이 도구를 쓰고 실패하면 도시를 물을 것"))
+        put(definition("weather_current", "휴대폰 현재 위치의 현재 날씨, 향후 시간별 및 3일 예보를 바로 가져옴. 사용자가 도시 지정 없이 오늘 날씨나 비 소식을 물으면 우선 호출. 매개변수 불필요, 안경 날씨 설정은 변경하지 않음"))
+        put(definition("weather_search_cities", "사용자가 도시를 명시하면 좌표와 실제 도시 ID 조회. 도시 미지정 시 weather_current 우선", listOf("query"), "query" to field("string", "도시 이름")))
+        put(definition("weather_get", "선택한 도시의 날씨를 가져오고 안경 날씨 도시도 설정. city는 검색 결과 원본 객체 사용", listOf("city"), "city" to field("object", "검색 결과의 id/name/latitude/longitude")))
+        put(definition("weather_push", "가져온 날씨를 홈 온도와 날씨 카드에 함께 전송"))
+        put(definition("dashboard_read", "안경 홈 모드와 위젯 순서 읽기"))
+        put(definition("dashboard_update", "홈 모드와 순서 설정. 제거 요청이 없는 위젯은 유지. 날씨는 먼저 도시 설정", listOf("mode", "widgets"),
+            "mode" to field("integer", "0 표준, 1 간결, 2 대각 분할"), "widgets" to field("array", "1 날씨, 2 할 일, 3 일정, 4 주식, 5 메일, 6 세계 시계, 1~5개").put("items", JSONObject().put("type", "integer"))))
+        put(definition("record_query", "휴대폰의 전체 기록과 연결된 분석/태그/메모 읽기. 시간 범위나 원문으로 검색 가능", emptyList(),
+            "recordId" to field("string", "지정 기록 ID"), "from" to field("integer", "시작 Unix 밀리초"), "to" to field("integer", "종료 Unix 밀리초"), "text" to field("string", "검색어")))
+        put(definition("record_annotate", "분석, 태그, 메모를 원본 기록에 연결해 영구 저장하고 이후 컴퓨터로 동기화", listOf("recordId", "sourceRevision", "kind"),
+            "recordId" to field("string", "조회한 기록 ID"), "sourceRevision" to field("integer", "조회 결과의 record.revision"),
+            "kind" to field("string", "analysis/note/tags"), "text" to field("string", "본문"),
+            "tags" to field("array", "태그").put("items", field("string", "태그")), "id" to field("string", "재시도용 고정 파생 ID"),
+            "revision" to field("integer", "파생 항목 버전"), "agent" to field("string", "작성 Agent 이름")))
+        put(definition("memory_search", "보존이 허용된 원문 발화와 출처가 있는 기억 검색. 인물 관계는 추론하지 않음", listOf("query"), "query" to field("string", "키워드")))
+        put(definition("teleprompter_start", "사용자가 표시를 요청한 원고를 안경으로 전송하고 자동 스크롤 시작", listOf("title", "text"),
+            "title" to field("string", "원고 이름"), "text" to field("string", "전문"), "speed" to field("integer", "스크롤 속도 1~10, 기본값 2")))
+        put(definition("teleprompter_control", "이 앱이 시작한 프롬프터 제어", listOf("action"), "action" to field("string", "pause、resume、stop")))
     }
     fun mutates(name: String) = name in setOf("todo_add", "todo_update", "todo_delete", "schedule_add", "schedule_update", "schedule_delete")
 }

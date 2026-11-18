@@ -22,11 +22,11 @@ internal class GlassesVoiceTransport(
     private var advancedReply: String? = null
     private val client = UUID.randomUUID().toString().replace("-", "")
     fun start(next: ConversationSource) {
-        check(source == null || source == next) { "请先结束原音频功能" }
+        check(source == null || source == next) { "먼저 기존 오디오 기능을 종료하세요" }
         source = next
         when (next) {
             ConversationSource.NATIVE -> {
-                check(nativeActive && nativeCode in 1..6) { "请先说小雷小雷唤醒眼镜，并启用自动接听" }
+                check(nativeActive && nativeCode in 1..6) { "먼저 '샤오레이 샤오레이(샤오레이 샤오레이)'라고 말해 안경을 깨우고 자동 응답을 켜세요" }
                 send(0x0d, 2, JSONObject().put("rc", 1)); send(0x0d, 9, JSONObject().put("rc", 1))
             }
             ConversationSource.ALWAYS_ON -> send(0x0f, 20, JSONObject().put("cmd", "life_log_switch")
@@ -46,7 +46,7 @@ internal class GlassesVoiceTransport(
             val message = ProtocolCodec.message(frame.payload); val body = message.json?.let(::JSONObject) ?: return
             if (message.type == 21 && source == ConversationSource.ALWAYS_ON && body.optString("cmd") == "life_log_switch_result") {
                 val code = body.optJSONObject("payload")?.optInt("value", -1) ?: -1
-                if (code != 0) failure("眼镜拒绝全天智记：" + when (code) { 1 -> "麦克风权限关闭"; 2 -> "眼镜折叠"; 3 -> "电量过低"; else -> "设备码$code" })
+                if (code != 0) failure("안경이 종일 기록을 거부함: " + when (code) { 1 -> "마이크 권한 꺼짐"; 2 -> "안경 접힘"; 3 -> "배터리 부족"; else -> "기기 코드 $code" })
             }
             return
         }
@@ -77,7 +77,7 @@ internal class GlassesVoiceTransport(
                 if (task.isNotBlank() && task != lifeTask) return
                 val bytes = message.audio ?: return
                 val count = body.optInt("frameCount", bytes.size / 240)
-                if (count !in 1..31 || bytes.size != count * 240) { failure("全天智记音频帧长度异常，已停止本轮"); return }
+                if (count !in 1..31 || bytes.size != count * 240) { failure("종일 기록 오디오 프레임 길이 이상으로 이번 라운드를 중지함"); return }
                 repeat(count) { index -> audio(bytes.copyOfRange(index * 240, (index + 1) * 240)) }
             }
             165 -> if (source == ConversationSource.ALWAYS_ON && (body.optString("taskId").isBlank() || body.optString("taskId") == lifeTask)) {
@@ -104,7 +104,7 @@ internal class GlassesVoiceTransport(
     }
     private fun send(protocol: Int, type: Int, body: JSONObject) {
         try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
-            result.onFailure { failure("眼镜语音控制发送失败：${it.message}") }
-        } } catch (error: Exception) { failure("眼镜语音控制发送失败：${error.message}") }
+            result.onFailure { failure("안경 음성 제어 전송 실패: ${it.message}") }
+        } } catch (error: Exception) { failure("안경 음성 제어 전송 실패: ${error.message}") }
     }
 }

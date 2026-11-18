@@ -35,7 +35,7 @@ internal fun NavigationGrid(frame: String, modifier: Modifier = Modifier) {
     Canvas(
         modifier.fillMaxWidth().aspectRatio(20f / 7f).semantics {
             contentDescription =
-                "眼镜导航布局，20 列 5 行。" + frame.replace('█', ' ').replace('　', ' ').trim()
+                "안경 내비게이션 레이아웃, 20열 5행." + frame.replace('█', ' ').replace('　', ' ').trim()
         }
     ) {
         val cellWidth = size.width / 20
@@ -89,15 +89,15 @@ internal fun GlassesOutputPreview(state: GlassesState) {
             content != null
     val title =
         when {
-            state.ownership == DisplayOwnership.YIELDED -> "已让出显示"
-            state.link.phase != LinkPhase.FULL -> "尚未同步到眼镜"
-            session == null -> "未开启应用显示"
+            state.ownership == DisplayOwnership.YIELDED -> "표시를 양보함"
+            state.link.phase != LinkPhase.FULL -> "아직 안경에 동기화되지 않음"
+            session == null -> "앱 표시가 켜져 있지 않음"
             session.phase == PagePhase.CLOSING ->
-                if (state.intent == DisplayIntent.Idle) "正在关闭画面" else "正在切换画面"
-            content == null -> "等待首个画面写出"
-            session.content != content -> "正在更新 · 下方为上次写出内容"
-            session.mode == PageMode.NAVIGATION -> "导航 · 已写出内容"
-            else -> "实时提示 · 已写出内容"
+                if (state.intent == DisplayIntent.Idle) "화면 닫는 중" else "화면 전환 중"
+            content == null -> "첫 화면 전송 대기"
+            session.content != content -> "업데이트 중 · 아래는 마지막으로 전송된 내용"
+            session.mode == PageMode.NAVIGATION -> "내비게이션 · 전송된 내용"
+            else -> "실시간 힌트 · 전송된 내용"
         }
     Surface(
         color = LensBlack,
@@ -121,10 +121,10 @@ internal fun GlassesOutputPreview(state: GlassesState) {
             } else {
                 Text(
                     when {
-                        state.ownership == DisplayOwnership.YIELDED -> "眼镜当前页面由设备控制，手机无法读取。"
-                        state.link.phase != LinkPhase.FULL -> "完整连接后，显示本次会话写出的内容。"
+                        state.ownership == DisplayOwnership.YIELDED -> "안경의 현재 페이지는 기기가 제어하므로 휴대폰에서 읽을 수 없습니다."
+                        state.link.phase != LinkPhase.FULL -> "완전히 연결되면 이번 세션에서 전송한 내용을 표시합니다."
                         session != null -> state.displayDescription
-                        else -> "选择导航或打开实时提示。"
+                        else -> "내비게이션을 선택하거나 실시간 힌트를 여세요."
                     },
                     Modifier.padding(vertical = 20.dp),
                     style = MaterialTheme.typography.bodyMedium,
@@ -132,5 +132,5 @@ internal fun GlassesOutputPreview(state: GlassesState) {
             }
         }
     }
-    Note("发送记录预览，非实时屏幕截图。", Modifier.padding(top = 8.dp))
+    Note("전송 기록 미리보기이며 실시간 화면 캡처가 아닙니다.", Modifier.padding(top = 8.dp))
 }

@@ -55,20 +55,20 @@ internal object NavigationFeed {
         get() =
             when {
                 !connected -> listenerState.detail
-                !enabled -> "请在高德开始导航，再选择要跟随的通知"
-                selected == null -> "等待选定的高德通知；若通知已更换，请重新选择"
-                selected?.instruction == null -> "已收到高德通知，但其中没有可识别的转向和距离，请查看高德"
-                else -> selected!!.instruction!!.let { "跟随高德：${it.direction} · ${it.meters}米" }
+                !enabled -> "Amap에서 내비게이션을 시작한 뒤 따라갈 알림을 선택하세요"
+                selected == null -> "선택한 Amap 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
+                selected?.instruction == null -> "Amap 알림을 받았지만 인식 가능한 회전 방향과 거리가 없습니다. Amap을 확인하세요"
+                else -> selected!!.instruction!!.let { "Amap 추종: ${it.direction} · ${it.meters}m" }
             }
 
     val frame: String?
         get() {
             if (!enabled) return null
-            if (!connected) return NavigationFrame.status("通知读取已断开", "请查看手机")
-            val entry = selected ?: return NavigationFrame.status("等待高德通知", "请以手机导航为准")
+            if (!connected) return NavigationFrame.status("알림 읽기 끊김", "휴대폰 확인")
+            val entry = selected ?: return NavigationFrame.status("Amap 알림 대기", "휴대폰 안내 기준")
             return entry.instruction?.let {
                 NavigationFrame.render(it.direction, it.meters, entry.title)
-            } ?: NavigationFrame.status("指令暂未识别", "请查看高德")
+            } ?: NavigationFrame.status("안내 미인식", "Amap 확인")
         }
 
     fun initialize(context: Context) {
@@ -103,7 +103,7 @@ internal object NavigationFeed {
     }
 
     fun follow(key: String) {
-        check(entries.containsKey(key)) { "该通知已消失，请在高德开始导航后刷新" }
+        check(entries.containsKey(key)) { "해당 알림이 사라졌습니다. Amap에서 내비게이션을 시작한 뒤 새로 고치세요" }
         selectedKey = key
         enabled = true
         preferences
@@ -130,7 +130,7 @@ internal class NavigationNotifications : NotificationListenerService() {
     private val reader =
         object : NavigationNotificationReader {
             override fun snapshot(): List<NavigationFeed.Entry> =
-                checkNotNull(activeNotifications) { "通知快照不可用" }
+                checkNotNull(activeNotifications) { "알림 스냅샷을 사용할 수 없음" }
                     .filter { it.packageName == NavigationFeed.PACKAGE }
                     .mapNotNull(::parseSafely)
 
@@ -167,7 +167,7 @@ internal class NavigationNotifications : NotificationListenerService() {
         try {
             parse(item)
         } catch (failure: Exception) {
-            Log.w("OpenRayneo", "高德通知解析失败：${failure.javaClass.simpleName}")
+            Log.w("OpenRayneo", "Amap 알림 파싱 실패: ${failure.javaClass.simpleName}")
             null
         }
 
@@ -267,20 +267,20 @@ internal object GaodeNotificationParser {
 
     private val actions =
         linkedMapOf(
-            "向左前方行驶" to "左前",
-            "向右前方行驶" to "右前",
-            "向左后方行驶" to "左后",
-            "向右后方行驶" to "右后",
-            "左前方转弯" to "左前",
-            "右前方转弯" to "右前",
-            "向左转" to "左转",
-            "向右转" to "右转",
-            "向左前方" to "左前",
-            "向右前方" to "右前",
-            "直行" to "直行",
-            "左转" to "左转",
-            "右转" to "右转",
-            "掉头" to "掉头",
+            "向左前方行驶" to "좌전방",
+            "向右前方行驶" to "우전방",
+            "向左后方行驶" to "좌후방",
+            "向右后方行驶" to "우후방",
+            "左前方转弯" to "좌전방",
+            "右前方转弯" to "우전방",
+            "向左转" to "좌회전",
+            "向右转" to "우회전",
+            "向左前方" to "좌전방",
+            "向右前方" to "우전방",
+            "直行" to "직진",
+            "左转" to "좌회전",
+            "右转" to "우회전",
+            "掉头" to "유턴",
         )
     private val action = actions.keys.joinToString("|") { Regex.escape(it) }
     private const val number = "([0-9]+(?:\\.[0-9]+)?)\\s*(公里|千米|米|km|m)"

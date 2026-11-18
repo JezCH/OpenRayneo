@@ -16,7 +16,7 @@ internal class SpeakerEngine(context: Context, private val people: () -> List<Vo
                         val personId: String?, val score: Float?, val mixed: Boolean, val embedding: FloatArray?)
     data class Assignment(val speaker: String = "未知", val personId: String? = null,
                           val score: Float? = null, val stable: Boolean = false, val mixed: Boolean = false,
-                          val candidates: List<VoiceMatch> = emptyList(), val reason: String = "尚未取得足够清晰人声")
+                          val candidates: List<VoiceMatch> = emptyList(), val reason: String = "아직 충분히 선명한 음성을 얻지 못함")
     private data class Cluster(val label: String, val samples: MutableList<FloatArray>, var lastSeenMS: Long)
     private val extractor = SpeakerEmbeddingExtractor(context.assets,
         SpeakerEmbeddingExtractorConfig("voice-models/campplus-zh-16k.onnx", numThreads = 1))
@@ -112,7 +112,7 @@ internal class SpeakerEngine(context: Context, private val people: () -> List<Vo
                     embedding(audio)
                 } else null
                 if (vector != null) vectors[speaker] = vector
-                labels[speaker] = vector?.let { cluster(it, end).label } ?: "${labelPrefix}短段$begin-$speaker"
+                labels[speaker] = vector?.let { cluster(it, end).label } ?: "${labelPrefix}짧은구간$begin-$speaker"
                 matches[speaker] = vector?.let(::person)
             }
             regions.forEach { region ->
@@ -175,13 +175,13 @@ internal class SpeakerEngine(context: Context, private val people: () -> List<Vo
             .groupBy { it.first }.maxByOrNull { (_, votes) -> votes.sumOf { it.second } }
         val identity = known?.takeIf { stable && it.value.sumOf { vote -> vote.second }.toDouble() / total >= 0.85 }?.key
         val reason = when {
-            mixed -> "多人重叠，暂不确认身份"
-            !stable -> "人声过短或同句包含多个说话人"
-            ranked.isEmpty() -> "尚无已登记声音可比对"
-            ranked.first().score < threshold() -> "最高相似度未达到确认阈值 ${"%.2f".format(threshold())}"
-            ranked.size > 1 && ranked[0].score - ranked[1].score < 0.08f -> "两个候选声音接近，等待更多发言"
-            identity == null -> "各片段匹配不一致，等待更多发言"
-            else -> "已匹配登记声音"
+            mixed -> "여러 사람이 겹쳐 신원을 아직 확정하지 않음"
+            !stable -> "음성이 너무 짧거나 한 문장에 여러 화자가 포함됨"
+            ranked.isEmpty() -> "비교할 등록된 목소리가 아직 없음"
+            ranked.first().score < threshold() -> "최고 유사도가 확정 임계값에 미달 ${"%.2f".format(threshold())}"
+            ranked.size > 1 && ranked[0].score - ranked[1].score < 0.08f -> "두 후보 목소리가 비슷해 더 많은 발화를 기다림"
+            identity == null -> "구간별 매칭이 일치하지 않아 더 많은 발화를 기다림"
+            else -> "등록된 목소리와 일치함"
         }
         return Assignment(speaker.key, identity, ranked.firstOrNull()?.score, stable, mixed, ranked.take(2), reason)
     }

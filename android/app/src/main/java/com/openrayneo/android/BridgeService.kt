@@ -93,7 +93,7 @@ internal class BridgeService : Service() {
                 requests.receive(frame)
                 voiceTransport.receive(frame)
                 display.receive(frame, source)
-            }.onFailure { onLog("眼镜消息解析失败：$source") } }, ::onLog)
+            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
         requests = GlassesRequests(main, connection::sendFrame)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
@@ -134,7 +134,7 @@ internal class BridgeService : Service() {
         if (settings.read().optBoolean("localAgentEnabled")) agentServer.start()
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("bridge", "眼镜连接与导航", NotificationManager.IMPORTANCE_LOW))
+            NotificationChannel("bridge", "안경 연결 및 내비게이션", NotificationManager.IMPORTANCE_LOW))
         initialized = true
         dispatch(GlassesEvent.NavigationChanged(navigationSnapshot()))
         NavigationNotifications.refresh(this)
@@ -185,7 +185,7 @@ internal class BridgeService : Service() {
                 if (state.displayDescription != previous.displayDescription) onLog(state.displayDescription)
                 transition.effects.forEach { effect ->
                     runCatching { execute(effect) }.onFailure { error ->
-                        val message = error.message ?: "眼镜操作失败"
+                        val message = error.message ?: "안경 작업 실패"
                         onLog(message)
                         when (effect) {
                             is GlassesEffect.StartPage -> events.add(GlassesEvent.SessionSignal(effect.session.id, PageSignal.Failed(message)))
@@ -232,15 +232,15 @@ internal class BridgeService : Service() {
     }
 
     fun scan() {
-        check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "请先断开当前连接" }
+        check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
         devices.clear(); supervisor.scan()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
-        check(!ready && !state.disconnecting) { "请先断开当前连接" }
+        check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         runCatching { supervisor.connect(device, bleOnly) }.onFailure {
-            supervisor.disconnect(); onLog(it.message ?: "连接失败")
+            supervisor.disconnect(); onLog(it.message ?: "연결 실패")
         }
     }
     fun disconnect() {
@@ -251,45 +251,45 @@ internal class BridgeService : Service() {
     fun followNavigation(key: String) {
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
-        check(!state.disconnecting) { "请等待断开完成" }
-        val entry = checkNotNull(navigation.entries[key]) { "该通知已消失，请在高德开始导航后刷新" }
+        check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
+        val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. Amap에서 내비게이션을 시작한 뒤 새로 고치세요" }
         val frame = entry.instruction?.let { NavigationFrame.render(it.direction, it.meters, entry.title) }
-            ?: NavigationFrame.status("指令暂未识别", "请查看高德")
+            ?: NavigationFrame.status("안내 미인식", "Amap 확인")
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
     }
     fun stopNavigation() = dispatch(GlassesEvent.StopNavigation)
     fun reopenNavigation() {
-        val key = navigation.selectedKey ?: error("请先选择要跟随的高德通知")
+        val key = navigation.selectedKey ?: error("먼저 따라갈 Amap 알림을 선택하세요")
         followNavigation(key)
     }
     fun clearDisplay() { autoClearFor = null; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null; dispatch(GlassesEvent.ClearDisplay) }
     fun enableAgentServer(enabled: Boolean) {
         if (enabled) {
             check(checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                "请先授予附近设备权限，再启用本机Agent入口"
+                "먼저 근처 기기 권한을 허용한 뒤 로컬 Agent 엔드포인트를 활성화하세요"
             }
             agentServer.start()
             startForegroundService(Intent(this, BridgeService::class.java))
         } else agentServer.stop()
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, completion: (Result<JSONObject>) -> Unit) {
-        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "请先完整连接眼镜" }
+        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         conversationOwnsDisplay = false; conversations.stop(); dispatch(GlassesEvent.PauseDisplay)
         val allowed = requests.permission()
         val deadline = SystemClock.elapsedRealtime() + 2_500
         val wait = object : Runnable {
             override fun run() {
-                if (!allowed() || state.link.phase != LinkPhase.FULL || state.disconnecting) { completion(Result.failure(IllegalStateException("眼镜已断开"))); return }
+                if (!allowed() || state.link.phase != LinkPhase.FULL || state.disconnecting) { completion(Result.failure(IllegalStateException("안경 연결이 끊김"))); return }
                 if (state.session == null) {
                     val id = teleprompter.save(title, text, documentId ?: java.util.UUID.randomUUID().toString())
                     requests.withPermission(allowed) { teleprompter.start(id, speed, completion) }
                 } else if (SystemClock.elapsedRealtime() < deadline) main.postDelayed(this, 50)
-                else completion(Result.failure(IllegalStateException("旧显示尚未结束，请稍后重新播放")))
+                else completion(Result.failure(IllegalStateException("이전 표시가 아직 끝나지 않았습니다. 잠시 후 다시 재생하세요")))
             }
         }; main.post(wait)
     }
     fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null) {
-        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "请先完整连接眼镜" }
+        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         conversations.start(mode, source, target, if (source == ConversationSource.NATIVE) voiceTransport.wakeId else null)
     }
     private fun nativeWake() {
@@ -311,7 +311,7 @@ internal class BridgeService : Service() {
             conversations.nextRound(voiceTransport.wakeId); agent.harness.cancel("route"); agent.harness.cancel("hint"); voiceAudio.stop(); voiceAudio.start(1); voiceTransport.start(ConversationSource.NATIVE)
         } else {
             try { startConversation(ConversationMode.DAILY, ConversationSource.NATIVE) }
-            catch (error: Exception) { conversations.report(error.message ?: "原生接听失败") }
+            catch (error: Exception) { conversations.report(error.message ?: "기본 응답 수신 실패") }
         }
     }
     private fun resumeBackground() {
@@ -352,8 +352,8 @@ internal class BridgeService : Service() {
             input.put("serviceInstance", serviceInstance).put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
         // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
-        agent.harness.submit(request.text, request.context + "\n入队时刻：${java.time.ZonedDateTime.now()}（交付时由外部Agent更新当前时间）", input = input) { result ->
-            result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "外部Agent任务未完成") })
+        agent.harness.submit(request.text, request.context + "\n대기열 등록 시각: ${java.time.ZonedDateTime.now()} (전달 시 외부 Agent가 현재 시각을 갱신)", input = input) { result ->
+            result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
         return true
     }
@@ -381,13 +381,13 @@ internal class BridgeService : Service() {
             val permit = checkNotNull(state.answerPermit)
             autoClearFor = ref; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null
             dispatch(GlassesEvent.AnswerCompleted(AnswerContent(ref, question, answer), permit))
-        } else if (state.link.phase == LinkPhase.FULL && !state.disconnecting) connection.sendNotification("助手", answer)
+        } else if (state.link.phase == LinkPhase.FULL && !state.disconnecting) connection.sendNotification("어시스턴트", answer)
     }
     fun pausePrompt() { conversations.stop(); dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() = dispatch(GlassesEvent.OpenStandby)
     fun retryAudio() {
         check(state.link.phase == LinkPhase.FULL && state.session?.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)) {
-            "请先启动导航或实时提示，并等待眼镜确认"
+            "먼저 내비게이션 또는 실시간 힌트를 시작하고 안경의 확인을 기다리세요"
         }
         dispatch(GlassesEvent.RetryAudio)
     }
@@ -395,11 +395,11 @@ internal class BridgeService : Service() {
 
     fun submitAnswer(source: AnswerSource, text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = false) {
         if (source == AnswerSource.MOBILE_AGENT) {
-            check(agentServer.state.enabled) { "请先在设置的“DSH Go 与外部 Agent”启用本机入口，并启动DSH Go插件" }
+            check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }
         }
         when (source) {
-            AnswerSource.MOBILE_AGENT -> check(!agent.running) { "请等待回答，或先停止" }
-            AnswerSource.COMPUTER_CODEX -> check(codex.connected && !codex.running) { "请连接电脑并等待当前任务结束" }
+            AnswerSource.MOBILE_AGENT -> check(!agent.running) { "답변을 기다리거나 먼저 중지하세요" }
+            AnswerSource.COMPUTER_CODEX -> check(codex.connected && !codex.running) { "컴퓨터를 연결하고 현재 작업이 끝날 때까지 기다리세요" }
         }
         autoClearFor = null; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null
         val ref = AnswerRef(source, ++nextAnswer)
@@ -445,7 +445,7 @@ internal class BridgeService : Service() {
     fun connectCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.connect() }
     fun closeCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.close() }
     fun newCodexConversation() {
-        check(!codex.running) { "请先结束当前电脑任务" }
+        check(!codex.running) { "먼저 현재 컴퓨터 작업을 종료하세요" }
         invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.newConversation()
     }
     private fun completed(source: AnswerSource, question: String, text: String) {
@@ -462,11 +462,11 @@ internal class BridgeService : Service() {
             if (delivery.source == ConversationSource.NATIVE) {
                 if (voiceTransport.nativeActive && delivery.wakeId == voiceTransport.wakeId && delivery.wakeId != null)
                     voiceTransport.reply(text, question, delivery.wakeId)
-                else if (state.link.phase == LinkPhase.FULL) connection.sendNotification("助手", text)
+                else if (state.link.phase == LinkPhase.FULL) connection.sendNotification("어시스턴트", text)
                 return
             }
             if (delivery.source == ConversationSource.ALWAYS_ON || state.answerPermit != permit) {
-                if (state.link.phase == LinkPhase.FULL) connection.sendNotification("助手", text)
+                if (state.link.phase == LinkPhase.FULL) connection.sendNotification("어시스턴트", text)
                 return
             }
         }
@@ -490,12 +490,12 @@ internal class BridgeService : Service() {
         }.also { main.postDelayed(it, seconds * 1000L) }
     }
     fun revealAnswer(source: AnswerSource) {
-        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "请先完整连接眼镜" }
+        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val (question, answer) = when (source) {
             AnswerSource.MOBILE_AGENT -> agent.question to agent.answer
             AnswerSource.COMPUTER_CODEX -> codex.question to codex.answer
         }
-        require(answer.isNotBlank()) { "还没有可显示的回答" }
+        require(answer.isNotBlank()) { "표시할 답변이 아직 없습니다" }
         dispatch(GlassesEvent.RevealAnswer(AnswerContent(AnswerRef(source, ++nextAnswer), question, answer)))
     }
     private fun navigationSnapshot() = NavigationState(navigation.enabled, navigation.selectedKey, navigation.frame)
@@ -513,7 +513,7 @@ internal class BridgeService : Service() {
             method == "GET" && path == "/v1/records/people" -> JSONObject().put("items", org.json.JSONArray(repository.people.map { it.json().apply { remove("samples") } }))
             method == "POST" && path == "/v1/records/derived" -> {
                 val item = RecordDerived.parse(body)
-                check(repository.applyDerived(item)) { "记录不存在" }; conversations.refreshRecords()
+                check(repository.applyDerived(item)) { "기록이 없습니다" }; conversations.refreshRecords()
                 JSONObject().put("item", item.json()).put("persisted", true)
             }
             method == "GET" && path == "/v1/records/sync" -> JSONObject().put("enabled", recordSync.state.enabled).put("port", recordSync.state.port)
@@ -534,7 +534,7 @@ internal class BridgeService : Service() {
                 args.optLong("to", Long.MAX_VALUE), args.optString("recordId"), args.optString("text")))))
             "record_annotate" -> {
                 val item = RecordDerived.parse(args)
-                check(conversations.repository.applyDerived(item)) { "记录不存在" }; conversations.refreshRecords()
+                check(conversations.repository.applyDerived(item)) { "기록이 없습니다" }; conversations.refreshRecords()
                 completion(Result.success(JSONObject().put("item", item.json()).put("persisted", true)))
             }
             "memory_search" -> {
@@ -549,7 +549,7 @@ internal class BridgeService : Service() {
             }
             "teleprompter_start" -> startTeleprompter(args.getString("title"), args.getString("text"), args.optInt("speed", 2), completion = completion)
             "teleprompter_control" -> teleprompter.control(args.getString("action"), completion)
-            "display_clear" -> { check(state.session?.mode == PageMode.PROMPT && state.ownership == DisplayOwnership.APP) { "当前没有本应用拥有的实时提示页" }; clearDisplay(); completion(Result.success(JSONObject().put("queued", true))) }
+            "display_clear" -> { check(state.session?.mode == PageMode.PROMPT && state.ownership == DisplayOwnership.APP) { "이 앱이 소유한 실시간 힌트 페이지가 없습니다" }; clearDisplay(); completion(Result.success(JSONObject().put("queued", true))) }
             "device_read" -> requests.perform({ deviceSettings.readForTool() }, completion)
             else -> if (name.startsWith("device_")) deviceSettings.tool(name, args, completion)
                 else content.execute(name, args, completion)
@@ -563,10 +563,10 @@ internal class BridgeService : Service() {
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
     private fun summary() = state.displayDescription + when (state.audio.phase) {
-        AudioPhase.RECEIVING -> " · 收音中"
-        AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 等待音频"
-        AudioPhase.STALLED -> " · 音频已中断"
-        AudioPhase.FAILED -> " · 音频错误"
+        AudioPhase.RECEIVING -> " · 음성 수신 중"
+        AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
+        AudioPhase.STALLED -> " · 오디오 중단됨"
+        AudioPhase.FAILED -> " · 오디오 오류"
         AudioPhase.STOPPED -> ""
     }
     private fun notification(): Notification {
@@ -574,7 +574,7 @@ internal class BridgeService : Service() {
         val stop = PendingIntent.getService(this, 1, Intent(this, BridgeService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("OpenRayneo").setContentText(summary()).setContentIntent(open).setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "停止服务", stop).build()).build()
+            .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build()).build()
     }
     private fun updateNotification() {
         if (!initialized || !foreground || stopAfterDisconnect) return

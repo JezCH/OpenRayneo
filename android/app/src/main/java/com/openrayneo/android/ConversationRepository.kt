@@ -40,11 +40,11 @@ internal class ConversationRepository(context: Context) {
         writePeople()
     }
     @Synchronized fun removeVoice(personId: String) { people.firstOrNull { it.id == personId }?.let { savePerson(it.copy(samples = emptyList())) } }
-    @Synchronized fun ensureSelf(): VoicePerson = people.firstOrNull { it.self && it.mergedInto == null } ?: VoicePerson(name = "我", self = true).let {
+    @Synchronized fun ensureSelf(): VoicePerson = people.firstOrNull { it.self && it.mergedInto == null } ?: VoicePerson(name = "나", self = true).let {
         savePerson(it); people.first { person -> person.id == it.id }
     }
     @Synchronized fun rememberUnnamed(samples: List<FloatArray>): VoicePerson {
-        val person = VoicePerson(name = "未命名人物${people.count { it.unnamed } + 1}", samples = samples.takeLast(10), unnamed = true)
+        val person = VoicePerson(name = "이름 없는 인물 ${people.count { it.unnamed } + 1}", samples = samples.takeLast(10), unnamed = true)
         savePerson(person)
         return people.first { it.id == person.id }
     }
@@ -109,7 +109,7 @@ internal class ConversationRepository(context: Context) {
         }
     }
     @Synchronized fun applyDerived(item: RecordDerived): Boolean {
-        require(item.kind in setOf("analysis", "note", "tags")) { "kind应为analysis/note/tags" }
+        require(item.kind in setOf("analysis", "note", "tags")) { "kind 값은 다음 중 하나여야 함: analysis/note/tags" }
         val old = records.firstOrNull { it.id == item.recordId } ?: return false
         if (old.derived.any { it.id == item.id && it.revision >= item.revision }) return true
         val updated = item.copy(stale = item.stale || item.sourceRevision != old.revision)

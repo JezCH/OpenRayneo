@@ -18,7 +18,7 @@ internal class ConversationSummarizer {
         val body = JSONObject().put("model", config.getString("modelName")).put("stream", false)
             .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content",
                 ConversationPrompts.render(config.optString("memoryPrompt"), ConversationPrompts.memory) +
-                    "\n返回JSON：summary字符串，memories数组；每项含source_ids数组、subject、text、kind，可选subject_id。每项必须引用已有原句ID。"))
+                    "\nJSON 반환: summary 문자열, memories 배열. 각 항목에는 source_ids 배열, subject, text, kind가 있고 subject_id는 선택. 각 항목은 반드시 기존 원문 문장 ID를 참조해야 함. 텍스트는 한국어로 작성."))
                 .put(JSONObject().put("role", "user").put("content", JSONObject().put("mode", record.mode.name)
                     .put("people", JSONArray(people.map { JSONObject().put("id", it.id).put("name", it.name).put("self", it.self) }))
                     .put("segments", JSONArray(record.segments.map { it.json() })).toString())))
@@ -27,10 +27,10 @@ internal class ConversationSummarizer {
         }.post(body.toString().toRequestBody("application/json".toMediaType())).build()
         val current = http.newCall(request); call = current
         return current.execute().use { response ->
-            check(response.isSuccessful) { "记忆整理失败：HTTP ${response.code}" }
+            check(response.isSuccessful) { "기억 정리 실패: HTTP ${response.code}" }
             val objectBody = JSONObject(checkNotNull(response.body).string())
             val choice = objectBody.getJSONArray("choices").getJSONObject(0)
-            check(choice.optString("finish_reason") == "stop") { "记忆整理未完整返回" }
+            check(choice.optString("finish_reason") == "stop") { "기억 정리 결과가 완전히 반환되지 않음" }
             val content = choice.getJSONObject("message").getString("content").trim()
                 .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
             val result = JSONObject(content); val sources = record.segments.associateBy { it.id }
@@ -38,7 +38,7 @@ internal class ConversationSummarizer {
             val facts = (0 until memories.length()).map { index ->
                 val item = memories.getJSONObject(index)
                 val ids = item.getJSONArray("source_ids").let { list -> List(list.length()) { list.getString(it) } }
-                check(ids.isNotEmpty() && ids.all { it in sources }) { "模型记忆引用了不存在的原文，未保存" }
+                check(ids.isNotEmpty() && ids.all { it in sources }) { "모델의 기억이 존재하지 않는 원문을 참조해 저장하지 않음" }
                 val speakerIds = ids.map { sources[it]?.personId }.distinct()
                 val subjectId = item.optString("subject_id").takeIf { id -> people.any { it.id == id } }
                 AttributedMemory(sourceIds = ids, speakerId = speakerIds.singleOrNull(), subjectId = subjectId,

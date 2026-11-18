@@ -6,8 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-internal enum class ConversationMode(val title: String) { DAILY("日常"), MEETING("会议"), ENROLL("声音登记") }
-internal enum class ConversationSource(val title: String) { REALTIME("实时双麦"), NATIVE("小雷小雷"), ALWAYS_ON("全天智记") }
+internal enum class ConversationMode(val title: String) { DAILY("일상"), MEETING("회의"), ENROLL("목소리 등록") }
+internal enum class ConversationSource(val title: String) { REALTIME("실시간 듀얼 마이크"), NATIVE("샤오레이 샤오레이"), ALWAYS_ON("종일 기록") }
 internal data class VoiceMatch(val personId: String, val score: Float) {
     fun json() = JSONObject().put("personId", personId).put("score", score)
 }
@@ -91,7 +91,7 @@ internal data class AttributedMemory(
 }
 internal data class ConversationRecord(
     val id: String = UUID.randomUUID().toString(), val mode: ConversationMode,
-    val createdAt: Long = System.currentTimeMillis(), val title: String = mode.title + "记录",
+    val createdAt: Long = System.currentTimeMillis(), val title: String = mode.title + " 기록",
     val segments: List<SpeechSegment> = emptyList(), val memories: List<AttributedMemory> = emptyList(),
     val summary: String = "", val summaryStale: Boolean = false,
     val speakerSamples: Map<String, List<FloatArray>> = emptyMap(), val audioSamples: Long = 0, val audioId: String? = null, val audioPending: Boolean = false,
@@ -139,7 +139,7 @@ internal data class ConversationState(
     val activeRecord: ConversationRecord? = null,
     val lastHint: String = "",
     val running: Boolean = false, val mode: ConversationMode = ConversationMode.DAILY,
-    val source: ConversationSource = ConversationSource.REALTIME, val status: String = "选择日常或会议后开始",
+    val source: ConversationSource = ConversationSource.REALTIME, val status: String = "일상 또는 회의를 선택해 시작",
     val segments: List<SpeechSegment> = emptyList(), val people: List<VoicePerson> = emptyList(),
     val records: List<ConversationRecord> = emptyList(), val error: String? = null,
     val enrollmentSeconds: Float = 0f, val enrollmentReady: Boolean = false, val enrollmentCanConfirm: Boolean = false, val enrollmentTotalSeconds: Float = 0f, val decodedSeconds: Double = 0.0,

@@ -27,7 +27,7 @@ internal class ConnectionSupervisor(
         attempts++; retryScanning = true
         runCatching { transport.scan() }.onFailure {
             retryScanning = false
-            report(it.message ?: "重连扫描失败")
+            report(it.message ?: "재연결 스캔 실패")
             scheduleRetry()
         }
     }
@@ -52,7 +52,7 @@ internal class ConnectionSupervisor(
             val result = runCatching { transport.connect(device, false) }
             if (result.isFailure) {
                 transport.disconnect()
-                report(result.exceptionOrNull()?.message ?: "重连失败")
+                report(result.exceptionOrNull()?.message ?: "재연결 실패")
             }
             starting = false
             if (result.isFailure) scheduleRetry()
@@ -62,7 +62,7 @@ internal class ConnectionSupervisor(
         val wasReady = state.phase == LinkPhase.FULL
         val phase = when {
             ready -> if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL
-            busy -> if (text.startsWith("正在扫描")) LinkPhase.SCANNING else LinkPhase.CONNECTING
+            busy -> if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
             else -> LinkPhase.DISCONNECTED
         }
         state = LinkState(phase, text)
@@ -80,10 +80,10 @@ internal class ConnectionSupervisor(
         if (!retrying || target == null) return
         if (attempts >= 3) {
             retrying = false; retryScanning = false
-            state = LinkState(LinkPhase.DISCONNECTED, "自动重连已尝试三次，请检查蓝牙后重新连接")
+            state = LinkState(LinkPhase.DISCONNECTED, "자동 재연결을 세 번 시도했습니다. 블루투스를 확인한 뒤 다시 연결하세요")
             changed(state)
         } else {
-            state = LinkState(LinkPhase.RETRY_WAIT, "连接中断，等待第 ${attempts + 1} 次重连")
+            state = LinkState(LinkPhase.RETRY_WAIT, "연결 끊김, ${attempts + 1}번째 재연결 대기 중")
             changed(state)
             main.postDelayed(retry, 5_000L * (attempts + 1))
         }

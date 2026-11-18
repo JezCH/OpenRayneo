@@ -62,17 +62,17 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     title = {
                         Text(
                             when (route) {
-                                "settings" -> "设置"
-                                "model" -> "手机模型"
-                                "computer" -> "电脑连接"
-                                "diagnostics" -> "设备与诊断"
-                                "voice-settings" -> "语音与提示词"
-                                "voice-profiles" -> "声音与人物"
-                                "device-settings" -> "眼镜设置"
-                                "content" -> "首页与内容"
-                                "teleprompter" -> "提词资料"
-                                "agent-api" -> "DSH Go 与外部 Agent"
-                                else -> listOf("OpenRayneo", "导航", "助手", "记录")[tab]
+                                "settings" -> "설정"
+                                "model" -> "휴대폰 모델"
+                                "computer" -> "컴퓨터 연결"
+                                "diagnostics" -> "기기 및 진단"
+                                "voice-settings" -> "음성 및 프롬프트"
+                                "voice-profiles" -> "목소리 및 인물"
+                                "device-settings" -> "안경 설정"
+                                "content" -> "홈 화면 및 콘텐츠"
+                                "teleprompter" -> "프롬프터 자료"
+                                "agent-api" -> "DSH Go 및 외부 Agent"
+                                else -> listOf("OpenRayneo", "내비게이션", "어시스턴트", "기록")[tab]
                             }
                         )
                     },
@@ -85,14 +85,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                         else "settings"
                                 }
                             ) {
-                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回")
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "뒤로")
                             }
                     },
                     actions = {
                         if (route.isEmpty()) {
-                            if (s.glasses.link.phase == LinkPhase.FULL) StatusPill("眼镜已连接")
+                            if (s.glasses.link.phase == LinkPhase.FULL) StatusPill("안경 연결됨")
                             IconButton(onClick = { route = "settings" }) {
-                                Icon(Icons.Outlined.Settings, "设置")
+                                Icon(Icons.Outlined.Settings, "설정")
                             }
                         }
                     },
@@ -112,7 +112,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             Icons.AutoMirrored.Outlined.Chat,
                             Icons.Outlined.FolderOpen,
                         )
-                    listOf("眼镜", "导航", "助手", "记录").forEachIndexed { index, title ->
+                    listOf("안경", "내비게이션", "어시스턴트", "기록").forEachIndexed { index, title ->
                         NavigationBarItem(
                             selected = tab == index,
                             onClick = { tab = index },
@@ -192,9 +192,9 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
     if (sources)
         ModalBottomSheet(onDismissRequest = { sources = false }) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-                Text("导航通知来源", style = MaterialTheme.typography.headlineSmall)
-                Note("选择包含转向和距离的通知。只有“正在导航”的消息无法提供方向。", Modifier.padding(vertical = 12.dp))
-                if (s.navigationEntries.isEmpty()) Note("还没有收到高德导航通知")
+                Text("내비게이션 알림 소스", style = MaterialTheme.typography.headlineSmall)
+                Note("회전 방향과 거리가 포함된 알림을 선택하세요. '내비게이션 중' 메시지만으로는 방향을 알 수 없습니다.", Modifier.padding(vertical = 12.dp))
+                if (s.navigationEntries.isEmpty()) Note("아직 Amap 내비게이션 알림을 받지 못했습니다")
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(s.navigationEntries, key = { it.key }) { entry ->
                         OutlinedCard(
@@ -210,7 +210,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text(
-                                    entry.title.ifBlank { "高德导航" },
+                                    entry.title.ifBlank { "Amap 내비게이션" },
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Note(entry.texts.filter { it != entry.title }.joinToString("\n"))
@@ -219,8 +219,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                         entry.key == s.glasses.navigation.key &&
                                             s.glasses.navigation.enabled
                                     )
-                                        "正在跟随"
-                                    else "跟随这条通知",
+                                        "따라가는 중"
+                                    else "이 알림 따라가기",
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -232,9 +232,9 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
     model.error?.let { message ->
         AlertDialog(
             onDismissRequest = { model.error = null },
-            title = { Text("操作提示") },
+            title = { Text("안내") },
             text = { Text(message) },
-            confirmButton = { TextButton(onClick = { model.error = null }) { Text("知道了") } },
+            confirmButton = { TextButton(onClick = { model.error = null }) { Text("확인") } },
         )
     }
 }
@@ -265,7 +265,7 @@ private fun GlassesScreen(
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "已连接 · 手机直连" else state.link.detail)
+                        Note(if (linked) "연결됨 · 휴대폰 직접 연결" else state.link.detail)
                     }
                     ToolOutlinedButton(
                         onClick =
@@ -273,8 +273,8 @@ private fun GlassesScreen(
                             else connect
                     ) {
                         Text(
-                            if (linked || state.link.phase == LinkPhase.BLE_ONLY) "管理"
-                            else if (busy) "连接进度" else "连接"
+                            if (linked || state.link.phase == LinkPhase.BLE_ONLY) "관리"
+                            else if (busy) "연결 진행 상황" else "연결"
                         )
                     }
                 }
@@ -285,52 +285,52 @@ private fun GlassesScreen(
                         enabled = !state.disconnecting && state.link.phase != LinkPhase.CLOSING,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (state.disconnecting) "正在断开…" else "断开连接")
+                        Text(if (state.disconnecting) "연결 해제 중…" else "연결 해제")
                     }
-                    Note("断开会结束显示与收音、停止自动重连，并保留配对记录。随后可切换到其他设备连接。")
+                    Note("연결을 해제하면 표시와 음성 수신이 끝나고 자동 재연결이 중지되며 페어링 기록은 유지됩니다. 이후 다른 기기로 연결을 전환할 수 있습니다.")
                 }
             }
         }
         item {
             ContentCard {
-                Text("独立伴侣", style = MaterialTheme.typography.titleMedium)
+                Text("독립 컴패니언", style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToolOutlinedButton(onClick = { configure("content") }) { Text("首页与内容") }
-                    ToolOutlinedButton(onClick = { navigate(3) }) { Text("语音记录") }
+                    ToolOutlinedButton(onClick = { configure("content") }) { Text("홈 화면 및 콘텐츠") }
+                    ToolOutlinedButton(onClick = { navigate(3) }) { Text("음성 기록") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { configure("teleprompter") }) { Text("提词稿库") }
-                    TextButton(onClick = { configure("agent-api") }) { Text("外部Agent") }
+                    TextButton(onClick = { configure("teleprompter") }) { Text("프롬프터 원고함") }
+                    TextButton(onClick = { configure("agent-api") }) { Text("외부 Agent") }
                 }
             }
         }
-        item { SectionLabel("眼镜画面") }
+        item { SectionLabel("안경 화면") }
         item { GlassesOutputPreview(state) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (linked) {
                     Note(state.displayDescription)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ToolOutlinedButton(onClick = { navigate(1) }) { Text("导航") }
+                        ToolOutlinedButton(onClick = { navigate(1) }) { Text("내비게이션") }
                         ToolOutlinedButton(
                             onClick = { model.attempt { model.service().openStandby() } }
                         ) {
-                            Text("实时提示")
+                            Text("실시간 힌트")
                         }
                     }
                     if (state.session?.mode == PageMode.PROMPT && state.session.phase == PagePhase.READY)
                         TextButton(onClick = { model.attempt { model.service().clearDisplay() } }) {
-                            Text("清空屏幕（保留收音）")
+                            Text("화면 지우기 (음성 수신 유지)")
                         }
                     if (state.intent is DisplayIntent.Answer)
                         TextButton(
                             onClick = { model.attempt { model.service().dismissAnswer() } }
                         ) {
-                            Text("结束眼镜回答")
+                            Text("안경 답변 종료")
                         }
                     if (state.session != null)
                         TextButton(onClick = { model.attempt { model.service().pausePrompt() } }) {
-                            Text("暂停显示与收音")
+                            Text("표시 및 음성 수신 일시정지")
                         }
                 }
             }
@@ -343,15 +343,15 @@ private fun GlassesScreen(
                 ) {
                     Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary)
                     Column {
-                        Text("眼镜音频", style = MaterialTheme.typography.titleSmall)
+                        Text("안경 오디오", style = MaterialTheme.typography.titleSmall)
                         Note(state.audio.detail)
                     }
                 }
                 if (state.audio.phase == AudioPhase.RECEIVING) {
                     val levels = model.state.audioLevels
                     val channels =
-                        if (levels.channels == 1) listOf("单声道" to levels.left)
-                        else listOf("声道 1" to levels.left, "声道 2" to levels.right)
+                        if (levels.channels == 1) listOf("모노" to levels.left)
+                        else listOf("채널 1" to levels.left, "채널 2" to levels.right)
                     channels.forEach { (label, rms) ->
                         Text(label, style = MaterialTheme.typography.labelSmall)
                         LinearProgressIndicator(
@@ -364,17 +364,17 @@ private fun GlassesScreen(
                         )
                     }
                 }
-                Note("仅在手机计算音量，不保存或上传音频。")
+                Note("음량은 휴대폰에서만 계산하며 오디오를 저장하거나 업로드하지 않습니다.")
             }
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("导航", "高德通知", Icons.Outlined.NearMe, Modifier.weight(1f)) {
+                FeatureTile("내비게이션", "Amap 알림", Icons.Outlined.NearMe, Modifier.weight(1f)) {
                     navigate(1)
                 }
                 FeatureTile(
-                    "助手",
-                    "手机 · 电脑",
+                    "어시스턴트",
+                    "휴대폰 · 컴퓨터",
                     Icons.AutoMirrored.Outlined.Chat,
                     Modifier.weight(1f),
                 ) {
@@ -417,14 +417,14 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
         Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("连接你的眼镜", style = MaterialTheme.typography.headlineSmall)
-        Note("让眼镜保持唤醒，并先断开官方 App 或电脑与眼镜的连接。出现系统配对提示时，请在手机上确认。")
+        Text("안경 연결하기", style = MaterialTheme.typography.headlineSmall)
+        Note("안경을 깨어 있는 상태로 두고, 먼저 공식 앱이나 컴퓨터와의 연결을 끊으세요. 시스템 페어링 안내가 나타나면 휴대폰에서 확인하세요.")
         Text(s.glasses.link.detail, color = MaterialTheme.colorScheme.primary)
         if (!model.bluetoothAllowed) {
             ToolButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
-                Text("允许附近设备并扫描")
+                Text("근처 기기 허용 후 스캔")
             }
-            TextButton(onClick = actions.appSettings) { Text("前往应用权限设置") }
+            TextButton(onClick = actions.appSettings) { Text("앱 권한 설정으로 이동") }
         } else {
             ToolButton(
                 onClick = actions.scan,
@@ -433,7 +433,7 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
             ) {
                 Icon(Icons.AutoMirrored.Outlined.BluetoothSearching, null)
                 Spacer(Modifier.width(8.dp))
-                Text("扫描眼镜")
+                Text("안경 스캔")
             }
         }
         if (connecting || s.glasses.link.phase == LinkPhase.SCANNING)
@@ -449,17 +449,17 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
                 ) {
                     ListItem(
                         headlineContent = { Text(device.name) },
-                        supportingContent = { Text(if (ready) "连接已建立" else "点按连接") },
+                        supportingContent = { Text(if (ready) "연결됨" else "탭하여 연결") },
                         leadingContent = { Icon(Icons.Outlined.Visibility, null) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     )
                 }
             }
         }
-        if (s.devices.isEmpty() && model.bluetoothAllowed && !connecting) Note("未发现眼镜时，可唤醒眼镜后重新扫描。")
+        if (s.devices.isEmpty() && model.bluetoothAllowed && !connecting) Note("안경이 보이지 않으면 안경을 깨운 뒤 다시 스캔하세요.")
         if (ready || connecting)
             ToolOutlinedButton(onClick = { model.attempt { model.service().disconnect() } }) {
-                Text(if (ready) "断开眼镜" else "取消连接")
+                Text(if (ready) "안경 연결 해제" else "연결 취소")
             }
     }
 }
@@ -486,14 +486,14 @@ private fun NavigationScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { SectionLabel("眼镜画面") }
+        item { SectionLabel("안경 화면") }
         item { GlassesOutputPreview(s.glasses) }
         item {
             ContentCard {
-                Text("高德通知", style = MaterialTheme.typography.titleMedium)
+                Text("Amap 알림", style = MaterialTheme.typography.titleMedium)
                 if (instruction != null) {
                     Text(
-                        "${instruction.direction} · ${instruction.meters} 米",
+                        "${instruction.direction} · ${instruction.meters} m",
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Note(entry!!.title)
@@ -504,15 +504,15 @@ private fun NavigationScreen(
                         (s.glasses.session?.mode != PageMode.NAVIGATION ||
                             s.glasses.session?.writtenContent?.text != frame)
                 ) {
-                    GridPreview(frame, "待发送导航布局")
+                    GridPreview(frame, "내비게이션 레이아웃 전송 대기")
                 }
-                Note("完整路名显示在此处；眼镜布局保留右下角 8 格路名。")
+                Note("전체 도로명은 여기에 표시됩니다. 안경 레이아웃에는 오른쪽 아래 8칸만 도로명으로 표시됩니다.")
             }
         }
         item {
             ContentCard {
                 Text(
-                    if (nav.enabled) "正在跟随高德通知" else "准备开始",
+                    if (nav.enabled) "Amap 알림을 따라가는 중" else "시작 준비",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Note(s.notificationReadStatus)
@@ -520,29 +520,29 @@ private fun NavigationScreen(
                     s.notificationReadPhase == NotificationReadPhase.FAILED &&
                         android.os.Build.MANUFACTURER.equals("xiaomi", true)
                 ) {
-                    Note("小米 / HyperOS 的后台自启动可能阻止监听绑定。请检查 OpenRayneo 的“后台自启动”，允许后再恢复通知读取。")
-                    TextButton(onClick = actions.appSettings) { Text("检查应用设置") }
+                    Note("Xiaomi / HyperOS의 백그라운드 자동 시작 제한이 리스너 연결을 막을 수 있습니다. OpenRayneo의 '백그라운드 자동 시작'을 허용한 뒤 알림 읽기를 복구하세요.")
+                    TextButton(onClick = actions.appSettings) { Text("앱 설정 확인") }
                 }
                 Note(s.navigationStatus)
                 if (entry != null && nav.enabled) {
                     val age = ((time - entry.updatedAt).coerceAtLeast(0) / 1000)
-                    Note("最近收到通知：${if (age < 60) "${age} 秒前" else "${age / 60} 分钟前"} · 请以高德实时指引为准")
+                    Note("최근 알림 수신: ${if (age < 60) "${age}초 전" else "${age / 60}분 전"} · Amap의 실시간 안내를 기준으로 하세요")
                 }
                 if (!model.notificationAllowed)
                     ToolButton(
                         onClick = actions.notificationAccess,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("开启通知使用权")
+                        Text("알림 접근 허용")
                     }
                 else if (!nav.enabled)
                     ToolButton(onClick = actions.openGaode, modifier = Modifier.fillMaxWidth()) {
-                        Text("打开高德导航")
+                        Text("Amap 내비게이션 열기")
                     }
                 if (nav.enabled) {
                     if (s.glasses.link.phase != LinkPhase.FULL)
                         ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) {
-                            Text("连接眼镜")
+                            Text("안경 연결")
                         }
                     else {
                         Note(s.glasses.displayDescription)
@@ -555,27 +555,27 @@ private fun NavigationScreen(
                                 onClick = { model.attempt { model.service().reopenNavigation() } },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("恢复眼镜导航")
+                                Text("안경 내비게이션 재개")
                             }
                     }
                     ToolOutlinedButton(
                         onClick = { model.attempt { model.service().stopNavigation() } },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("停止眼镜跟随")
+                        Text("안경 추종 중지")
                     }
-                    Note("只停止眼镜跟随，高德导航继续运行。")
+                    Note("안경 추종만 중지되고 Amap 내비게이션은 계속 실행됩니다.")
                 }
             }
         }
         item {
             OutlinedCard(onClick = sources) {
                 ListItem(
-                    headlineContent = { Text("通知来源") },
+                    headlineContent = { Text("알림 소스") },
                     supportingContent = {
                         Text(
-                            if (s.navigationEntries.isEmpty()) "等待高德导航通知"
-                            else "${s.navigationEntries.size} 条候选通知 · 点按选择"
+                            if (s.navigationEntries.isEmpty()) "Amap 내비게이션 알림 대기 중"
+                            else "${s.navigationEntries.size}개 후보 알림 · 탭하여 선택"
                         )
                     },
                     leadingContent = { Icon(Icons.Outlined.NotificationsNone, null) },
@@ -585,7 +585,7 @@ private fun NavigationScreen(
             }
         }
         item {
-            TextButton(onClick = actions.openGaode) { Text("在高德中查看路线") }
+            TextButton(onClick = actions.openGaode) { Text("Amap에서 경로 보기") }
             ToolOutlinedButton(
                 onClick = {
                     model.attempt {
@@ -594,10 +594,10 @@ private fun NavigationScreen(
                 },
                 enabled = model.notificationAllowed,
             ) {
-                Text("恢复通知读取")
+                Text("알림 읽기 복구")
             }
-            Note("保留通知授权和跟随选择，重新连接监听并读取当前通知。")
-            Note("上方眼镜画面仅随写入结果更新，高德通知单独显示。关闭或断线后不把旧画面当成当前显示。")
+            Note("알림 권한과 추종 선택을 유지한 채 리스너를 다시 연결하고 현재 알림을 읽습니다.")
+            Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 Amap 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
         }
     }
 }

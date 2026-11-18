@@ -22,12 +22,12 @@ internal object MobileModelEndpoint {
         val base = address.trim().trimEnd('/')
         val uri = URI(base)
         require(uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null) {
-            "模型地址应为完整服务地址，且不包含密钥或查询参数"
+            "모델 주소는 전체 서비스 주소여야 하며 키나 쿼리 매개변수를 포함하면 안 됨"
         }
         require(uri.scheme?.lowercase() == "https" || uri.scheme?.lowercase() == "http" && isLocalAddress(base)) {
-            "远端模型使用 HTTPS；手机本机服务可使用 http://127.0.0.1 或 http://localhost"
+            "원격 모델은 HTTPS를 사용하세요. 휴대폰 로컬 서비스는 http://127.0.0.1 또는 http://localhost"
         }
-        require(apiKey.isNotBlank() || isLocalAddress(base)) { "请填写远端模型服务的 API Key" }
+        require(apiKey.isNotBlank() || isLocalAddress(base)) { "원격 모델 서비스의 다음 값을 입력하세요: API Key" }
         return if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
     }
 }

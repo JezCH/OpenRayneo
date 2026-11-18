@@ -20,26 +20,26 @@ internal fun GlassesSettingsScreen(model: AppModel) {
     val settings = snapshot.settings
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text("配置你的眼镜", style = MaterialTheme.typography.headlineMedium)
-        Note("直接通过蓝牙读取和修改设备设置，使用时由 OpenRayneo 持有眼镜连接。")
+        Text("안경 설정", style = MaterialTheme.typography.headlineMedium)
+        Note("블루투스로 기기 설정을 직접 읽고 수정합니다. 사용 중에는 OpenRayneo가 안경 연결을 유지합니다.")
         ToolButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } },
-            enabled = connected && !snapshot.busy, modifier = Modifier.fillMaxWidth()) { Text("读取眼镜设置") }
+            enabled = connected && !snapshot.busy, modifier = Modifier.fillMaxWidth()) { Text("안경 설정 읽기") }
         if (snapshot.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Note(if (connected) snapshot.notice else "请先在眼镜页完成连接")
+        Note(if (connected) snapshot.notice else "먼저 안경 탭에서 연결을 완료하세요")
         if (snapshot.loaded) {
-            SettingsSection("设备信息") {
+            SettingsSection("기기 정보") {
                 Text(status.optString("deviceName").ifBlank { model.deviceName }, style = MaterialTheme.typography.titleMedium)
-                settings.optString("firmwareVersion").takeIf { it.isNotBlank() }?.let { Note("固件 $it") }
-                status.deviceInt("battery")?.let { Note("电量 $it%") }
-                status.deviceFlag("isCharging")?.let { Note(if (it) "正在充电" else "未充电") }
+                settings.optString("firmwareVersion").takeIf { it.isNotBlank() }?.let { Note("펌웨어 $it") }
+                status.deviceInt("battery")?.let { Note("배터리 $it%") }
+                status.deviceFlag("isCharging")?.let { Note(if (it) "충전 중" else "충전 안 함") }
             }
             status.deviceInt("brightness")?.let { current ->
                 var value by remember(current) { mutableIntStateOf(current) }
-                SettingsSection("显示亮度") {
-                    Text("亮度 $value · 当前设备值 $current")
+                SettingsSection("표시 밝기") {
+                    Text("밝기 $value · 현재 기기 값 $current")
                     Slider(value.toFloat(), { value = it.toInt() }, valueRange = 1f..17f, steps = 15, enabled = editable)
-                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.brightness(value) } }, enabled = editable) { Text("应用亮度") }
-                    status.deviceFlag("automaticBrightness")?.let { Note("自动亮度：${if (it) "开启" else "关闭"}") }
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.brightness(value) } }, enabled = editable) { Text("밝기 적용") }
+                    status.deviceFlag("automaticBrightness")?.let { Note("자동 밝기: ${if (it) "켜짐" else "꺼짐"}") }
                 }
             }
             val display = settings.optJSONObject("displayConfig")
@@ -48,20 +48,20 @@ internal fun GlassesSettingsScreen(model: AppModel) {
             if (currentHeight != null && currentDistance != null) {
                 var height by remember(currentHeight) { mutableIntStateOf(currentHeight) }
                 var distance by remember(currentDistance) { mutableIntStateOf(currentDistance) }
-                SettingsSection("画面位置") {
-                    Text("高度 $height")
+                SettingsSection("화면 위치") {
+                    Text("높이 $height")
                     Slider(height.toFloat(), { height = it.toInt() }, valueRange = 1f..6f, steps = 4, enabled = editable)
-                    Text("距离 $distance")
+                    Text("거리 $distance")
                     Slider(distance.toFloat(), { distance = it.toInt() }, valueRange = 1f..3f, steps = 1, enabled = editable)
-                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.display(height, distance) } }, enabled = editable) { Text("应用画面位置") }
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.display(height, distance) } }, enabled = editable) { Text("화면 위치 적용") }
                 }
             }
             settings.deviceInt("autoLockTime")?.let { current ->
                 var value by remember(current) { mutableIntStateOf(current) }
-                SettingsSection("自动休眠") {
-                    SettingsChoice("休眠时间", value, listOf(5, 10, 15, 25, 40, 60, 120).map { it to "$it 秒" }, editable) { value = it }
+                SettingsSection("자동 절전") {
+                    SettingsChoice("절전 시간", value, listOf(5, 10, 15, 25, 40, 60, 120).map { it to "${it}초" }, editable) { value = it }
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.autoLock(value) } },
-                        enabled = editable && value in listOf(5, 10, 15, 25, 40, 60, 120)) { Text("应用休眠时间") }
+                        enabled = editable && value in listOf(5, 10, 15, 25, 40, 60, 120)) { Text("절전 시간 적용") }
                 }
             }
             settings.optJSONObject("wakeupConfig")?.let { wake ->
@@ -69,11 +69,11 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 if (current != null && currentAngle != null && currentCrown != null) {
                     var enabled by remember(current) { mutableStateOf(current) }; var angle by remember(currentAngle) { mutableIntStateOf(currentAngle) }
                     var crown by remember(currentCrown) { mutableIntStateOf(currentCrown) }
-                    SettingsSection("唤醒方式") {
-                        SettingsToggle("抬头点亮屏幕", enabled, editable) { enabled = it }
-                        Text("抬头角度 $angle°"); Slider(angle.toFloat(), { angle = it.toInt() }, valueRange = 0f..90f, enabled = editable)
-                        SettingsChoice("旋钮息屏动画", crown, listOf(0 to "关闭", 1 to "陀螺仪", 2 to "戳一戳", 3 to "弹珠"), editable) { crown = it }
-                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.wakeup(enabled, angle, crown) } }, enabled = editable) { Text("应用唤醒设置") }
+                    SettingsSection("깨우기 방식") {
+                        SettingsToggle("고개 들면 화면 켜기", enabled, editable) { enabled = it }
+                        Text("고개 드는 각도 $angle°"); Slider(angle.toFloat(), { angle = it.toInt() }, valueRange = 0f..90f, enabled = editable)
+                        SettingsChoice("다이얼 화면 끄기 애니메이션", crown, listOf(0 to "꺼짐", 1 to "자이로스코프", 2 to "콕 찌르기", 3 to "구슬"), editable) { crown = it }
+                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.wakeup(enabled, angle, crown) } }, enabled = editable) { Text("깨우기 설정 적용") }
                     }
                 }
             }
@@ -81,10 +81,10 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 val enabledNow = head.deviceFlag("enabled"); val modeNow = head.deviceInt("mode")
                 if (enabledNow != null && modeNow != null) {
                     var enabled by remember(enabledNow) { mutableStateOf(enabledNow) }; var mode by remember(modeNow) { mutableIntStateOf(modeNow) }
-                    SettingsSection("头部控制") {
-                        SettingsToggle("允许头控", enabled, editable) { enabled = it }
-                        SettingsChoice("设备模式", mode, listOf(0 to "模式0", 1 to "模式1"), editable) { mode = it }
-                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.headGestures(enabled, mode) } }, enabled = editable) { Text("应用头控") }
+                    SettingsSection("머리 제스처 제어") {
+                        SettingsToggle("머리 제스처 허용", enabled, editable) { enabled = it }
+                        SettingsChoice("기기 모드", mode, listOf(0 to "모드 0", 1 to "모드 1"), editable) { mode = it }
+                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.headGestures(enabled, mode) } }, enabled = editable) { Text("머리 제스처 적용") }
                     }
                 }
             }
@@ -92,37 +92,37 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 val d = crown.deviceInt("direction"); val c = crown.deviceInt("double"); val l = crown.deviceInt("longPress")
                 if (d != null && c != null && l != null) {
                     var direction by remember(d) { mutableIntStateOf(d) }; var double by remember(c) { mutableIntStateOf(c) }; var long by remember(l) { mutableIntStateOf(l) }
-                    val choices = listOf(0 to "助手", 1 to "首页", 2 to "勿扰", 3 to "录音", 4 to "字幕", 5 to "提词", 6 to "全天智记", 7 to "无", 8 to "待办", 9 to "实时提示")
-                    SettingsSection("旋钮操作") {
-                        SettingsChoice("方向", direction, listOf(0 to "方向0", 1 to "方向1"), editable) { direction = it }
-                        SettingsChoice("双击", double, choices, editable) { double = it }
-                        SettingsChoice("长按", long, choices.filter { it.first != 6 }, editable) { long = it }
-                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.crown(direction, double, long) } }, enabled = editable) { Text("应用旋钮操作") }
+                    val choices = listOf(0 to "어시스턴트", 1 to "홈", 2 to "방해 금지", 3 to "녹음", 4 to "자막", 5 to "프롬프터", 6 to "종일 기록", 7 to "없음", 8 to "할 일", 9 to "실시간 힌트")
+                    SettingsSection("다이얼 조작") {
+                        SettingsChoice("방향", direction, listOf(0 to "방향 0", 1 to "방향 1"), editable) { direction = it }
+                        SettingsChoice("두 번 누르기", double, choices, editable) { double = it }
+                        SettingsChoice("길게 누르기", long, choices.filter { it.first != 6 }, editable) { long = it }
+                        ToolButton(onClick = { model.attempt { model.service().deviceSettings.crown(direction, double, long) } }, enabled = editable) { Text("다이얼 조작 적용") }
                     }
                 }
             }
             settings.optJSONArray("supportedLanguages")?.let { languages ->
                 val choices = (0 until languages.length()).map { languages.getString(it) }
                 var language by remember(settings.optString("currentLang")) { mutableStateOf(settings.optString("currentLang")) }
-                if (choices.isNotEmpty() && language.isNotBlank()) SettingsSection("系统语言") {
+                if (choices.isNotEmpty() && language.isNotBlank()) SettingsSection("시스템 언어") {
                     choices.forEach { option -> FilterChip(language == option, { language = option }, label = { Text(option) }, enabled = editable) }
-                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.language(language) } }, enabled = editable) { Text("应用语言") }
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.language(language) } }, enabled = editable) { Text("언어 적용") }
                 }
             }
             settings.optJSONObject("privacyConfig")?.let { privacy ->
-                val labels = linkedMapOf("mic_switch" to "眼镜麦克风", "led_light" to "指示灯", "led_auto_light" to "指示灯自动亮度", "log_switch" to "设备日志")
+                val labels = linkedMapOf("mic_switch" to "안경 마이크", "led_light" to "표시등", "led_auto_light" to "표시등 자동 밝기", "log_switch" to "기기 로그")
                 val values = remember(privacy.toString()) { mutableStateMapOf<String, Boolean>().apply { labels.keys.forEach { key -> privacy.deviceFlag(key)?.let { put(key, it) } } } }
-                if (values.isNotEmpty()) SettingsSection("隐私与硬件") {
+                if (values.isNotEmpty()) SettingsSection("개인정보 및 하드웨어") {
                     labels.forEach { (key, label) -> values[key]?.let { SettingsToggle(label, it, editable) { values[key] = it } } }
-                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.privacy(values.toMap()) } }, enabled = editable) { Text("应用隐私设置") }
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.privacy(values.toMap()) } }, enabled = editable) { Text("개인정보 설정 적용") }
                 }
             }
             settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup")?.let { current ->
                 var enabled by remember(current) { mutableStateOf(current) }
-                SettingsSection("语音唤醒") {
-                    SettingsToggle("允许唤醒眼镜助手", enabled, editable) { enabled = it }
-                    Note("此项修改眼镜唤醒开关；接听方式在“语音与提示词”中配置。")
-                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.voiceWake(enabled) } }, enabled = editable) { Text("应用语音唤醒") }
+                SettingsSection("음성 깨우기") {
+                    SettingsToggle("안경 어시스턴트 깨우기 허용", enabled, editable) { enabled = it }
+                    Note("이 항목은 안경의 깨우기 스위치를 변경합니다. 응답 방식은 '음성 및 프롬프트'에서 설정합니다.")
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.voiceWake(enabled) } }, enabled = editable) { Text("음성 깨우기 적용") }
                 }
             }
             val units = settings.optJSONObject("systemUnitsConfig")
@@ -133,17 +133,17 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 var time by remember(currentTime) { mutableIntStateOf(currentTime) }
                 var temperature by remember(currentTemp) { mutableIntStateOf(currentTemp) }
                 var measurement by remember(currentMeasure) { mutableIntStateOf(currentMeasure) }
-                SettingsSection("时间与单位") {
-                    SettingsChoice("时间", time, listOf(1 to "24 小时制", 2 to "12 小时制"), editable) { time = it }
-                    SettingsChoice("温度", temperature, listOf(1 to "摄氏度 °C", 2 to "华氏度 °F"), editable) { temperature = it }
-                    SettingsChoice("计量", measurement, listOf(1 to "公制", 2 to "英制"), editable) { measurement = it }
+                SettingsSection("시간 및 단위") {
+                    SettingsChoice("시간", time, listOf(1 to "24시간제", 2 to "12시간제"), editable) { time = it }
+                    SettingsChoice("온도", temperature, listOf(1 to "섭씨 °C", 2 to "화씨 °F"), editable) { temperature = it }
+                    SettingsChoice("측정 단위", measurement, listOf(1 to "미터법", 2 to "야드파운드법"), editable) { measurement = it }
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.units(time, temperature, measurement) } },
-                        enabled = editable && listOf(time, temperature, measurement).all { it in 1..2 }) { Text("应用时间与单位") }
-                    Note("日期格式沿用眼镜当前设置。")
+                        enabled = editable && listOf(time, temperature, measurement).all { it in 1..2 }) { Text("시간 및 단위 적용") }
+                    Note("날짜 형식은 안경의 현재 설정을 따릅니다.")
                 }
             }
             if (settings.optJSONObject("voiceAssistantConfig") == null || units == null) {
-                Note("语音唤醒与单位选项会在设备报告对应配置后出现。当前未报告的配置不使用默认值覆盖。")
+                Note("음성 깨우기와 단위 옵션은 기기가 해당 설정을 보고한 뒤에 나타납니다. 보고되지 않은 설정은 기본값으로 덮어쓰지 않습니다.")
             }
         }
     }
@@ -171,7 +171,7 @@ private fun SettingsChoice(title: String, value: Int, choices: List<Pair<Int, St
     var expanded by remember { mutableStateOf(false) }
     Box {
         ToolOutlinedButton(onClick = { expanded = true }, enabled = enabled) {
-            Text("$title：${choices.firstOrNull { it.first == value }?.second ?: "设备值 $value"}")
+            Text("$title: ${choices.firstOrNull { it.first == value }?.second ?: "기기 값 $value"}")
         }
         DropdownMenu(expanded, { expanded = false }) {
             choices.forEach { (id, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { update(id); expanded = false }) }

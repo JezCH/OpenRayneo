@@ -56,7 +56,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                     request.state = "failed"; persist(); true
                 } else false
             }
-            if (expired) request.complete(Result.failure(IllegalStateException("外部Agent处理超时，请在DSH查看本轮任务")))
+            if (expired) request.complete(Result.failure(IllegalStateException("외부 Agent 처리 시간 초과. DSH에서 이번 작업을 확인하세요")))
         }, remaining)
     }
     fun next(authorized: () -> Boolean): JSONObject {
@@ -67,10 +67,10 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                 if (remaining <= 0) return JSONObject().put("request", JSONObject.NULL)
                 lock.wait(minOf(remaining, 1_000))
             }
-            check(authorized()) { "Agent入口已关闭或令牌已变更" }
+            check(authorized()) { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
             val request = requests.values.first { it.state == "queued" }
             request.state = "running"; request.claimedAt = System.currentTimeMillis(); persist(); scheduleTimeout(request)
-            main.post { progress("本机外部Agent已接收；手机操作与审批请在Agent软件查看") }
+            main.post { progress("로컬 외부 Agent가 수신함. 휴대폰 작업과 승인은 Agent 앱에서 확인하세요") }
             return JSONObject().put("request", request.json().put("createdFor", "openrayneo").put("expiresInSeconds", if (request.kind == "task") 600 else 90))
         }
     }
@@ -84,12 +84,12 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         JSONObject().put("id", id).put("state", request?.state ?: "cancelled").put("sessionId", request?.session.orEmpty())
     }
     fun update(id: String, body: JSONObject): JSONObject = synchronized(lock) {
-        val request = checkNotNull(requests[id]) { "DSH请求已失效" }
+        val request = checkNotNull(requests[id]) { "DSH 요청이 만료됨" }
         if (request.state == "completed" && body.optString("state") == "completed") return status(id)
-        check(request.state == "running") { "DSH请求已结束或取消" }
+        check(request.state == "running") { "DSH 요청이 종료되었거나 취소됨" }
         if (body.has("sessionId")) request.session = body.getString("sessionId")
         when (body.getString("state")) {
-            "running" -> main.post { progress(body.optString("message", "DSH Go 正在处理任务")) }
+            "running" -> main.post { progress(body.optString("message", "DSH Go 작업 처리 중")) }
             "completed" -> {
                 val answer = body.getString("answer").trim()
                 request.state = "completed"; request.answer = answer; persist()
@@ -97,9 +97,9 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             }
             "failed" -> {
                 request.state = "failed"; persist()
-                main.post { request.complete(Result.failure(IllegalStateException(body.optString("error", "DSH任务未完成，请打开DSH Go查看")))) }
+                main.post { request.complete(Result.failure(IllegalStateException(body.optString("error", "DSH 작업이 완료되지 않았습니다. DSH Go를 열어 확인하세요")))) }
             }
-            else -> error("未知DSH任务状态")
+            else -> error("알 수 없는 DSH 작업 상태")
         }
         if (request.state == "running") persist()
         status(id)
@@ -109,14 +109,14 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private fun cancelMatching(matches: (Request) -> Boolean) = synchronized(lock) {
         requests.values.filter { it.state in setOf("queued", "running") && matches(it) }.forEach { request ->
             request.state = "cancelled"
-            main.post { request.complete(Result.failure(IllegalStateException("DSH本次请求已取消；已执行操作保留"))) }
+            main.post { request.complete(Result.failure(IllegalStateException("DSH 이번 요청이 취소됨. 이미 실행된 작업은 유지됨"))) }
         }
         persist(); lock.notifyAll()
     }
     fun cancel(kind: String? = null) = synchronized(lock) {
         requests.values.filter { it.state in setOf("queued", "running") && (kind == null || kind == it.kind) }.forEach { request ->
             request.state = "cancelled"
-            main.post { request.complete(Result.failure(IllegalStateException("DSH任务已取消；已执行的操作会保留"))) }
+            main.post { request.complete(Result.failure(IllegalStateException("DSH 작업이 취소됨. 이미 실행된 작업은 유지됨"))) }
         }
         persist(); lock.notifyAll()
     }

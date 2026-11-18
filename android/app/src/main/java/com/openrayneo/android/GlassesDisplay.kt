@@ -30,11 +30,11 @@ internal class GlassesDisplay(
     private val recentAudioSequences = ArrayDeque<Long>()
     private var audioReported = false
     private var unmatchedAudioReported = false
-    private val timeout = Runnable { fail("眼镜未确认启动或布局，请主动重试") }
+    private val timeout = Runnable { fail("안경이 시작 또는 레이아웃을 확인하지 않았습니다. 다시 시도하세요") }
     private val settle = Runnable { settled = true; flush() }
 
     fun start(next: PageSession) {
-        check(session == null) { "旧显示会话尚未关闭" }
+        check(session == null) { "이전 표시 세션이 아직 닫히지 않음" }
         reset()
         validate(next.mode, next.content)
         session = next
@@ -45,7 +45,7 @@ internal class GlassesDisplay(
                 .put("source_language", "zh-CN").put("target_language", "zh-CN")
                 .put("save_audio", false).put("direction", "ahead"))
         schedule(timeout, 8_000)
-        send(protocol(next.mode), 1, body) { if (sid == id && it.isFailure) fail("显示启动发送失败") }
+        send(protocol(next.mode), 1, body) { if (sid == id && it.isFailure) fail("표시 시작 전송 실패") }
     }
 
     fun update(id: Long, content: PageContent) {
@@ -62,7 +62,7 @@ internal class GlassesDisplay(
             val json = message.json?.let(::JSONObject)
             val activity = message.type == 9 && message.audio?.isNotEmpty() == true ||
                 (message.type in setOf(2, 3, 5, 8) && !json?.optString("did").isNullOrBlank() && json?.optInt("code", 1) == 1)
-            if (activity) externalPage("检测到眼镜提词器活动，已让出显示")
+            if (activity) externalPage("안경 프롬프터 활동이 감지되어 표시를 양보함")
             return
         }
         val active = session ?: return
@@ -73,7 +73,7 @@ internal class GlassesDisplay(
         if (json.optString("sid") != sid) {
             if (message.type == 4 && !unmatchedAudioReported) {
                 unmatchedAudioReported = true
-                report("收到 $source 音频包，但会话不匹配，未送入解码器")
+                report("수신: $source 오디오 패킷이지만 세션이 일치하지 않아 디코더로 보내지 않음")
             }
             return
         }
@@ -87,7 +87,7 @@ internal class GlassesDisplay(
                 }
                 if (!audioReported) {
                     audioReported = true
-                    report("收到首个眼镜音频包：$source，${packet.size} 字节")
+                    report("첫 안경 오디오 패킷 수신: $source, ${packet.size} 바이트")
                 }
                 onAudio(active.id, packet)
             }
@@ -96,14 +96,14 @@ internal class GlassesDisplay(
         if (message.type == 3) {
             val reason = json.optInt("reason_code", -1)
             reset()
-            signal(active.id, PageSignal.Ended("眼镜请求结束或暂停当前页面（原因 $reason），已让出显示"))
+            signal(active.id, PageSignal.Ended("안경이 현재 페이지 종료 또는 일시정지를 요청함 (사유 $reason), 표시를 양보함"))
             return
         }
         if (accepted) return
         if (!audioAccepted) {
             if (message.type != 2) return
             cancel(timeout)
-            if (json.optInt("code") != 1) { fail("眼镜拒绝启动会话：${json.optInt("code")}"); return }
+            if (json.optInt("code") != 1) { fail("안경이 세션 시작을 거부함: ${json.optInt("code")}"); return }
             audioAccepted = true
             signal(active.id, PageSignal.AudioAccepted(if (active.mode == PageMode.NAVIGATION) 1 else 2))
             if (generation != receivingGeneration) return
@@ -116,7 +116,7 @@ internal class GlassesDisplay(
                 schedule(timeout, 8_000)
                 send(0x13, 7, JSONObject().put("sid", id).put("force", false)
                     .put("scope", "temporary").put("config", config)) {
-                    if (sid == id && it.isFailure) fail("导航布局配置发送失败")
+                    if (sid == id && it.isFailure) fail("내비게이션 레이아웃 설정 전송 실패")
                 }
                 return
             }
@@ -125,7 +125,7 @@ internal class GlassesDisplay(
             cancel(timeout)
             val config = json.optJSONObject("effective_config")
             if (json.optInt("code") != 1 || config?.optInt("font_size") != 2 || config.optInt("content_width") != 100 || config.optInt("max_lines") != 5) {
-                fail("眼镜返回的布局不是字体 2／宽度 100／5 行，已停止发送导航网格")
+                fail("안경이 반환한 레이아웃이 글꼴 2／너비 100／5줄이 아니어서 내비게이션 그리드 전송을 중지함")
                 return
             }
         }
@@ -155,7 +155,7 @@ internal class GlassesDisplay(
                 if (active.mode == PageMode.NAVIGATION) navigationFrameSent = true
                 signal(active.id, PageSignal.Written(content))
                 flush()
-            } else fail("显示更新失败：${result.exceptionOrNull()?.message}")
+            } else fail("표시 업데이트 실패: ${result.exceptionOrNull()?.message}")
         }
     }
 
@@ -166,7 +166,7 @@ internal class GlassesDisplay(
         val closingGeneration = generation
         send(protocol(active.mode), 3, JSONObject().put("sid", id)
             .put("reason_code", if (active.mode == PageMode.NAVIGATION) 10 else 2).put("text", "")) { result ->
-            if (generation == closingGeneration) signal(token, PageSignal.Closed(result.exceptionOrNull()?.let { "关闭命令发送失败：${it.message}" }))
+            if (generation == closingGeneration) signal(token, PageSignal.Closed(result.exceptionOrNull()?.let { "닫기 명령 전송 실패: ${it.message}" }))
         }
     }
     private fun fail(message: String) {
@@ -184,7 +184,7 @@ internal class GlassesDisplay(
     }
     private fun protocol(mode: PageMode) = if (mode == PageMode.NAVIGATION) 0x13 else 0x17
     private fun validate(mode: PageMode, content: PageContent) {
-        if (mode == PageMode.NAVIGATION) require(NavigationFrame.isGrid(content.text)) { "导航画面必须保持 20 列 × 5 行" }
+        if (mode == PageMode.NAVIGATION) require(NavigationFrame.isGrid(content.text)) { "내비게이션 화면은 20열 × 5행을 유지해야 함" }
     }
     private fun send(protocol: Int, type: Int, json: JSONObject, completion: (Result<Unit>) -> Unit) {
         try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, json.toString()), completion) }
@@ -210,15 +210,15 @@ internal object NavigationFrame {
     fun render(direction: String, meters: Int, roadLabel: String = ""): String {
         val left = listOf("  █    ", " █     ", "██████ ", " █   █ ", "  █  █ ")
         val arrow = when (direction) {
-            "左转", "左前", "左后" -> left
-            "右转", "右前", "右后" -> left.map { it.reversed() }
-            "掉头" -> listOf("  ████ ", " █   █ ", " █   █ ", "███  █ ", " █   █ ")
-            "直行" -> listOf("   █   ", "  ███  ", " █████ ", "   █   ", "   █   ")
+            "좌회전", "좌전방", "좌후방" -> left
+            "우회전", "우전방", "우후방" -> left.map { it.reversed() }
+            "유턴" -> listOf("  ████ ", " █   █ ", " █   █ ", "███  █ ", " █   █ ")
+            "직진" -> listOf("   █   ", "  ███  ", " █████ ", "   █   ", "   █   ")
             else -> List(5) { "       " }
         }
         val rows = grid()
         arrow.forEachIndexed { i, row -> put(rows, row, 2, i) }
-        put(rows, if (meters <= 0) "现在" else "${meters.coerceAtMost(9999)}米", 12, 1)
+        put(rows, if (meters <= 0) "지금" else "${meters.coerceAtMost(9999)}m", 12, 1)
         put(rows, direction, 12, 3)
         put(rows, roadLabel.trim(), 12, 4)
         return text(rows)

@@ -23,14 +23,14 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
         val dropped: Int = 0, val error: String? = null
     ) {
         fun summary(): String {
-            if (!active) return "眼镜收音已停止"
-            if (error != null) return "眼镜音频：$error"
-            if (receivedPackets == 0L) return "音频会话已确认，等待首个眼镜音频包"
-            if (lastAudio == 0L) return "已收到 $receivedPackets 包音频，等待解码输出"
-            if (SystemClock.elapsedRealtime() - lastAudio > 3_000) return "眼镜音频已中断，导航显示可继续"
-            fun db(value: Double) = if (value <= 0.00001) "静音" else "${(20 * log10(value)).toInt()} dBFS"
-            val levels = if (channels == 1) "眼镜单声道 · ${db(left)}" else "眼镜双声道 · 通道 1 ${db(left)} · 通道 2 ${db(right)}"
-            return "$levels\n已解码 ${samples / 48_000} 秒 · 丢弃 $dropped 包"
+            if (!active) return "안경 음성 수신이 중지됨"
+            if (error != null) return "안경 오디오: $error"
+            if (receivedPackets == 0L) return "오디오 세션 확인됨, 첫 안경 오디오 패킷 대기"
+            if (lastAudio == 0L) return "수신: $receivedPackets개 오디오 패킷, 디코딩 출력 대기"
+            if (SystemClock.elapsedRealtime() - lastAudio > 3_000) return "안경 오디오가 중단됨, 내비게이션 표시는 계속 가능"
+            fun db(value: Double) = if (value <= 0.00001) "무음" else "${(20 * log10(value)).toInt()} dBFS"
+            val levels = if (channels == 1) "안경 모노 · ${db(left)}" else "안경 스테레오 · 채널 1 ${db(left)} · 채널 2 ${db(right)}"
+            return "$levels\n디코딩됨 ${samples / 48_000}초 · 버림 $dropped개 패킷"
         }
         fun coordinatorState(): AudioState {
             val phase = when {
@@ -83,7 +83,7 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
                 timestamp = 0; outputChannels = channels; outputRate = 48_000; outputEncoding = AudioFormat.ENCODING_PCM_16BIT
             } catch (error: Exception) {
                 release()
-                publish(current) { it.copy(error = "解码器启动失败：${error.message}") }
+                publish(current) { it.copy(error = "디코더 시작 실패: ${error.message}") }
             }
         }
     }
@@ -110,7 +110,7 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
                 drain(decoder, current)
             } catch (error: Exception) {
                 release()
-                publish(current) { it.copy(error = "音频解码失败，请重启音频解码：${error.message}") }
+                publish(current) { it.copy(error = "오디오 디코딩 실패, 오디오 디코딩을 다시 시작하세요: ${error.message}") }
             } finally { queued.decrementAndGet() }
         }
     }
@@ -126,7 +126,7 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
                 outputEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) format.getInteger(MediaFormat.KEY_PCM_ENCODING) else AudioFormat.ENCODING_PCM_16BIT
             } else if (index >= 0) {
                 try {
-                    check(outputChannels in 1..2 && outputRate == 48_000 && outputEncoding == AudioFormat.ENCODING_PCM_16BIT) { "解码输出与请求的 PCM16 格式不符" }
+                    check(outputChannels in 1..2 && outputRate == 48_000 && outputEncoding == AudioFormat.ENCODING_PCM_16BIT) { "디코딩 출력이 요청한 PCM16 형식과 일치하지 않음" }
                     if (info.size == 0) continue
                     val pcm = decoder.getOutputBuffer(index)!!.order(ByteOrder.LITTLE_ENDIAN)
                     pcm.position(info.offset); pcm.limit(info.offset + info.size)

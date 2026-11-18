@@ -24,26 +24,26 @@ internal data class CompanionState(
     val content: CompanionContentState = CompanionContentState(),
     val teleprompter: TeleprompterState = TeleprompterState(),
     val agentServer: AgentServerState = AgentServerState(),
-    val recordSync: AgentServerState = AgentServerState(notice = "相遇同步已关闭"),
+    val recordSync: AgentServerState = AgentServerState(notice = "근거리 동기화가 꺼져 있음"),
     val phoneEphemeral: Boolean = false,
     val nativeWakeAvailable: Boolean = false,
     val devices: List<RayneoConnection.Device> = emptyList(),
     val navigationEntries: List<NavigationFeed.Entry> = emptyList(),
-    val navigationStatus: String = "在高德开始导航后，回到这里跟随通知",
+    val navigationStatus: String = "Amap에서 내비게이션을 시작한 뒤 여기로 돌아와 알림을 따라가세요",
     val notificationConnected: Boolean = false,
     val phoneQuestion: String = "",
     val phoneAnswer: String = "",
     val phoneRunning: Boolean = false,
-    val phoneStatus: String = "配置模型后即可开始对话",
+    val phoneStatus: String = "모델을 설정하면 대화를 시작할 수 있습니다",
     val computerQuestion: String = "",
     val computerAnswer: String = "",
     val computerRunning: Boolean = false,
-    val computerStatus: String = "电脑尚未连接",
+    val computerStatus: String = "컴퓨터가 아직 연결되지 않음",
     val computerConnected: Boolean = false,
     val approvals: List<CodexClient.Request> = emptyList(),
     val logs: List<String> = emptyList(),
     val audioLevels: PromptAudio.State = PromptAudio.State(),
-    val notificationReadStatus: String = "等待通知监听服务",
+    val notificationReadStatus: String = "알림 리스너 서비스 대기 중",
     val notificationSnapshotAt: Long = 0,
     val notificationReadPhase: NotificationReadPhase = NotificationReadPhase.DISCONNECTED,
 )
@@ -108,7 +108,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
         files.execute {
             val result = runCatching { context.contentResolver.openOutputStream(uri)!!.use { s.conversations.recordings.exportWav(record.audioId ?: id, record.audioSamples, it) } }
-            main.post { result.fold({ notice = "会议音频已导出到所选位置" }, { error = it.message ?: "导出失败" }) }
+            main.post { result.fold({ notice = "회의 오디오를 선택한 위치로 내보냈습니다" }, { error = it.message ?: "내보내기 실패" }) }
         }
     }
     private val observer: () -> Unit = { refresh() }
@@ -143,18 +143,18 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 connection,
                 Context.BIND_AUTO_CREATE,
             )
-        if (!bound) error = "暂时无法启动连接服务，请重新打开应用"
+        if (!bound) error = "연결 서비스를 시작할 수 없습니다. 앱을 다시 열어 주세요"
     }
 
     fun attempt(action: () -> Unit) {
         try {
             action()
         } catch (failure: Exception) {
-            error = failure.message ?: "操作未完成，请重试"
+            error = failure.message ?: "작업이 완료되지 않았습니다. 다시 시도하세요"
         }
     }
 
-    fun service(): BridgeService = checkNotNull(bridge) { "连接服务正在准备，请稍后重试" }
+    fun service(): BridgeService = checkNotNull(bridge) { "연결 서비스를 준비 중입니다. 잠시 후 다시 시도하세요" }
 
     private fun refresh() {
         val s = bridge ?: return
@@ -251,7 +251,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         config = updated
         bridge?.conversations?.configurationChanged()
         resetFormDrafts()
-        notice = "配置已加密保存"
+        notice = "설정이 암호화되어 저장됨"
     }
 
     private fun resetFormDrafts() {
@@ -273,7 +273,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     fun send(source: AnswerSource) = attempt {
         val mobile = source == AnswerSource.MOBILE_AGENT
         val text = (if (mobile) phoneDraft else computerDraft).trim()
-        require(text.isNotBlank()) { "先写下你的问题" }
+        require(text.isNotBlank()) { "먼저 질문을 입력하세요" }
         val old =
             if (mobile) ChatRecord(state.phoneQuestion, state.phoneAnswer)
             else ChatRecord(state.computerQuestion, state.computerAnswer)
