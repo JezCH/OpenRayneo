@@ -387,7 +387,15 @@ internal class RayneoConnection(private val context: Context, private val listen
         }, "rayneo-reader").start()
     }
 
-    fun sendTestNotification() = sendNotification("Xiaomi 13에서", "Android 직접 연결 테스트: 안녕하세요, RayNeo 안경.")
+    /**
+     * Diagnostic: three notifications 2 s apart — English only, the original Chinese text, and Korean —
+     * to tell whether the glasses firmware drops messages containing glyphs its font lacks.
+     */
+    fun sendTestNotification() {
+        sendNotification("Test 1 (EN)", "Hello RayNeo glasses. English only.")
+        main.postDelayed({ if (ready) sendNotification("测试 2 (中文)", "安卓直连验证：你好，雷鸟眼镜。") }, 2_000)
+        main.postDelayed({ if (ready) sendNotification("Test 3 (KO)", "한국어 테스트: 안녕하세요, RayNeo 안경.") }, 4_000)
+    }
 
     fun sendNotification(title: String, body: String) {
         check(ready) { "먼저 안경을 연결하세요" }
