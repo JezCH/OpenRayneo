@@ -19,27 +19,30 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
         Note("음성 특징과 화자 처리는 이 기기에서 실행되며 ASR과 기록 요약은 설정한 서비스를 사용합니다. 답변, 짧은 힌트, 작업 판단은 휴대폰 로컬 Agent가 맡고 키는 Android Keystore로 암호화 저장됩니다.")
         SectionLabel("ASR 엔진")
         var engine by remember(model.config) { mutableStateOf(model.config.optString("asrEngine").ifBlank { "cloud" }) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(engine == "cloud", { engine = "cloud"; drafts["asrEngine"] = "cloud" }); Text("클라우드 (Bailian)")
-            RadioButton(engine == "local", { engine = "local"; drafts["asrEngine"] = "local" }); Text("기기 내장 (SenseVoice)")
+        Column {
+            listOf("cloud" to "클라우드 (Bailian Qwen)", "stream" to "기기 내장 · 실시간 (한국어 스트리밍)", "local" to "기기 내장 · 문장 단위 (SenseVoice)").forEach { (key, label) ->
+                Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { engine = key; drafts["asrEngine"] = key }); Text(label) }
+            }
         }
-        Note("기기 내장은 인터넷 없이 휴대폰에서 바로 인식해 빠르지만, 문장이 끝난 뒤 결과가 나오고 정확도는 클라우드보다 조금 낮을 수 있습니다. 언어는 자동 감지하고, 아래 인식 언어 힌트에 없는 언어 결과는 버립니다.")
+        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐지며 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 스트리밍 대신 SenseVoice(없으면 클라우드)를 씁니다.")
         val context = LocalContext.current
-        val installed = remember(LocalSpeechModel.downloading) { LocalSpeechModel.installed(context) }
-        if (engine != "local") Unit
-        else if (installed) Text("기기 ASR 모델 준비됨 (SenseVoice int8, 약 240MB)")
-        else ToolButton(onClick = { LocalSpeechModel.download(context.applicationContext) }, enabled = !LocalSpeechModel.downloading, modifier = Modifier.fillMaxWidth()) {
-            Text(if (LocalSpeechModel.downloading) "내려받는 중… ${(LocalSpeechModel.progress * 100).toInt()}%" else "기기 ASR 모델 내려받기 (약 240MB, Wi-Fi 권장)")
+        SpeechRounds.model(JSONObject().put("asrEngine", engine))?.let { local ->
+            val installed = remember(local, local.downloading) { local.installed(context) }
+            if (installed) Text("${local.title} 모델 준비됨")
+            else ToolButton(onClick = { local.download(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
+                Text(if (local.downloading) "내려받는 중… ${(local.progress * 100).toInt()}%"
+                    else "${local.title} 모델 내려받기 (약 ${if (engine == "stream") 140 else 240}MB, Wi-Fi 권장)")
+            }
+            if (local.downloading) LinearProgressIndicator(progress = { local.progress }, modifier = Modifier.fillMaxWidth())
+            local.message?.takeIf { !local.downloading }?.let { Note(it) }
         }
-        if (LocalSpeechModel.downloading) LinearProgressIndicator(progress = { LocalSpeechModel.progress }, modifier = Modifier.fillMaxWidth())
-        LocalSpeechModel.message?.takeIf { !LocalSpeechModel.downloading }?.let { Note(it) }
         SectionLabel("Bailian ASR")
         VoiceField(model, "asrKey", "API Key", secret = true)
         VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
@@ -60,6 +63,9 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
         Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
         Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
+        var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
+        Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
+        Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 저장되는 원본 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
         var autoMemory by remember(model.config) { mutableStateOf(model.config.optString("memoryAutoSummary", "true") != "false") }
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
         Note("종일 기록과 개별 기록은 원본 오디오를 자동 저장하고, 목소리 등록은 음성 특징만 저장합니다. 전사가 지연되면 오디오를 먼저 저장하고 복구 후 전사와 화자 분석을 보충합니다.")

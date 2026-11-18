@@ -49,7 +49,8 @@ internal class LiveTranslator(
 
     /** Throws with a user-facing message when ASR or the translation model is not configured. */
     fun validate(settings: JSONObject) {
-        require(SpeechRounds.ready(context, settings)) { SpeechRounds.missing(settings) }
+        val speech = SpeechRounds.bilingual(context, settings)
+        require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
         }
@@ -61,7 +62,7 @@ internal class LiveTranslator(
         validate(settings)
         stop()
         synchronized(this) {
-            config = JSONObject(settings.toString()).put("asrLanguage", "ko,en")
+            config = JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
             generation++
             active = true
             resampler = ConversationAudio()

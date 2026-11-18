@@ -47,8 +47,9 @@ internal class ConversationASR(config: JSONObject,
     @Synchronized override fun cancel() { if (!ended) { ended = true; pending.clear(); socket?.cancel(); release() } }
     override fun onOpen(webSocket: WebSocket, response: Response) {
         val parameters = JSONObject().put("format", "pcm").put("sample_rate", 16000)
-            .put("intermediate_result_enabled", interim != null).put("disfluency_removal_enabled", false)
-            .put("heartbeat", true).put("vad_model", "far_field_meeting_16k")
+            // Live partials, filler/repetition cleanup, and the near-field VAD that fits a mic on the wearer's face.
+            .put("intermediate_result_enabled", true).put("disfluency_removal_enabled", true)
+            .put("heartbeat", true).put("vad_model", "near_meeting_16k")
         if (languages.isNotEmpty()) parameters.put("language_hints", org.json.JSONArray(languages))
         webSocket.send(JSONObject().put("header", header("run-task")).put("payload", JSONObject()
             .put("task_group", "audio").put("task", "asr").put("function", "recognition")

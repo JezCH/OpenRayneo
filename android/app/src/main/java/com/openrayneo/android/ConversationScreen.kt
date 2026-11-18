@@ -67,6 +67,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                     }
                 } else {
                     Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
+                    if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
                     ToolButton(onClick = { model.service().conversations.stop() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)

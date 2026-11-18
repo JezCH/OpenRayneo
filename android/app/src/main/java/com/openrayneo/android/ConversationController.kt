@@ -21,6 +21,14 @@ internal class ConversationController(private val context: Context, private val 
     private val changed: () -> Unit, private val capture: (ConversationSource, Boolean) -> Unit,
     private val request: (VoiceRequest) -> Boolean?, private val transcript: (SpeechSegment, ConversationSource) -> Unit,
     private val stopped: () -> Unit) {
+    /** Unfinished ASR text of the current native wake (text, wake id), on the worker thread. */
+    var partial: ((String, String) -> Unit)? = null
+    private val gate = VoiceGate()
+    @Volatile private var gating = false
+    /** Glasses speech flags (one per 20 ms frame) for always-on audio; ignored unless gating is on. */
+    fun voiceActivity(frames: List<Boolean>) { if (gating && state.running && !closing && !replaying) gate.offer(frames) }
+    /** Main thread, when an always-on round starts or ends: queued audio is discarded there, so drop its flags too. */
+    fun voiceRoundBoundary() = gate.clearFlags()
     private val power = context.getSystemService(android.os.PowerManager::class.java)
     private val battery = context.getSystemService(android.os.BatteryManager::class.java)
     private var resourcePauseReason: String? = null
@@ -124,6 +132,8 @@ internal class ConversationController(private val context: Context, private val 
     fun start(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null, wakeId: String? = null) {
         check(!state.running && !closing) { "먼저 현재 기록을 중지하세요" }; check(state.modelReady) { state.error ?: "음성 모델이 아직 준비되지 않음" }
         val cfg = settings.read(); val token = ++generation
+        gating = source == ConversationSource.ALWAYS_ON && cfg.optString("glassesVoiceGate", "true") != "false"
+        writer.post { gate.reset() }
         publish(state.copy(activeRecord = null, running = true, stopping = false, mode = mode, source = source, segments = emptyList(), error = null,
             status = if (mode == ConversationMode.ENROLL) "등록은 지정 채널의 본인 목소리만 수집합니다" else if (source == ConversationSource.REALTIME) "2채널 유지: 채널 1은 기본 본인, 채널 2는 별도 식별" else "혼합/단일 채널 오디오는 전체 화자 식별",
             enrollmentSeconds = 0f, enrollmentReady = false, enrollmentCanConfirm = false, enrollmentTotalSeconds = 0f, decodedSeconds = 0.0))
@@ -171,6 +181,8 @@ internal class ConversationController(private val context: Context, private val 
                 val pcm = ConversationPCM(if (count == 2) listOf(resamplers[0].convert(left), resamplers[1].convert(right)) else listOf(resamplers[0].convert(left)))
                 val start = samples
                 if (savingAudio) recordings.appendChannels(pcm)
+                // Only the live ASR/speaker path is gated; the saved recording stays raw for later backfill.
+                val live = if (gating) gate.apply(pcm) else pcm
                 samples += pcm.frames
                 val queued = queuedSamples.addAndGet(pcm.frames)
                 if (queued > 240_000 && savingAudio) deferredProcessing = true
@@ -178,11 +190,12 @@ internal class ConversationController(private val context: Context, private val 
                     queuedSamples.addAndGet(-pcm.frames)
                     if (!liveBackfill && System.currentTimeMillis() - lastPublished > 1_000) worker.post { markPending("모든 채널의 원본 오디오를 저장했습니다. 나중에 채널별로 보충합니다") }
                 } else worker.post {
-                    try { if (token == generation && !deferredProcessing) process(pcm, start) }
+                    try { if (token == generation && !deferredProcessing) process(live, start) }
                     catch (error: Exception) { if (savingAudio) pauseLive(error.message ?: "음성 처리 보충 대기") else fail(error.message ?: "등록 실패", token) }
                     finally { queuedSamples.addAndGet(-pcm.frames) }
                 }
-                if (System.currentTimeMillis() - lastPublished > 1_000) { lastPublished = System.currentTimeMillis(); publish(state.copy(decodedSeconds = samples / 16000.0)) }
+                if (System.currentTimeMillis() - lastPublished > 1_000) { lastPublished = System.currentTimeMillis()
+                    publish(state.copy(decodedSeconds = samples / 16000.0, voiceGate = gate.summary())) }
             } catch (error: Exception) { fail(error.message ?: "원본 오디오 저장 실패", token) }
         }
     }
@@ -238,6 +251,9 @@ internal class ConversationController(private val context: Context, private val 
                 else if (activeASR[channel] === round) { activeASR.remove(channel); if (liveBackfill) pauseLive("채널 $channel 이번 라운드 종료, 잠시 후 계속 따라잡습니다") }
                 drainAgent()
             }
+        } }, if (state.source != ConversationSource.NATIVE || wake == null) null else { text -> worker.post {
+            // Live partial for the native assistant page; the final sentence still goes through drainSentences.
+            if (token == generation && epoch == asrEpoch && state.running) partial?.invoke(text, wake)
         } })
         rounds[round] = info; activeASR[channel] = round; round.start()
     }
@@ -568,5 +584,56 @@ internal class ConversationController(private val context: Context, private val 
             generation++; cancelASR(); tail?.close(); engines.values.forEach { it.close() }; engines.clear(); summarizer.close(); inference.shutdownNow()
             writerThread.quitSafely(); thread.quitSafely()
         } }
+    }
+}
+
+/**
+ * Glasses-side speech flags for always-on audio: each A3 batch carries vpuMask/vadMask with one bit per
+ * 20 ms Opus frame. Frames either mask marks as speech, plus a short lead-in and hangover, pass to ASR;
+ * the rest is silenced so background noise is not transcribed. Flags arrive with their batch before the
+ * decoder emits its PCM, which gives the lead-in for free. Without flags, audio passes unchanged.
+ */
+internal class VoiceGate {
+    private val flags = java.util.concurrent.ConcurrentLinkedDeque<Boolean>()
+    // Writer-thread state.
+    private var position = 0
+    private var open = true
+    private var hold = 0
+    @Volatile private var total = 0L
+    @Volatile private var passed = 0L
+    fun offer(frames: List<Boolean>) {
+        flags.addAll(frames)
+        // Dropped decoder packets would leave flags behind their audio; resync instead of drifting.
+        while (flags.size > MAX_PENDING) flags.pollFirst()
+    }
+    fun reset() { flags.clear(); position = 0; open = true; hold = 0; total = 0; passed = 0 }
+    /** Thread safe; keeps statistics. */
+    fun clearFlags() = flags.clear()
+    fun summary() = if (total == 0L) "" else "안경 음성 감지: 전체의 ${passed * 100 / total}%를 인식에 사용"
+    /** Writer thread. Returns a copy with non-speech frames zeroed. */
+    fun apply(pcm: ConversationPCM): ConversationPCM {
+        if (total == 0L && flags.isEmpty()) return pcm
+        val out = pcm.channels.map { it.copyOf() }
+        for (index in 0 until pcm.frames) {
+            if (position == 0) {
+                val next = flags.pollFirst()
+                if (next == null) open = true
+                else {
+                    total++
+                    if (next || flags.asSequence().take(LEAD).any { it }) hold = HANG
+                    open = hold > 0; if (hold > 0) hold--
+                    if (open) passed++
+                }
+            }
+            if (!open) out.forEach { it[index] = 0f }
+            position = (position + 1) % FRAME
+        }
+        return ConversationPCM(out)
+    }
+    private companion object {
+        const val FRAME = 320       // 20 ms at 16 kHz
+        const val LEAD = 10         // 200 ms before speech
+        const val HANG = 25         // 500 ms after speech
+        const val MAX_PENDING = 150
     }
 }

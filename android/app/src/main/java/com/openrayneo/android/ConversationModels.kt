@@ -143,5 +143,6 @@ internal data class ConversationState(
     val segments: List<SpeechSegment> = emptyList(), val people: List<VoicePerson> = emptyList(),
     val records: List<ConversationRecord> = emptyList(), val error: String? = null,
     val enrollmentSeconds: Float = 0f, val enrollmentReady: Boolean = false, val enrollmentCanConfirm: Boolean = false, val enrollmentTotalSeconds: Float = 0f, val decodedSeconds: Double = 0.0,
+    val voiceGate: String = "",
     val modelReady: Boolean = false, val summarizing: Boolean = false, val stopping: Boolean = false,
 )

@@ -27,34 +27,46 @@ internal interface SpeechRound {
     fun cancel()
 }
 
-/** Chooses the cloud (Bailian) or on-device (SenseVoice) engine from config key "asrEngine". */
+/**
+ * Chooses the ASR engine from config key "asrEngine": cloud (Bailian, default), "local" (SenseVoice,
+ * sentence by sentence) or "stream" (Korean streaming zipformer, live partial results).
+ */
 internal object SpeechRounds {
-    fun local(config: JSONObject) = config.optString("asrEngine") == "local"
+    fun model(config: JSONObject): LocalModel<*>? = when (config.optString("asrEngine")) {
+        "local" -> LocalModels.senseVoice
+        "stream" -> LocalModels.zipformer
+        else -> null
+    }
+    /** Translation hears Korean and English, so the Korean-only streaming engine falls back to SenseVoice when present, else cloud. */
+    fun bilingual(context: Context, config: JSONObject): JSONObject = if (config.optString("asrEngine") != "stream") config
+        else JSONObject(config.toString()).put("asrEngine", if (LocalModels.senseVoice.installed(context)) "local" else "cloud")
     /** Whether the configured engine can run now (key entered, or model downloaded). */
-    fun ready(context: Context, config: JSONObject) = if (local(config)) LocalSpeechModel.installed(context) else config.optString("asrKey").isNotBlank()
-    fun missing(config: JSONObject) = if (local(config)) "먼저 음성 설정에서 기기 ASR 모델(SenseVoice)을 내려받으세요" else "먼저 음성 설정에서 Bailian ASR API Key를 입력하세요"
+    fun ready(context: Context, config: JSONObject) = model(config)?.installed(context) ?: config.optString("asrKey").isNotBlank()
+    fun missing(config: JSONObject) = model(config)?.let { "먼저 음성 설정에서 기기 ASR 모델(${it.title})을 내려받으세요" } ?: "먼저 음성 설정에서 Bailian ASR API Key를 입력하세요"
     fun create(context: Context, config: JSONObject,
                sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
                failed: (String) -> Unit, completed: () -> Unit, interim: ((String) -> Unit)? = null): SpeechRound =
-        if (local(config)) LocalASR(context, config, sentence, failed, completed, interim)
-        else ConversationASR(config, sentence, failed, completed, interim)
+        when (config.optString("asrEngine")) {
+            "local" -> LocalASR(context, config, sentence, failed, completed, interim)
+            "stream" -> StreamASR(context, sentence, failed, completed, interim)
+            else -> ConversationASR(config, sentence, failed, completed, interim)
+        }
 }
 
-/** SenseVoice int8 (zh/en/ja/ko/yue), downloaded once into app storage; loaded while rounds use it, freed after a minute idle. */
-internal object LocalSpeechModel {
-    private const val BASE = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/"
-    // Model first, so progress tracks the large file.
-    private val files = listOf("model.int8.onnx" to 0.99f, "tokens.txt" to 0.01f)
+/**
+ * A model downloaded once into app storage from Hugging Face; loaded while rounds use it and freed after a
+ * minute idle. All loading, decoding and releasing happens on [LocalModels.executor].
+ */
+internal class LocalModel<T>(val title: String, private val folderName: String, private val base: String,
+    private val files: List<Pair<String, Float>>, private val load: (File) -> T, private val free: (T) -> Unit) {
     var downloading by mutableStateOf(false); private set
     var progress by mutableStateOf(0f); private set
     var message by mutableStateOf<String?>(null); private set
-    /** All recognizer work (load, decode, release) is serialized here. */
-    val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { Thread(it, "local-asr").apply { isDaemon = true } }
-    private var recognizer: OfflineRecognizer? = null
+    private var loaded: T? = null
     private var users = 0
     private var idle: ScheduledFuture<*>? = null
 
-    private fun folder(context: Context) = File(context.filesDir, "asr/sense-voice-2024-07-17")
+    private fun folder(context: Context) = File(context.filesDir, folderName)
     fun installed(context: Context) = files.all { (name, _) -> File(folder(context), name).length() > 0 }
 
     fun download(context: Context) {
@@ -69,7 +81,7 @@ internal object LocalSpeechModel {
                     val target = File(dir, name)
                     if (target.length() == 0L) {
                         val part = File(dir, "$name.part")
-                        http.newCall(Request.Builder().url(BASE + name).build()).execute().use { response ->
+                        http.newCall(Request.Builder().url(base + name).build()).execute().use { response ->
                             check(response.isSuccessful) { "HTTP ${response.code}" }
                             val body = checkNotNull(response.body)
                             val total = body.contentLength()
@@ -88,7 +100,7 @@ internal object LocalSpeechModel {
                     }
                     before += weight; progress = before
                 }
-                progress = 1f; message = "기기 ASR 모델 준비됨"
+                progress = 1f; message = "$title 모델 준비됨"
             } catch (error: Exception) {
                 message = "모델 내려받기 실패: ${error.message ?: error.javaClass.simpleName}"
             } finally { downloading = false }
@@ -96,38 +108,69 @@ internal object LocalSpeechModel {
     }
 
     /** Executor thread only. A round calls this once when it starts using the model. */
-    fun acquire(context: Context): OfflineRecognizer {
+    fun acquire(context: Context): T {
         idle?.cancel(false); idle = null
-        val loaded = recognizer ?: load(context)
+        val model = loaded ?: run {
+            check(installed(context)) { "기기 ASR 모델($title)이 없습니다. 음성 설정에서 내려받으세요" }
+            load(folder(context)).also { loaded = it }
+        }
         users++
-        return loaded
+        return model
     }
     /** Executor thread only. The last user leaving schedules the release. */
     fun releaseUser() {
         users = (users - 1).coerceAtLeast(0)
-        if (users == 0 && recognizer != null) {
+        if (users == 0 && loaded != null) {
             idle?.cancel(false)
-            idle = executor.schedule(Runnable { if (users == 0) { recognizer?.release(); recognizer = null }; idle = null }, 60, TimeUnit.SECONDS)
+            idle = LocalModels.executor.schedule(Runnable { if (users == 0) { loaded?.let(free); loaded = null }; idle = null }, 60, TimeUnit.SECONDS)
         }
     }
-    private fun load(context: Context): OfflineRecognizer {
-        check(installed(context)) { "기기 ASR 모델이 없습니다. 음성 설정에서 내려받으세요" }
-        val dir = folder(context)
-        // Always automatic language detection; rounds filter results by their language hints.
-        val config = OfflineRecognizerConfig(
-            featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
-            modelConfig = OfflineModelConfig(
-                senseVoice = OfflineSenseVoiceModelConfig(File(dir, "model.int8.onnx").absolutePath, "", useInverseTextNormalization = true),
-                tokens = File(dir, "tokens.txt").absolutePath, numThreads = 2))
-        return OfflineRecognizer(null, config).also { recognizer = it }
-    }
+}
+
+internal object LocalModels {
+    /** All recognizer work (load, decode, release) for every on-device round is serialized here. */
+    val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { Thread(it, "local-asr").apply { isDaemon = true } }
+
+    /** SenseVoice int8 (zh/en/ja/ko/yue), automatic language detection; rounds filter by their language hints. */
+    val senseVoice = LocalModel("SenseVoice", "asr/sense-voice-2024-07-17",
+        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/",
+        // Model first, so progress tracks the large file.
+        listOf("model.int8.onnx" to 0.99f, "tokens.txt" to 0.01f), { dir ->
+            OfflineRecognizer(null, OfflineRecognizerConfig(
+                featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+                modelConfig = OfflineModelConfig(
+                    senseVoice = OfflineSenseVoiceModelConfig(File(dir, "model.int8.onnx").absolutePath, "", useInverseTextNormalization = true),
+                    tokens = File(dir, "tokens.txt").absolutePath, numThreads = 2)))
+        }, { it.release() })
+
+    /** Korean-only streaming zipformer transducer (KsponSpeech recipe); int8 encoder/joiner, fp32 decoder as in upstream examples. */
+    val zipformer = LocalModel("한국어 스트리밍", "asr/zipformer-ko-2024-06-16",
+        "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/main/",
+        listOf("encoder-epoch-99-avg-1.int8.onnx" to 0.9f, "decoder-epoch-99-avg-1.onnx" to 0.06f,
+            "joiner-epoch-99-avg-1.int8.onnx" to 0.03f, "tokens.txt" to 0.01f), { dir ->
+            OnlineRecognizer(null, OnlineRecognizerConfig(
+                featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+                modelConfig = OnlineModelConfig(
+                    transducer = OnlineTransducerModelConfig(
+                        encoder = File(dir, "encoder-epoch-99-avg-1.int8.onnx").absolutePath,
+                        decoder = File(dir, "decoder-epoch-99-avg-1.onnx").absolutePath,
+                        joiner = File(dir, "joiner-epoch-99-avg-1.int8.onnx").absolutePath),
+                    tokens = File(dir, "tokens.txt").absolutePath, numThreads = 2, modelType = "zipformer"),
+                // Close a sentence after 0.8 s of silence once something was said (default 1.4 s), and cap it at 15 s.
+                endpointConfig = EndpointConfig(rule2 = EndpointRule(true, 0.8f, 0.0f), rule3 = EndpointRule(false, 0.0f, 15.0f)),
+                enableEndpoint = true))
+        }, { it.release() })
+
+    /** Streaming GTCRN speech enhancement (bundled asset); one instance per round because it keeps state. */
+    fun denoiser(context: Context) = OnlineSpeechDenoiser(context.assets, OnlineSpeechDenoiserConfig(OfflineSpeechDenoiserModelConfig(
+        gtcrn = OfflineSpeechDenoiserGtcrnModelConfig("voice-models/gtcrn-simple.onnx"), numThreads = 1)))
 }
 
 /**
  * On-device round: streaming GTCRN removes background noise, silero VAD cuts sentences on the cleaned
  * audio, and SenseVoice decodes each one (non-streaming).
  * With [interim] set, the unfinished utterance is re-decoded about once a second for live captions.
- * Callbacks run on [LocalSpeechModel.executor]; callers post onto their own threads as with the cloud round.
+ * Callbacks run on [LocalModels.executor]; callers post onto their own threads as with the cloud round.
  */
 internal class LocalASR(private val context: Context, config: JSONObject,
     private val sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
@@ -135,7 +178,7 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     private val interim: ((String) -> Unit)? = null) : SpeechRound {
     private val task = UUID.randomUUID().toString()
     private val allowed = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-    private val executor = LocalSpeechModel.executor
+    private val executor = LocalModels.executor
     private val queued = AtomicInteger()
     @Volatile private var ended = false
     @Volatile private var finishing = false
@@ -186,9 +229,8 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     }
     private fun prepare(): Vad {
         vad?.let { return it }
-        if (recognizer == null) recognizer = LocalSpeechModel.acquire(context)
-        if (denoiser == null) denoiser = OnlineSpeechDenoiser(context.assets, OnlineSpeechDenoiserConfig(OfflineSpeechDenoiserModelConfig(
-            gtcrn = OfflineSpeechDenoiserGtcrnModelConfig("voice-models/gtcrn-simple.onnx"), numThreads = 1)))
+        if (recognizer == null) recognizer = LocalModels.senseVoice.acquire(context)
+        if (denoiser == null) denoiser = LocalModels.denoiser(context)
         // A slightly longer silence keeps short pauses inside one sentence instead of decoding fragments.
         return Vad(context.assets, VadModelConfig(
             sileroVadModelConfig = SileroVadModelConfig("voice-models/silero-vad.onnx", minSilenceDuration = 0.5f, maxSpeechDuration = 12f),
@@ -197,7 +239,7 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     private fun release() {
         vad?.release(); vad = null
         denoiser?.release(); denoiser = null
-        if (recognizer != null) { recognizer = null; LocalSpeechModel.releaseUser() }
+        if (recognizer != null) { recognizer = null; LocalModels.senseVoice.releaseUser() }
     }
 
     private fun feed(samples: FloatArray) {
@@ -279,5 +321,97 @@ internal class LocalASR(private val context: Context, config: JSONObject,
         const val MAX_QUEUED = 16000 * 8
         const val MAX_BACKLOG = 16000 * 15
         const val MAX_INTERIM = 16000 * 6
+    }
+}
+
+/**
+ * On-device streaming round: GTCRN denoising feeds the Korean zipformer continuously. Partial text is
+ * reported on every change (it can still be corrected while the sentence goes on), and the endpoint rule
+ * closes the sentence. Callbacks run on [LocalModels.executor].
+ */
+internal class StreamASR(private val context: Context,
+    private val sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
+    private val failed: (String) -> Unit, private val completed: () -> Unit,
+    private val interim: ((String) -> Unit)? = null) : SpeechRound {
+    private val task = UUID.randomUUID().toString()
+    private val executor = LocalModels.executor
+    private val queued = AtomicInteger()
+    @Volatile private var ended = false
+    @Volatile private var finishing = false
+    // Executor-thread state.
+    private var recognizer: OnlineRecognizer? = null
+    private var stream: OnlineStream? = null
+    private var denoiser: OnlineSpeechDenoiser? = null
+    private var fed = 0L
+    private var sentenceStart = 0L
+    private var partial = ""
+    private var index = 0
+
+    override fun start() { executor.execute { if (!ended) attempt { prepare() } } }
+    override fun canAcceptAudio() = !ended && !finishing && queued.get() < MAX_QUEUED
+    override fun append(samples: FloatArray) {
+        if (ended || finishing) return
+        check(queued.get() + samples.size <= MAX_BACKLOG) { "기기 ASR 대기 오디오가 15초를 넘어 이번 라운드를 중지했습니다" }
+        queued.addAndGet(samples.size)
+        executor.execute {
+            queued.addAndGet(-samples.size)
+            if (!ended) attempt { prepare(); accept(checkNotNull(denoiser).run(samples, 16000).samples) }
+        }
+    }
+    override fun finish() {
+        if (ended || finishing) return
+        finishing = true
+        executor.execute {
+            if (ended) return@execute
+            attempt {
+                prepare()
+                accept(checkNotNull(denoiser).flush().samples)
+                // Trailing silence lets the last frames through the encoder before input ends.
+                accept(FloatArray(TAIL))
+                val current = checkNotNull(stream); val model = checkNotNull(recognizer)
+                current.inputFinished()
+                while (model.isReady(current)) model.decode(current)
+                close(model.getResult(current).text.trim())
+                ended = true; release(); completed()
+            }
+        }
+    }
+    override fun cancel() { if (!ended) { ended = true; executor.execute { release() } } }
+
+    private fun attempt(work: () -> Unit) {
+        try { work() } catch (error: Exception) {
+            if (!ended) { ended = true; release(); failed("기기 ASR 실패: ${error.message ?: error.javaClass.simpleName}") }
+        }
+    }
+    private fun prepare() {
+        if (stream != null) return
+        val model = recognizer ?: LocalModels.zipformer.acquire(context).also { recognizer = it }
+        if (denoiser == null) denoiser = LocalModels.denoiser(context)
+        stream = model.createStream()
+    }
+    private fun release() {
+        stream?.release(); stream = null
+        denoiser?.release(); denoiser = null
+        if (recognizer != null) { recognizer = null; LocalModels.zipformer.releaseUser() }
+    }
+
+    private fun accept(samples: FloatArray) {
+        if (samples.isEmpty()) return
+        val current = checkNotNull(stream); val model = checkNotNull(recognizer)
+        current.acceptWaveform(samples, 16000); fed += samples.size
+        while (model.isReady(current)) model.decode(current)
+        val text = model.getResult(current).text.trim()
+        if (text.isNotEmpty() && text != partial) { partial = text; interim?.invoke(text) }
+        if (model.isEndpoint(current)) { close(text); model.reset(current) }
+    }
+    private fun close(text: String) {
+        if (text.isNotEmpty()) sentence(text, sentenceStart * 1000 / 16000, fed * 1000 / 16000, "$task:${index++}", emptyList())
+        sentenceStart = fed; partial = ""
+    }
+
+    private companion object {
+        const val MAX_QUEUED = 16000 * 8
+        const val MAX_BACKLOG = 16000 * 15
+        const val TAIL = 16000 * 6 / 10
     }
 }

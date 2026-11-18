@@ -10,6 +10,8 @@ internal class GlassesVoiceTransport(
     private val write: (ByteArray, (Result<Unit>) -> Unit) -> Unit,
     private val wake: () -> Unit, private val beginRound: () -> Unit,
     private val endRound: (Boolean) -> Unit, private val audio: (ByteArray) -> Unit,
+    /** Per-frame speech flags (vpuMask | vadMask) of an always-on batch, delivered before its audio. */
+    private val activity: (List<Boolean>) -> Unit,
     private val failure: (String) -> Unit,
 ) {
     var source: ConversationSource? = null; private set
@@ -20,6 +22,8 @@ internal class GlassesVoiceTransport(
     private var lifeTask: String? = null
     private var lastReply: String? = null
     private var advancedReply: String? = null
+    /** Wake whose final transcript was already sent; later partials would arrive out of order. */
+    private var finalSent: String? = null
     private val client = UUID.randomUUID().toString().replace("-", "")
     fun start(next: ConversationSource) {
         check(source == null || source == next) { "먼저 기존 오디오 기능을 종료하세요" }
@@ -78,6 +82,10 @@ internal class GlassesVoiceTransport(
                 val bytes = message.audio ?: return
                 val count = body.optInt("frameCount", bytes.size / 240)
                 if (count !in 1..31 || bytes.size != count * 240) { failure("종일 기록 오디오 프레임 길이 이상으로 이번 라운드를 중지함"); return }
+                if (body.has("vpuMask") || body.has("vadMask")) {
+                    val vpu = body.optLong("vpuMask"); val vad = body.optLong("vadMask")
+                    activity(List(count) { ((vpu shr it) and 1L) != 0L || ((vad shr it) and 1L) != 0L })
+                }
                 repeat(count) { index -> audio(bytes.copyOfRange(index * 240, (index + 1) * 240)) }
             }
             165 -> if (source == ConversationSource.ALWAYS_ON && (body.optString("taskId").isBlank() || body.optString("taskId") == lifeTask)) {
@@ -87,9 +95,15 @@ internal class GlassesVoiceTransport(
     }
     fun asr(text: String, expectedWake: String) {
         if (text.isBlank() || !nativeActive || wakeId != expectedWake) return
+        finalSent = expectedWake
         send(0x0d, 4, JSONObject().put("rc", 1))
         send(0x0d, 5, JSONObject().put("text", text).put("final", true))
         send(0x0d, 4, JSONObject().put("rc", 2)); send(0x0d, 9, JSONObject().put("rc", 3))
+    }
+    /** Live, still-changing transcript on the native assistant page, as the official app streams it. */
+    fun partial(text: String, expectedWake: String) {
+        if (text.isBlank() || !nativeActive || wakeId != expectedWake || finalSent == expectedWake) return
+        send(0x0d, 5, JSONObject().put("text", text).put("final", false))
     }
     fun reply(text: String, query: String, expectedWake: String): Boolean {
         if (!nativeActive || wakeId != expectedWake) return false

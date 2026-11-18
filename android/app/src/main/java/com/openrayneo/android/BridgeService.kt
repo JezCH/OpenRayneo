@@ -115,14 +115,15 @@ internal class BridgeService : Service() {
                 if (source == ConversationSource.REALTIME && conversationOwnsDisplay)
                     dispatch(GlassesEvent.StandbyText(TranslationView(LiveTranslator.clip(segment.text, 80), "듣는 중 · 답이 필요하면 여기에 표시됩니다")))
             }, ::resumeBackground)
+        conversations.partial = { text, wake -> main.post { voiceTransport.partial(text, wake) } }
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
         if (settings.read().optBoolean("recordSyncEnabled")) recordSync.start()
         voiceAudio = PromptAudio { left, right -> conversations.accept(left, right) }
         voiceTransport = GlassesVoiceTransport(connection::sendFrame, ::nativeWake, {
-            voiceAudio.stop(); voiceAudio.start(1); conversations.nextRound()
+            voiceAudio.stop(); conversations.voiceRoundBoundary(); voiceAudio.start(1); conversations.nextRound()
         }, { ended ->
-            if (ended) conversations.stop() else { voiceAudio.stop(); conversations.endRound() }
-        }, { voiceAudio.accept(it) }, { conversations.transportError(it) })
+            if (ended) conversations.stop() else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
+        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) })
         translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
             if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
