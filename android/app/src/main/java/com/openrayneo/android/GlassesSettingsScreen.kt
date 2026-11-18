@@ -125,6 +125,14 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.voiceWake(enabled) } }, enabled = editable) { Text("음성 깨우기 적용") }
                 }
             }
+            settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode")?.let { current ->
+                var enabled by remember(current) { mutableStateOf(current) }
+                SettingsSection("대화 끊기") {
+                    SettingsToggle("AI가 말하는 중에 말로 끊기", enabled, editable) { enabled = it }
+                    Note("켜면 Hey RayNeo로 깨운 대화에서 AI가 답하는 도중 말을 걸어 답변을 끊고 바로 다음 질문을 할 수 있습니다. 안경 펌웨어 설정입니다.")
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.interrupt(enabled) } }, enabled = editable) { Text("대화 끊기 적용") }
+                }
+            }
             settings.optJSONObject("voiceAssistantConfig")?.deviceInt("wakeupWord")?.let { current ->
                 var word by remember(current) { mutableStateOf(current) }
                 SettingsSection("깨우기 명령어") {

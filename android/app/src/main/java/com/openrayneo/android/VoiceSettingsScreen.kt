@@ -18,7 +18,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds")
+    val voiceKeys = listOf("asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -47,6 +47,8 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
         Note("종일 기록과 개별 기록은 원본 오디오를 자동 저장하고, 목소리 등록은 음성 특징만 저장합니다. 전사가 지연되면 오디오를 먼저 저장하고 복구 후 전사와 화자 분석을 보충합니다.")
         VoiceField(model, "answerClearSeconds", "실시간 힌트 답변 후 화면 지우기까지 초 (0이면 유지)", "0")
+        VoiceField(model, "answerMaxChars", "안경 답변 최대 글자 수 (0이면 제한 없음)", DEFAULT_ANSWER_MAX_CHARS.toString())
+        Note("답변이 안경 화면 아래로 잘리면 숫자를 줄이세요. Agent에게 이 길이 안에서 답하도록 요청합니다.")
         SectionLabel("현재 위치 및 날씨")
         Note("로컬 Agent는 도구로 날씨를 조회할 수 있으며 위치 도구에는 위치 권한이 필요합니다. 백그라운드 음성은 안경 연결 포그라운드 서비스를 사용합니다.")
         TextButton(onClick = actions.locationPermission) { Text("위치 접근 허용") }
@@ -67,6 +69,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 .firstOrNull { key -> val value = drafts[key].orEmpty(); value.isNotBlank() && value.toDoubleOrNull()?.let { it.isFinite() && it in 0.0..1.0 } != true }
             if (invalid != null) error = "$invalid 값은 0~1 사이여야 함"
             else if (drafts["audioChannel"].orEmpty().isNotBlank() && drafts["audioChannel"]?.toIntOrNull() !in 0..2) error = "채널은 0, 1, 2 중 하나여야 함"
+            else if (drafts["answerMaxChars"].orEmpty().isNotBlank() && drafts["answerMaxChars"]?.toIntOrNull() !in 0..1000) error = "답변 최대 글자 수는 0~1000이어야 함"
             else if (drafts["answerClearSeconds"].orEmpty().isNotBlank() && drafts["answerClearSeconds"]?.toIntOrNull() !in 0..3600) error = "화면 지우기 지연은 0~3600초여야 함"
             else { error = null; model.saveConfig((voiceKeys + listOf("modelUrl", "modelName", "modelKey")).associateWith { drafts[it].orEmpty() }) }
         }, modifier = Modifier.fillMaxWidth()) { Text("음성 설정 저장") }
