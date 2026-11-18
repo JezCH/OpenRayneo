@@ -46,6 +46,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Every build gets the next minor version (run 26 -> 1.3.0), used by Gradle and the uploaded file name.
+      - name: Set version
+        run: echo "OPENRAYNEO_VERSION_NAME=1.$((GITHUB_RUN_NUMBER - 23)).0" >> "$GITHUB_ENV"
+
       - name: Build release APK
         working-directory: android
         run: |
@@ -76,7 +80,7 @@ jobs:
         run: |
           if [ -z "$DROP_URL" ]; then echo "No NEXTCLOUD_DROP_URL secret; skipping upload"; exit 0; fi
           base="${DROP_URL%%/s/*}"; token="${DROP_URL##*/s/}"; token="${token%%[/?#]*}"
-          version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          version="$OPENRAYNEO_VERSION_NAME"
           short="${GITHUB_SHA::7}"
           upload() {
             # Nextcloud 29+ public DAV first, then the legacy public WebDAV endpoint.
