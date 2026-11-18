@@ -52,7 +52,9 @@ jobs:
           # Surface compiler/lint errors as annotations so they are readable without opening the raw log.
           set -o pipefail
           ./gradlew :app:assembleRelease --console=plain 2>&1 | tee "$RUNNER_TEMP/gradle.log" || {
-            grep -E '^e: |error:|What went wrong|^> ' "$RUNNER_TEMP/gradle.log" | head -40 | sed 's/^/::error::/'
+            # One annotation (GitHub keeps only a few per step); newlines encoded as %0A.
+            msg=$( { grep -E '^e: |error:' "$RUNNER_TEMP/gradle.log"; grep -A12 'What went wrong' "$RUNNER_TEMP/gradle.log"; } | grep -v '^> Task' | head -50 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error::$msg"
             exit 1
           }
 
