@@ -128,6 +128,9 @@ internal class BridgeService : Service() {
         }, { ended ->
             if (ended) conversations.stop() else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
         }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
+        // Only when the posted next turn will really start (auto answer on, native session running); otherwise capture closes as before.
+        voiceTransport.bargeIn = { deviceSettings.state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode") == true &&
+            settings.read().optBoolean("nativeAutoAnswer") && conversations.state.running && conversations.state.source == ConversationSource.NATIVE }
         translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
             if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
@@ -189,7 +192,7 @@ internal class BridgeService : Service() {
                     conversations.stop(); voiceTransport.disconnected(); voiceAudio.stop()
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
-                if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) content.connected()
+                if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) { content.connected(); runCatching { deviceSettings.refresh() } }
                 if (previous.session != null && state.session == null && previous.session.mode == PageMode.PROMPT && conversations.state.running && conversations.state.source == ConversationSource.REALTIME && conversationOwnsDisplay &&
                     (state.ownership != DisplayOwnership.APP || state.intent == DisplayIntent.Idle || state.intent == DisplayIntent.Navigation || state.error != null)) {
                     conversationOwnsDisplay = false; conversations.stop()
