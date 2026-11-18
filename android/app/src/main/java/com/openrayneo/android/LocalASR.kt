@@ -66,7 +66,7 @@ internal object SpeechRounds {
  * minute idle. All loading, decoding and releasing happens on [LocalModels.executor].
  */
 internal class LocalModel<T>(val title: String, val size: String, private val folderName: String,
-    /** Folder name of the official sherpa-onnx archive, looked up under [SHARED_ROOT] so copied files survive reinstalls. */
+    /** Folder name of the official sherpa-onnx archive, looked up under [LocalModels.SHARED_ROOT] so copied files survive reinstalls. */
     val sharedName: String, private val base: String,
     private val files: List<Pair<String, Float>>, private val load: (File) -> T, private val free: (T) -> Unit) {
     var downloading by mutableStateOf(false); private set
@@ -78,7 +78,7 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
 
     private fun folder(context: Context) = File(context.filesDir, folderName)
     private fun complete(dir: File) = files.all { (name, _) -> File(dir, name).length() > 0 }
-    val sharedFolder get() = File(Environment.getExternalStorageDirectory(), "$SHARED_ROOT/$sharedName")
+    val sharedFolder get() = File(Environment.getExternalStorageDirectory(), "${LocalModels.SHARED_ROOT}/$sharedName")
     /** The copied folder (needs all-files access) wins over the in-app download. */
     fun location(context: Context): File? =
         sharedFolder.takeIf { Environment.isExternalStorageManager() && complete(it) } ?: folder(context).takeIf(::complete)
