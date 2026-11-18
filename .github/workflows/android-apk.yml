@@ -7,6 +7,7 @@ on:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
       - "ThirdParty/SherpaOnnx/**"
+      - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
@@ -52,3 +53,26 @@ jobs:
           name: openrayneo-android-${{ github.sha }}
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Pack DSH Go plugin
+        working-directory: integrations/dsh-go
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      # Optional: upload APK and plugin to a Nextcloud "file drop" (upload-only) public share.
+      # Store the share link (https://host/s/TOKEN) as repository secret NEXTCLOUD_DROP_URL.
+      - name: Upload to Nextcloud
+        env:
+          DROP_URL: ${{ secrets.NEXTCLOUD_DROP_URL }}
+        run: |
+          if [ -z "$DROP_URL" ]; then echo "No NEXTCLOUD_DROP_URL secret; skipping upload"; exit 0; fi
+          base="${DROP_URL%%/s/*}"; token="${DROP_URL##*/s/}"; token="${token%%[/?#]*}"
+          version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          short="${GITHUB_SHA::7}"
+          upload() {
+            # Nextcloud 29+ public DAV first, then the legacy public WebDAV endpoint.
+            curl -fsS -T "$1" -H "X-Requested-With: XMLHttpRequest" "$base/public.php/dav/files/$token/$2" \
+              || curl -fsS -T "$1" -u "$token:" -H "X-Requested-With: XMLHttpRequest" "$base/public.php/webdav/$2"
+            echo "Uploaded $2"
+          }
+          upload android/app/build/outputs/apk/release/app-release.apk "openrayneo-$version-$short.apk"
+          upload "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "openrayneo-dsh-$short.tgz"
