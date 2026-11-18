@@ -39,15 +39,21 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             var access by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
             var recheck by remember { mutableIntStateOf(0) }
             val installed = remember(local, local.downloading, access, recheck) { local.installed(context) }
-            if (installed) Text("${local.title} 모델 준비됨" + if (local.shared(context)) " (복사한 폴더 사용)" else "")
+            if (installed) Text("${local.title} 모델 준비됨" + if (local.shared(context)) " (공용 폴더 사용)" else " (앱 내부 저장소, 재설치 시 삭제됨)")
             else ToolButton(onClick = { local.download(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (local.downloading) "내려받는 중… ${(local.progress * 100).toInt()}%" else "${local.title} 모델 내려받기 (${local.size}, Wi-Fi 권장)")
+                Text(if (local.downloading) "${(local.progress * 100).toInt()}% 진행 중…"
+                    else "${local.title} 모델 내려받기 (${local.size}, Wi-Fi 권장" + if (access) ", 공용 폴더에 저장)" else ")")
             }
-            Note("다시 받지 않으려면 파일을 휴대폰 저장소의 ${LocalModels.SHARED_ROOT}/${local.sharedName}/ 폴더에 복사하세요(공식 압축 파일을 풀면 같은 폴더명). 필요한 파일: ${local.fileNames.joinToString(", ")}. 앱을 지웠다 깔아도 남습니다.")
+            val movable = remember(local, local.downloading, access, recheck) { local.movable(context) }
+            if (movable) ToolOutlinedButton(onClick = { local.moveToShared(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
+                Text("앱 내부 모델을 공용 폴더로 옮기기 (백업용)")
+            }
+            Note("모델 폴더: 휴대폰 저장소의 ${LocalModels.SHARED_ROOT}/${local.sharedName}/ (공식 압축 파일을 풀면 같은 폴더명). 필요한 파일: ${local.fileNames.joinToString(", ")}. " +
+                "모든 파일 접근을 허용하면 내려받기도 이 폴더에 저장되어, 앱을 지웠다 깔아도 남고 PC로 복사해 백업할 수 있습니다.")
             if (!access) ToolOutlinedButton(onClick = {
                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     android.net.Uri.parse("package:" + context.packageName)))
-            }, modifier = Modifier.fillMaxWidth()) { Text("복사한 모델 폴더 읽기 허용 (모든 파일 접근)") }
+            }, modifier = Modifier.fillMaxWidth()) { Text("공용 모델 폴더 사용 허용 (모든 파일 접근)") }
             else if (!installed) ToolOutlinedButton(onClick = { recheck++ }, modifier = Modifier.fillMaxWidth()) { Text("복사한 폴더 다시 확인") }
             if (!access) LaunchedEffect(Unit) {
                 // Pick up the permission when the user returns from system settings.

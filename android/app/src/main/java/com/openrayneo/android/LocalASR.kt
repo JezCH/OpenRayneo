@@ -62,7 +62,8 @@ internal object SpeechRounds {
 }
 
 /**
- * A model downloaded once into app storage from Hugging Face; loaded while rounds use it and freed after a
+ * A model downloaded once from Hugging Face (into the shared folder when all-files access is granted, else app
+ * storage) or copied there by the user; loaded while rounds use it and freed after a
  * minute idle. All loading, decoding and releasing happens on [LocalModels.executor].
  */
 internal class LocalModel<T>(val title: String, val size: String, private val folderName: String,
@@ -86,12 +87,16 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
     fun shared(context: Context) = location(context) == sharedFolder
     val fileNames get() = files.map { it.first }
 
+    /** In-app copy that can move to the shared folder (all-files access granted, shared copy not complete yet). */
+    fun movable(context: Context) = Environment.isExternalStorageManager() && !complete(sharedFolder) && complete(folder(context))
+
+    /** Downloads into the shared folder when all-files access is granted (a backup that survives reinstalls), else app storage. */
     fun download(context: Context) {
         if (downloading) return
         downloading = true; progress = 0f; message = "내려받는 중…"
         Thread {
             try {
-                val dir = folder(context).apply { mkdirs() }
+                val dir = (if (Environment.isExternalStorageManager()) sharedFolder else folder(context)).apply { mkdirs() }
                 val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
                 var before = 0f
                 files.forEach { (name, weight) ->
@@ -117,9 +122,43 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
                     }
                     before += weight; progress = before
                 }
-                progress = 1f; message = "$title 모델 준비됨"
+                progress = 1f; message = "$title 모델 준비됨 (${dir.absolutePath})"
             } catch (error: Exception) {
                 message = "모델 내려받기 실패: ${error.message ?: error.javaClass.simpleName}"
+            } finally { downloading = false }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /** Copies an in-app download to the shared folder, checks every size, then frees the app copy. */
+    fun moveToShared(context: Context) {
+        if (downloading) return
+        downloading = true; progress = 0f; message = "공용 폴더로 옮기는 중…"
+        Thread {
+            try {
+                val source = folder(context); val target = sharedFolder.apply { mkdirs() }
+                val total = files.sumOf { (name, _) -> File(source, name).length() }.coerceAtLeast(1)
+                var done = 0L
+                files.forEach { (name, _) ->
+                    val from = File(source, name); val to = File(target, name)
+                    if (to.length() != from.length()) {
+                        val part = File(target, "$name.part")
+                        from.inputStream().use { input -> part.outputStream().use { output ->
+                            val buffer = ByteArray(1 shl 16)
+                            while (true) {
+                                val count = input.read(buffer); if (count < 0) break
+                                output.write(buffer, 0, count); done += count; progress = done.toFloat() / total
+                            }
+                        } }
+                        check(part.length() == from.length()) { "복사 크기가 다릅니다: $name" }
+                        check(part.renameTo(to)) { "파일 저장 실패: $name" }
+                    } else done += from.length()
+                }
+                check(complete(target))
+                files.forEach { (name, _) -> File(source, name).delete() }
+                source.delete()
+                progress = 1f; message = "$title 모델을 ${target.absolutePath}로 옮겼습니다"
+            } catch (error: Exception) {
+                message = "옮기기 실패: ${error.message ?: error.javaClass.simpleName}"
             } finally { downloading = false }
         }.apply { isDaemon = true }.start()
     }
