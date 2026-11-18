@@ -254,6 +254,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         }
         config = updated
         bridge?.conversations?.configurationChanged()
+        bridge?.let { LocalModels.keepResident(it, updated) }
         resetFormDrafts()
         notice = "설정이 암호화되어 저장됨"
     }
@@ -271,7 +272,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
             "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "audioChannel",
-            "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs")
+            "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
     fun send(source: AnswerSource) = attempt {

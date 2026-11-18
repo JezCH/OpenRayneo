@@ -88,6 +88,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        LocalModels.keepResident(this, settings.read())
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {

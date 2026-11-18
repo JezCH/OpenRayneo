@@ -163,6 +163,17 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
         }.apply { isDaemon = true }.start()
     }
 
+    /** Executor thread only. Resident: load now and stay; otherwise free at once when unused. */
+    fun settle(context: Context, resident: Boolean) {
+        idle?.cancel(false); idle = null
+        if (resident) {
+            if (loaded == null) location(context)?.let { dir ->
+                try { loaded = load(dir); message = "$title 모델을 메모리에 올려 둠" }
+                catch (error: Exception) { message = "$title 모델 불러오기 실패: ${error.message ?: error.javaClass.simpleName}" }
+            }
+        } else if (users == 0) { loaded?.let(free); loaded = null }
+    }
+
     /** Executor thread only. A round calls this once when it starts using the model. */
     fun acquire(context: Context): T {
         idle?.cancel(false); idle = null
@@ -176,7 +187,7 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
     /** Executor thread only. The last user leaving schedules the release. */
     fun releaseUser() {
         users = (users - 1).coerceAtLeast(0)
-        if (users == 0 && loaded != null) {
+        if (users == 0 && loaded != null && LocalModels.resident !== this) {
             idle?.cancel(false)
             idle = LocalModels.executor.schedule(Runnable { if (users == 0) { loaded?.let(free); loaded = null }; idle = null }, 60, TimeUnit.SECONDS)
         }
@@ -184,6 +195,19 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
 }
 
 internal object LocalModels {
+    /** The model kept in memory between rounds (the configured on-device engine), or null. */
+    @Volatile var resident: LocalModel<*>? = null; private set
+    /**
+     * Keeps the configured engine's model loaded so a wake never waits for a multi-second load, and frees the
+     * others (setting "asrKeepLoaded", default on). Call on service start and after settings are saved.
+     */
+    fun keepResident(context: Context, config: JSONObject) {
+        val target = if (config.optString("asrKeepLoaded", "true") != "false") SpeechRounds.model(config) else null
+        executor.execute {
+            resident = target
+            listOf(senseVoice, zipformer, nemotron).forEach { it.settle(context.applicationContext, it === target) }
+        }
+    }
     /** Copy official model folders here (e.g. from a PC over USB): /sdcard/OpenRayneo/models/<archive folder>/ */
     const val SHARED_ROOT = "OpenRayneo/models"
     /** All recognizer work (load, decode, release) for every on-device round is serialized here. */
