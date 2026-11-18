@@ -318,6 +318,18 @@ private fun GlassesScreen(
                             Text("실시간 힌트")
                         }
                     }
+                    if (!model.state.translationActive)
+                        ToolOutlinedButton(
+                            onClick = { model.attempt { model.service().startTranslation() } }
+                        ) {
+                            Text("실시간 번역 (한국어 ↔ 영어)")
+                        }
+                    if (model.state.translationActive) {
+                        Note("실시간 번역 (한국어 ↔ 영어): ${model.state.translationStatus}")
+                        TextButton(onClick = { model.attempt { model.service().stopTranslation() } }) {
+                            Text("번역 종료")
+                        }
+                    } else if (model.state.translationStatus != "실시간 번역 꺼짐") Note(model.state.translationStatus)
                     if (state.session?.mode == PageMode.PROMPT && state.session.phase == PagePhase.READY)
                         TextButton(onClick = { model.attempt { model.service().clearDisplay() } }) {
                             Text("화면 지우기 (음성 수신 유지)")

@@ -33,6 +33,7 @@ internal class BridgeService : Service() {
     val navigation get() = NavigationFeed
     lateinit var agent: MobileAgent; private set
     lateinit var codex: CodexClient; private set
+    lateinit var translator: LiveTranslator; private set
     var state = GlassesState(); private set
     val status get() = state.link.detail
     val ready get() = state.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
@@ -119,8 +120,12 @@ internal class BridgeService : Service() {
         }, { ended ->
             if (ended) conversations.stop() else { voiceAudio.stop(); conversations.endRound() }
         }, { voiceAudio.accept(it) }, { conversations.transportError(it) })
+        translator = LiveTranslator(main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
+            if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
+        }
         audio = PromptAudio { left, right ->
-            if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.accept(left, right)
+            if (translator.active) translator.accept(left, right)
+            else if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.accept(left, right)
         }
         display = GlassesDisplay(connection::sendFrame,
             { task, delay -> main.postDelayed(task, delay) }, { main.removeCallbacks(it) }, ::onLog,
@@ -181,6 +186,11 @@ internal class BridgeService : Service() {
                     (state.ownership != DisplayOwnership.APP || state.intent == DisplayIntent.Idle || state.intent == DisplayIntent.Navigation || state.error != null)) {
                     conversationOwnsDisplay = false; conversations.stop()
                 }
+                // The translator runs only while the glasses show its window; any other page, link loss or yield stops it.
+                // On link loss the intent would otherwise survive and reopen an orphan window after reconnecting.
+                if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP)) {
+                    translator.stop(); events.add(GlassesEvent.PauseDisplay)
+                } else if (translator.active && state.intent != DisplayIntent.Translation) translator.stop()
                 updateAnswerClearTimer()
                 if (state.displayDescription != previous.displayDescription) onLog(state.displayDescription)
                 transition.effects.forEach { effect ->
@@ -384,6 +394,16 @@ internal class BridgeService : Service() {
         } else if (state.link.phase == LinkPhase.FULL && !state.disconnecting) connection.sendNotification("어시스턴트", answer)
     }
     fun pausePrompt() { conversations.stop(); dispatch(GlassesEvent.PauseDisplay) }
+    fun startTranslation() {
+        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        val config = settings.read()
+        translator.validate(config)
+        conversationOwnsDisplay = false
+        if (conversations.state.running) conversations.stop()
+        translator.start(config)
+        dispatch(GlassesEvent.StartTranslation)
+    }
+    fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() = dispatch(GlassesEvent.OpenStandby)
     fun retryAudio() {
         check(state.link.phase == LinkPhase.FULL && state.session?.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)) {
@@ -584,7 +604,7 @@ internal class BridgeService : Service() {
     override fun onDestroy() {
         destroyed = true; observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
-        agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
+        translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }

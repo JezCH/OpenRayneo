@@ -11,6 +11,7 @@ internal sealed interface DisplayIntent {
     data object PromptStandby : DisplayIntent
     data object BlankPrompt : DisplayIntent
     data object Navigation : DisplayIntent
+    data object Translation : DisplayIntent
     data class Answer(val ref: AnswerRef, val returnTo: ReturnTarget) : DisplayIntent
 }
 internal enum class DisplayOwnership { APP, YIELDED }
@@ -23,6 +24,7 @@ internal data class PageSession(
     val id: Long, val mode: PageMode, val phase: PagePhase, val content: PageContent,
     val writtenContent: PageContent? = null,
 )
+internal data class TranslationView(val source: String = "", val target: String = "")
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
 internal enum class AudioPhase { STOPPED, WAITING_PACKET, WAITING_PCM, RECEIVING, STALLED, FAILED }
 internal data class AudioState(val phase: AudioPhase = AudioPhase.STOPPED, val detail: String = "안경 음성 수신이 중지됨")
@@ -35,6 +37,7 @@ internal data class GlassesState(
     val session: PageSession? = null,
     val audio: AudioState = AudioState(),
     val answer: AnswerContent? = null,
+    val translation: TranslationView = TranslationView(),
     val revision: Long = 0,
     val nextSession: Long = 1,
     val answerPermit: AnswerPermit? = null,
@@ -58,6 +61,7 @@ internal data class GlassesState(
         session.mode == PageMode.NAVIGATION -> "내비게이션 세션 준비됨"
         intent == DisplayIntent.BlankPrompt -> "화면을 지웠고 음성 수신은 유지됨"
         intent is DisplayIntent.Answer -> "답변 세션 준비됨"
+        intent == DisplayIntent.Translation -> "실시간 번역 세션 준비됨"
         else -> "실시간 힌트 세션 준비됨"
     }
 }
@@ -78,6 +82,8 @@ internal sealed interface GlassesEvent {
     data object StopNavigation : GlassesEvent
     data object PauseDisplay : GlassesEvent
     data object OpenStandby : GlassesEvent
+    data object StartTranslation : GlassesEvent
+    data class TranslationText(val view: TranslationView) : GlassesEvent
     data object ClearDisplay : GlassesEvent
     data class ForgetAnswer(val source: AnswerSource) : GlassesEvent
     data object RetryAudio : GlassesEvent

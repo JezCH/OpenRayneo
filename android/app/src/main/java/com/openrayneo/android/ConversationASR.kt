@@ -12,7 +12,9 @@ import java.util.concurrent.TimeUnit
 /** Existing Bailian run-task protocol; timestamps remain on the uncut 16kHz PCM timeline. */
 internal class ConversationASR(config: JSONObject,
     private val sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
-    private val failed: (String) -> Unit, private val completed: () -> Unit) : WebSocketListener() {
+    private val failed: (String) -> Unit, private val completed: () -> Unit,
+    /** When set, the service also streams unfinished sentences (live captions); records keep using finals only. */
+    private val interim: ((String) -> Unit)? = null) : WebSocketListener() {
     private val task = UUID.randomUUID().toString()
     private val model = config.optString("asrModel").ifBlank { "qwen-audio-3.1-asr-flash-message" }
     private val key = config.optString("asrKey").trim()
@@ -45,7 +47,7 @@ internal class ConversationASR(config: JSONObject,
     @Synchronized fun cancel() { if (!ended) { ended = true; pending.clear(); socket?.cancel(); release() } }
     override fun onOpen(webSocket: WebSocket, response: Response) {
         val parameters = JSONObject().put("format", "pcm").put("sample_rate", 16000)
-            .put("intermediate_result_enabled", false).put("disfluency_removal_enabled", false)
+            .put("intermediate_result_enabled", interim != null).put("disfluency_removal_enabled", false)
             .put("heartbeat", true).put("vad_model", "far_field_meeting_16k")
         if (languages.isNotEmpty()) parameters.put("language_hints", org.json.JSONArray(languages))
         webSocket.send(JSONObject().put("header", header("run-task")).put("payload", JSONObject()
@@ -61,7 +63,8 @@ internal class ConversationASR(config: JSONObject,
             "task-started" -> { started = true; pump() }
             "result-generated" -> {
                 val s = data.optJSONObject("payload")?.optJSONObject("output")?.optJSONObject("sentence") ?: return
-                if (!s.optBoolean("sentence_end") || s.optBoolean("heartbeat")) return
+                if (s.optBoolean("heartbeat")) return
+                if (!s.optBoolean("sentence_end")) { s.optString("text").trim().takeIf { it.isNotEmpty() }?.let { interim?.invoke(it) }; return }
                 val content = s.optString("text").trim()
                 val id = task + ":" + s.optString("sentence_id")
                 if (content.isNotEmpty() && seen.add(id)) {

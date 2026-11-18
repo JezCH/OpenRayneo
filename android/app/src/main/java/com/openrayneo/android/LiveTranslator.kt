@@ -1,0 +1,221 @@
+// Copyright 2026 Tobi1chi
+// SPDX-License-Identifier: Apache-2.0
+package com.openrayneo.android
+
+import android.os.Handler
+import okhttp3.Call
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * Korean ↔ English live interpretation on the phone. The glasses prompt page is only the window and
+ * microphone: glasses PCM → Bailian ASR (ko,en hints, interim captions) → chat-completions translation.
+ * Display: top line = latest speech (partial or final), bottom line = translation of the latest final
+ * sentence ("…" while pending). Only the newest final is translated, so the glasses never fall behind.
+ * All callbacks are funnelled onto [main]; nothing is stored or added to records.
+ */
+internal class LiveTranslator(
+    private val main: Handler,
+    private val show: (source: String, target: String) -> Unit,
+    private val changed: () -> Unit,
+    /** The translator gave up on its own (e.g. repeated ASR failures); the owner should close the window. */
+    private val gaveUp: () -> Unit,
+) {
+    @Volatile var active = false; private set
+    @Volatile var status = OFF; private set
+
+    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    private val translations = Executors.newSingleThreadExecutor()
+    private var config = JSONObject()
+    @Volatile private var generation = 0
+    private var asr: ConversationASR? = null
+    private var resampler = ConversationAudio()
+    @Volatile private var call: Call? = null
+    // Main-thread display state.
+    private val history = ArrayDeque<Pair<String, String>>()
+    @Volatile private var latestFinal = 0L
+    private var sourceLine = ""
+    private var targetLine = ""
+    private var failures = 0
+    private var restartTask: Runnable? = null
+
+    /** Throws with a user-facing message when ASR or the translation model is not configured. */
+    fun validate(settings: JSONObject) {
+        require(settings.optString("asrKey").isNotBlank()) { "먼저 음성 설정에서 Bailian ASR API Key를 입력하세요" }
+        require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
+            "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
+        }
+        MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+    }
+
+    /** Must be called on the main thread. */
+    fun start(settings: JSONObject) {
+        validate(settings)
+        stop()
+        synchronized(this) {
+            config = JSONObject(settings.toString()).put("asrLanguage", "ko,en")
+            generation++
+            active = true
+            resampler = ConversationAudio()
+        }
+        history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
+        status = LISTENING
+        openASR()
+        changed()
+    }
+
+    /** Must be called on the main thread. [reason] stays visible as the status after stopping. */
+    fun stop(reason: String? = null) {
+        val wasActive: Boolean
+        synchronized(this) {
+            wasActive = active
+            active = false
+            generation++
+            asr?.cancel(); asr = null
+        }
+        restartTask?.let(main::removeCallbacks); restartTask = null
+        call?.cancel()
+        if (wasActive || reason != null) { status = reason ?: OFF; changed() }
+    }
+
+    /** Called on the audio worker with 48 kHz PCM from the glasses prompt page. */
+    @Synchronized fun accept(left: ShortArray, right: ShortArray) {
+        if (!active) return
+        // Bidirectional: either speaker may be on either microphone, so feed one mixed stream.
+        val mixed = if (right.size == left.size) ShortArray(left.size) { ((left[it].toInt() + right[it].toInt()) / 2).toShort() } else left
+        val samples = resampler.convert(mixed)
+        val target = asr ?: return
+        // Stay live: drop audio rather than queueing behind a slow or reconnecting ASR socket.
+        if (!target.canAcceptAudio()) return
+        try { target.append(samples) } catch (error: Exception) {
+            val token = generation
+            main.post { asrEnded(token, error.message ?: "ASR 오디오 전송 실패") }
+        }
+    }
+
+    /** Must be called on the main thread (service onDestroy). */
+    fun close() { stop(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
+
+    private fun openASR() {
+        val token: Int
+        val round: ConversationASR
+        synchronized(this) {
+            if (!active) return
+            token = generation
+            resampler = ConversationAudio()
+            round = ConversationASR(config,
+                { text, _, _, _, _ -> main.post { finished(token, text) } },
+                { message -> main.post { asrEnded(token, message) } },
+                { main.post { asrEnded(token, null) } },
+                { text -> main.post { interim(token, text) } })
+            asr = round
+        }
+        try { round.start() } catch (error: Exception) { asrEnded(token, error.message ?: "ASR 시작 실패") }
+    }
+
+    private fun asrEnded(token: Int, message: String?) {
+        synchronized(this) {
+            if (token != generation || !active) return
+            asr?.cancel(); asr = null
+        }
+        // A normal end (null) just reopens; errors back off and give up after repeated failures without speech.
+        if (message != null) failures++
+        if (failures >= MAX_FAILURES) {
+            stop("ASR 연결 실패로 번역을 멈췄습니다: $message")
+            gaveUp()
+            return
+        }
+        status = if (message == null) "ASR 세션 종료, 다시 연결 중…" else "$message · 다시 연결 중 ($failures/$MAX_FAILURES)…"
+        changed()
+        restartTask?.let(main::removeCallbacks)
+        restartTask = Runnable { restartTask = null; if (token == generation && active) openASR() }
+            .also { main.postDelayed(it, 1_500L * maxOf(1, failures)) }
+    }
+
+    private fun heard() {
+        if (failures != 0 || status != LISTENING) { failures = 0; status = LISTENING; changed() }
+    }
+
+    private fun render() = show(clip(sourceLine, SOURCE_LIMIT), targetLine)
+
+    private fun interim(token: Int, text: String) {
+        if (token != generation || !active) return
+        heard()
+        sourceLine = text
+        render()
+    }
+
+    private fun finished(token: Int, text: String) {
+        if (token != generation || !active) return
+        heard()
+        val sequence = ++latestFinal
+        val from = if (isKorean(text)) "Korean" else "English"
+        val to = if (from == "Korean") "English" else "Korean"
+        sourceLine = text; targetLine = "…"
+        render()
+        val context = history.toList()
+        val snapshot = config
+        translations.execute {
+            // Skip sentences already superseded by a newer final: only the latest translation is ever shown.
+            if (token != generation || sequence != latestFinal) return@execute
+            val result = runCatching { translate(token, snapshot, text, from, to, context) }
+            main.post {
+                if (token != generation || !active) return@post
+                result.fold({ translated ->
+                    history.addLast(text to translated); while (history.size > 3) history.removeFirst()
+                    if (sequence == latestFinal) { targetLine = clip(translated, TARGET_LIMIT); render() }
+                }, { error ->
+                    if (sequence == latestFinal) { targetLine = "(번역 실패)"; render() }
+                    status = "번역 실패: ${error.message ?: error.javaClass.simpleName}"
+                    changed()
+                })
+            }
+        }
+    }
+
+    private fun translate(token: Int, settings: JSONObject, text: String, from: String, to: String, context: List<Pair<String, String>>): String {
+        val endpoint = MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+        val previous = if (context.isEmpty()) "" else "\nRecent conversation for context only (do not translate it again):\n" +
+            context.joinToString("\n") { (source, target) -> "- $source => $target" }
+        val system = "You are a live interpreter between Korean and English shown on smart glasses. " +
+            "Translate the user's utterance from $from to $to. Output only the translation in natural spoken $to, " +
+            "with no quotes, notes, romanization or explanations. Keep names and numbers accurate.$previous"
+        val body = JSONObject().put("model", settings.getString("modelName")).put("stream", false)
+            .put("messages", JSONArray()
+                .put(JSONObject().put("role", "system").put("content", system))
+                .put(JSONObject().put("role", "user").put("content", text)))
+        val request = Request.Builder().url(endpoint).apply {
+            settings.optString("modelKey").takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
+        }.post(body.toString().toRequestBody("application/json".toMediaType())).build()
+        val current = http.newCall(request); call = current
+        // stop() may have run between the generation check and assigning the call.
+        if (token != generation) current.cancel()
+        return current.execute().use { response ->
+            check(response.isSuccessful) { "HTTP ${response.code}" }
+            JSONObject(checkNotNull(response.body).string()).getJSONArray("choices").getJSONObject(0)
+                .getJSONObject("message").getString("content").trim().trim('"').ifBlank { error("빈 번역 결과") }
+        }
+    }
+
+    companion object {
+        private const val OFF = "실시간 번역 꺼짐"
+        private const val LISTENING = "듣는 중 · 한국어 ↔ 영어"
+        private const val MAX_FAILURES = 5
+        private const val SOURCE_LIMIT = 80
+        private const val TARGET_LIMIT = 120
+        fun clip(text: String, limit: Int): String { val value = text.trim(); return if (value.length <= limit) value else "…" + value.takeLast(limit - 1) }
+        /** Hangul share of letters decides the direction; mixed or Latin-only utterances count as English. */
+        fun isKorean(text: String): Boolean {
+            val hangul = text.count { it in '가'..'힣' || it in 'ㄱ'..'ㆎ' }
+            val latin = text.count { it in 'a'..'z' || it in 'A'..'Z' }
+            return hangul > 0 && hangul * 2 >= latin
+        }
+    }
+}

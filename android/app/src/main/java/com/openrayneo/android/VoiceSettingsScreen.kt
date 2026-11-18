@@ -59,7 +59,8 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         VoiceField(model, "modelName", "요약 모델 이름")
         VoiceField(model, "modelKey", "요약 모델 API Key", secret = true)
         StructuredVoicePrompt(model, "memoryPrompt", "기억 귀속 및 정리", ConversationPrompts.memory)
-        Note("이 모델은 앱 내 기록 요약에만 사용됩니다. 원문, 화자, 서술 대상은 따로 저장되며 가져올 수 있는 모든 전사는 장기 보관됩니다.")
+        Note("실시간 번역(한국어 ↔ 영어)도 이 모델과 위의 Bailian ASR을 사용합니다.")
+        Note("이 모델은 앱 내 기록 요약에 사용됩니다.원문, 화자, 서술 대상은 따로 저장되며 가져올 수 있는 모든 전사는 장기 보관됩니다.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         ToolButton(onClick = {
             val invalid = listOf("speakerThreshold")
