@@ -13,8 +13,10 @@ android {
         applicationId = "com.openrayneo.android"
         minSdk = 33
         targetSdk = 36
-        versionCode = 37
+        // CI builds count up with the workflow run so every APK installs over the previous one; local builds stay at 37.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.let { 1000 + it } ?: 37
         versionName = "1.2.0-beta.4"
+        buildConfigField("String", "GIT_COMMIT", "\"" + (System.getenv("GITHUB_SHA")?.take(7) ?: "local") + "\"")
         ndk { abiFilters += providers.gradleProperty("openrayneo.abis").orElse("arm64-v8a").get().split(',') }
     }
     buildTypes {

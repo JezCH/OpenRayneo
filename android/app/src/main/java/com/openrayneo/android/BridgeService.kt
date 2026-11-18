@@ -100,7 +100,7 @@ internal class BridgeService : Service() {
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
         teleprompter = TeleprompterLibrary(this, requests, ::notifyUI)
         agentServer = LocalAgentServer(main, settings, ::notifyUI, {
-            JSONObject().put("version", BuildConfig.VERSION_NAME).put("versionCode", BuildConfig.VERSION_CODE)
+            JSONObject().put("version", BuildConfig.VERSION_NAME).put("versionCode", BuildConfig.VERSION_CODE).put("commit", BuildConfig.GIT_COMMIT)
                 .put("phoneId", nativeIdentity().getString("phoneId")).put("link", state.link.phase.name).put("display", state.displayDescription).put("conversationRunning", conversations.state.running)
         }, {
             org.json.JSONArray(conversations.repository.records.map { it.json().apply { remove("speakerSamples") } })

@@ -22,7 +22,7 @@
 | 声道与身份 | ORPCM1旧mono／ORPCM2双路兼容；真实双路ch1默认本人、ch2完整speaker，native／AON mono全量处理。Opus编码路数与物理来源分别看待。 |
 | 人物修正 | Android37显式绑定归并来源匿名，历史ID保留；候选仅过滤与已命名人物同model、完全相同的匿名重复参考。短段保留、重叠仅标实际交集。 |
 | Mac分析 | 离线连续PCM整段SDK聚类，保持SDK成员关系；实时仍用原8秒VAD批次。最新原生会话流式WAV＋latest索引，导出含只读`matchingDiagnostics`标量，无原始向量。 |
-| 当前产物 | Mac `.build/speaker-match-diagnostics/OpenRayneoBridge.app`（同签名Debug）；Android37／1.2.0-beta.4，DSH0.1.8。上一Mac自动保存候选、Android36 release作回退，路径见[运行指南](../docs/runbook.md)。 |
+| 当前产物 | Mac `.build/speaker-match-diagnostics/OpenRayneoBridge.app`（同签名Debug）；Android CI构建versionCode=1000+GITHUB_RUN_NUMBER（本地37）、BuildConfig.GIT_COMMIT显示于设置／1.2.0-beta.4，DSH0.1.8。上一Mac自动保存候选、Android36 release作回退，路径见[运行指南](../docs/runbook.md)。 |
 | 验证范围 | 构建／签名、存储／API／同步及定点生产类检查完成，独立审查已闭环。声音模型、真实持续吞吐、功耗及各固件硬件行为按实际输入继续验收。 |
 
 **当前主问题：真人声纹漏认与单人误分组。** 已保存真实59.64秒native输入，用户确认仅本人讲话，结果5段／3组、最高匹配0.624（其余0.602／0.399），当前门槛0.70。6份登记参考留一互验有2份仅0.659／0.674；同一native录音A／B互cos0.641。短句特征不稳与登记／匹配标准不协调已有实证，登记ch1与native mono收音差异的独立贡献待验证；当前模型／门槛／档案未因此调整。
