@@ -565,7 +565,10 @@ internal class ConversationController(private val context: Context, private val 
     /** Fresh per session or replay: only realtime two-channel records assume channel 1 is the wearer. */
     private fun selfGateFor(source: ConversationSource, mode: ConversationMode, cfg: JSONObject): SelfVoiceGate? =
         if (source != ConversationSource.REALTIME || mode == ConversationMode.ENROLL) null
-        else cfg.optString("selfVoiceMarginDb").ifBlank { "6" }.toDoubleOrNull()?.takeIf { it > 0 }?.let(::SelfVoiceGate)
+        else cfg.optString("selfVoiceMarginDb").ifBlank { "6" }.toDoubleOrNull()?.takeIf { it > 0 }?.let { margin ->
+            SelfVoiceGate(margin, cfg.optString("selfVoiceFloorDb").toDoubleOrNull() ?: -50.0,
+                (cfg.optString("selfVoiceHoldMs").toIntOrNull() ?: 300) / 20)
+        }
     fun retranscribe(recordId: String) {
         check(!state.running && !closing && state.modelReady) { "먼저 현재 기록을 중지하세요" }
         val old = repository.records.first { it.id == recordId }; require(old.audioSamples > 0)
@@ -603,7 +606,11 @@ internal class ConversationController(private val context: Context, private val 
  * transcribed twice as someone else's. A loud outside sound raises both channels about equally, so the ratio,
  * not channel 1's level alone, decides. Channel 1 itself passes unchanged.
  */
-internal class SelfVoiceGate(private val marginDb: Double) {
+internal class SelfVoiceGate(private val marginDb: Double,
+    /** Below this channel-1 level (dBFS) the frame is silence, whatever the ratio. */
+    private val floorDb: Double = -50.0,
+    /** Frames (20 ms each) to keep muting after the last own-voice frame. */
+    private val holdFrames: Int = 15) {
     private var hold = 0
     @Volatile private var total = 0L
     @Volatile private var muted = 0L
@@ -618,7 +625,7 @@ internal class SelfVoiceGate(private val marginDb: Double) {
             for (i in start until end) { a += self[i] * self[i]; b += outside[i] * outside[i] }
             val level = 10 * kotlin.math.log10(a / (end - start))
             val ratio = 10 * kotlin.math.log10(a / b)
-            if (level > FLOOR_DB && ratio >= marginDb) hold = HANG
+            if (level > floorDb && ratio >= marginDb) hold = holdFrames + 1   // this frame, then the hold
             total++
             if (hold > 0) { hold--; muted++; out.fill(0f, start, end) }
             start = end
@@ -627,8 +634,6 @@ internal class SelfVoiceGate(private val marginDb: Double) {
     }
     private companion object {
         const val FRAME = 320        // 20 ms at 16 kHz
-        const val FLOOR_DB = -50.0   // below this channel 1 is silence, whatever the ratio
-        const val HANG = 15          // keep muting 300 ms after the last own-voice frame
     }
 }
 

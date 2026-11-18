@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -85,8 +85,14 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 저장되는 원본 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
-        VoiceField(model, "selfVoiceMarginDb", "실시간 듣기: 본인 목소리 판단 기준 dB (0이면 끔)", "6")
-        Note("채널 1(본인 마이크)이 채널 2(바깥 마이크)보다 이 값 이상 크면 본인이 말하는 것으로 보고, 그동안 채널 2를 무음 처리해 같은 말이 다른 사람 발화로 두 번 적히지 않게 합니다. 바깥 소리가 커도 두 채널이 함께 커지므로 비율로 판단합니다. 상대 말이 잘리면 값을 올리고(예: 9), 본인 말이 채널 2에 계속 남으면 내리세요(예: 4). 기록 화면에 무음 처리 비율이 표시됩니다.")
+        SectionLabel("실시간 듣기: 채널 2에서 본인 목소리 걸러내기")
+        Note("채널 1(본인 마이크)이 채널 2(바깥 마이크)보다 기준 이상 크면 본인이 말하는 것으로 보고, 그동안 채널 2를 무음 처리해 같은 말이 다른 사람 발화로 두 번 적히지 않게 합니다. 바깥 소리가 커도 두 채널이 함께 커지므로 비율로 판단합니다. 기록 화면에 무음 처리 비율이 표시되며, 다음 기록부터 적용됩니다.")
+        GateSlider(drafts, "selfVoiceMarginDb", "판단 기준 (채널 1이 더 커야 하는 정도)", 6f, 0f..20f, 19, { if (it < 0.5f) "끔" else "${it.toInt()} dB" },
+            "상대 말이 잘리면 올리고, 본인 말이 채널 2에 남으면 내리세요.")
+        GateSlider(drafts, "selfVoiceFloorDb", "무음 판정 수준 (채널 1이 이보다 작으면 판단 안 함)", -50f, -70f..-20f, 9, { "${it.toInt()} dBFS" },
+            "주변이 시끄러워 잡음에도 무음 처리되면 올리고(예: -40), 작게 말할 때 걸러지지 않으면 내리세요.")
+        GateSlider(drafts, "selfVoiceHoldMs", "말이 끝난 뒤 유지 시간", 300f, 0f..1000f, 9, { "${it.toInt()} ms" },
+            "본인 말 끝부분이 채널 2에 남으면 늘리고, 바로 이어지는 상대 말이 잘리면 줄이세요.")
         var autoMemory by remember(model.config) { mutableStateOf(model.config.optString("memoryAutoSummary", "true") != "false") }
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
         Note("종일 기록과 개별 기록은 원본 오디오를 자동 저장하고, 목소리 등록은 음성 특징만 저장합니다. 전사가 지연되면 오디오를 먼저 저장하고 복구 후 전사와 화자 분석을 보충합니다.")
@@ -119,6 +125,16 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             else { error = null; model.saveConfig((voiceKeys + listOf("modelUrl", "modelName", "modelKey")).associateWith { drafts[it].orEmpty() }) }
         }, modifier = Modifier.fillMaxWidth()) { Text("음성 설정 저장") }
     }
+}
+
+/** Slider bound to a numeric config draft; [steps] intermediate stops as in Material Slider. */
+@Composable
+private fun GateSlider(drafts: MutableMap<String, String>, key: String, label: String, default: Float,
+                       range: ClosedFloatingPointRange<Float>, steps: Int, format: (Float) -> String, hint: String) {
+    val value = drafts[key]?.toFloatOrNull()?.coerceIn(range) ?: default
+    Text("$label: ${format(value)}")
+    Slider(value, { drafts[key] = Math.round(it).toString() }, valueRange = range, steps = steps, modifier = Modifier.fillMaxWidth())
+    Note(hint)
 }
 
 @Composable
