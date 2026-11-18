@@ -36,6 +36,9 @@ internal class GlassesVoiceTransport(
      * request (type 11) after the answer does.
      */
     private var answering = false
+        set(value) { if (field != value) { field = value; answeringChanged(value) } }
+    /** Main thread; lets the service arm the level-based speech detector only while an answer is presented. */
+    var answeringChanged: (Boolean) -> Unit = {}
     /** Answer text being presented, so its own playback picked up by the mic does not count as an interruption. */
     private var answerText = ""
     fun start(next: ConversationSource) {
@@ -128,6 +131,13 @@ internal class GlassesVoiceTransport(
         interrupt(text)
         send(0x0d, 5, JSONObject().put("text", text).put("final", false))
     }
+    /** Sustained voice level on the mic while the answer is presented (no transcript needed): cut the answer now. */
+    fun voiceDuringAnswer() {
+        if (!answering || !nativeActive) return
+        answering = false
+        trace("대화 끊기: 답변 중 목소리 감지(소리 크기)")
+        send(0x0d, 9, JSONObject().put("rc", 1))
+    }
     /** Speech heard while the previous answer is still presented: switch the glasses to listening. */
     private fun interrupt(text: String) {
         if (!answering) return
@@ -168,5 +178,36 @@ internal class GlassesVoiceTransport(
         try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
             result.onFailure { failure("안경 음성 제어 전송 실패: ${it.message}") }
         } } catch (error: Exception) { failure("안경 음성 제어 전송 실패: ${error.message}") }
+    }
+}
+
+/**
+ * Level-based barge-in on the native mic (PCM16, 48 kHz mono): while armed, [minMs] of consecutive 10 ms
+ * frames at or above [thresholdDb] dBFS count as the wearer talking over the answer. Fires once per arming.
+ * The peak level seen while armed is kept so the log shows what the mic heard (e.g. the answer's own playback).
+ */
+internal class BargeInMeter {
+    @Volatile private var armed = false
+    @Volatile private var thresholdDb = -30.0
+    @Volatile private var minMs = 250
+    @Volatile var peakDb = -120.0; private set
+    private var loudMs = 0
+    fun arm(threshold: Double, minimum: Int) { thresholdDb = threshold; minMs = minimum; loudMs = 0; peakDb = -120.0; armed = true }
+    fun disarm() { armed = false }
+    /** Audio thread. Returns true once when sustained speech is detected while armed. */
+    fun feed(pcm: ShortArray): Boolean {
+        if (!armed || pcm.isEmpty()) return false
+        var start = 0
+        while (start < pcm.size) {
+            val end = minOf(start + 480, pcm.size)
+            var power = 1e-9
+            for (i in start until end) power += pcm[i].toDouble() * pcm[i]
+            val db = 10 * kotlin.math.log10(power / (end - start)) - 90.309   // 20*log10(32768)
+            if (db > peakDb) peakDb = db
+            loudMs = if (db >= thresholdDb) loudMs + 10 else 0
+            if (loudMs >= minMs) { armed = false; return true }
+            start = end
+        }
+        return false
     }
 }

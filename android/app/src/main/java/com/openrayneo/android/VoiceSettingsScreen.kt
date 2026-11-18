@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -85,6 +85,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 저장되는 원본 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
+        SectionLabel("Hey RayNeo: 답변 중 말로 끊기 감도")
+        Note("안경 설정의 \"대화 끊기\"가 켜져 있을 때, 답변 중 마이크 소리가 기준보다 큰 상태가 정해진 시간 이상 이어지면 바로 끊습니다(글자 인식을 기다리지 않음). 앱 로그의 \"대화 끊기 진단: 답변 중 마이크 최대 N dBFS\"로 답변 소리 크기를 보고 맞추세요.")
+        GateSlider(drafts, "bargeInLevelDb", "감지 기준 소리 크기", -30f, -60f..-10f, 49, { "${it.toInt()} dBFS" },
+            "말해도 안 끊기면 내리고(예: -38), 답변 소리나 잡음에 저절로 끊기면 올리세요. 진단 로그의 최대값보다 조금 높게 두면 됩니다.")
+        GateSlider(drafts, "bargeInMinMs", "기준 이상이 이어져야 하는 시간", 250f, 50f..1000f, 18, { "${it.toInt()} ms" },
+            "짧은 소리에 끊기면 늘리고, 끊기기까지 느리면 줄이세요.")
         SectionLabel("실시간 듣기: 채널 2에서 본인 목소리 걸러내기")
         Note("채널 1(본인 마이크)이 채널 2(바깥 마이크)보다 기준 이상 크면 본인이 말하는 것으로 보고, 그동안 채널 2를 무음 처리해 같은 말이 다른 사람 발화로 두 번 적히지 않게 합니다. 바깥 소리가 커도 두 채널이 함께 커지므로 비율로 판단합니다. 기록 화면에 무음 처리 비율이 표시되며, 다음 기록부터 적용됩니다.")
         GateSlider(drafts, "selfVoiceMarginDb", "판단 기준 (채널 1이 더 커야 하는 정도)", 6f, 0f..20f, 19, { if (it < 0.5f) "끔" else "${it.toInt()} dB" },

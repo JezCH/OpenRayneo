@@ -21,6 +21,7 @@ internal class BridgeService : Service() {
     lateinit var voiceTransport: GlassesVoiceTransport; private set
     lateinit var requests: GlassesRequests; private set
     lateinit var deviceSettings: GlassesDeviceSettings; private set
+    private val bargeMeter = BargeInMeter()
     lateinit var teleprompter: TeleprompterLibrary; private set
     lateinit var agentServer: LocalAgentServer; private set
     lateinit var recordSync: RecordSyncServer; private set
@@ -122,13 +123,21 @@ internal class BridgeService : Service() {
         conversations.partial = { text, wake -> main.post { voiceTransport.partial(text, wake) } }
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
         if (settings.read().optBoolean("recordSyncEnabled")) recordSync.start()
-        voiceAudio = PromptAudio { left, right -> conversations.accept(left, right) }
+        voiceAudio = PromptAudio { left, right ->
+            if (bargeMeter.feed(left)) main.post { voiceTransport.voiceDuringAnswer() }
+            conversations.accept(left, right)
+        }
         voiceTransport = GlassesVoiceTransport(connection::sendFrame, ::nativeWake, {
             voiceAudio.stop(); conversations.voiceRoundBoundary(); voiceAudio.start(1); conversations.nextRound()
         }, { ended ->
             if (ended) conversations.stop() else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
         }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
         // Only when the posted next turn will really start (auto answer on, native session running); otherwise capture closes as before.
+        voiceTransport.answeringChanged = { on ->
+            val cfg = settings.read()
+            if (on) bargeMeter.arm(cfg.optString("bargeInLevelDb").toDoubleOrNull() ?: -30.0, cfg.optString("bargeInMinMs").toIntOrNull() ?: 250)
+            else { bargeMeter.disarm(); onLog("대화 끊기 진단: 답변 중 마이크 최대 ${bargeMeter.peakDb.toInt()} dBFS (감지 기준 ${cfg.optString("bargeInLevelDb").ifBlank { "-30" }} dBFS)") }
+        }
         voiceTransport.bargeIn = { deviceSettings.state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode") == true &&
             settings.read().optBoolean("nativeAutoAnswer") && conversations.state.running && conversations.state.source == ConversationSource.NATIVE }
         translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
