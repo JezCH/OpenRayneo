@@ -37,6 +37,8 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             mkdir -p ~/.android
             echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            # Fail early if the JDK cannot read the key the Android Gradle Plugin will use.
+            keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
             echo "Using provided signing keystore"
           else
             echo "No keystore secret; a fresh debug key will sign this build"

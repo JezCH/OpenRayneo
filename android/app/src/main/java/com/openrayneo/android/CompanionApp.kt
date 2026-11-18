@@ -313,7 +313,7 @@ private fun GlassesScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ToolOutlinedButton(onClick = { navigate(1) }) { Text("내비게이션") }
                         ToolOutlinedButton(
-                            onClick = { model.attempt { model.service().openStandby() } }
+                            onClick = { model.attempt { model.service().startRealtimeHint() } }
                         ) {
                             Text("실시간 힌트")
                         }

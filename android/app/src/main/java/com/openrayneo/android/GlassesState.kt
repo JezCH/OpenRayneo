@@ -38,6 +38,8 @@ internal data class GlassesState(
     val audio: AudioState = AudioState(),
     val answer: AnswerContent? = null,
     val translation: TranslationView = TranslationView(),
+    /** Live caption on the realtime-hint standby page: last heard sentence and a status line. */
+    val standby: TranslationView = TranslationView(),
     val revision: Long = 0,
     val nextSession: Long = 1,
     val answerPermit: AnswerPermit? = null,
@@ -84,6 +86,7 @@ internal sealed interface GlassesEvent {
     data object OpenStandby : GlassesEvent
     data object StartTranslation : GlassesEvent
     data class TranslationText(val view: TranslationView) : GlassesEvent
+    data class StandbyText(val view: TranslationView) : GlassesEvent
     data object ClearDisplay : GlassesEvent
     data class ForgetAnswer(val source: AnswerSource) : GlassesEvent
     data object RetryAudio : GlassesEvent

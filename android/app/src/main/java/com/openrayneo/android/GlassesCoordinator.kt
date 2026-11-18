@@ -78,7 +78,11 @@ internal object GlassesCoordinator {
                 if (intent?.ref?.source == event.source) setIntent(returnIntent(intent.returnTo))
             }
             GlassesEvent.PauseDisplay -> setIntent(DisplayIntent.Idle)
-            GlassesEvent.OpenStandby -> setIntent(DisplayIntent.PromptStandby)
+            GlassesEvent.OpenStandby -> {
+                setIntent(DisplayIntent.PromptStandby)
+                state = state.copy(standby = TranslationView())
+            }
+            is GlassesEvent.StandbyText -> state = state.copy(standby = event.view)
             GlassesEvent.StartTranslation -> {
                 setIntent(DisplayIntent.Translation)
                 state = state.copy(translation = TranslationView())
@@ -202,7 +206,8 @@ internal object GlassesCoordinator {
         return when (val intent = state.intent) {
             DisplayIntent.Idle -> null
             DisplayIntent.BlankPrompt -> PageMode.PROMPT to PageContent("blank", "　", "　")
-            DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby", "OpenRayneo", "실시간 힌트 준비됨")
+            DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby",
+                state.standby.source.ifBlank { "OpenRayneo" }, state.standby.target.ifBlank { "실시간 힌트 준비됨" })
             DisplayIntent.Translation -> PageMode.PROMPT to PageContent("translation",
                 state.translation.source.ifBlank { "실시간 번역 · 한국어 ↔ 영어" }, state.translation.target.ifBlank { "말하면 번역됩니다" })
             DisplayIntent.Navigation -> state.navigation.frame?.takeIf { state.navigation.enabled }?.let {

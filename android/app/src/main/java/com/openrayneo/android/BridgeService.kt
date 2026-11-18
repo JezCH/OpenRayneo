@@ -111,6 +111,9 @@ internal class BridgeService : Service() {
         conversations = ConversationController(this, settings, ::notifyUI, ::conversationCapture, ::submitVoiceRequest,
             { segment, source ->
                 if (source == ConversationSource.NATIVE) segment.roundId?.let { voiceTransport.asr(segment.text, it) }
+                // Realtime hint: show what was just heard so the wearer knows the glasses are listening.
+                if (source == ConversationSource.REALTIME && conversationOwnsDisplay)
+                    dispatch(GlassesEvent.StandbyText(TranslationView(LiveTranslator.clip(segment.text, 80), "듣는 중 · 답이 필요하면 여기에 표시됩니다")))
             }, ::resumeBackground)
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
         if (settings.read().optBoolean("recordSyncEnabled")) recordSync.start()
@@ -405,6 +408,16 @@ internal class BridgeService : Service() {
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() = dispatch(GlassesEvent.OpenStandby)
+    /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
+    fun startRealtimeHint() {
+        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) {
+            conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby); return
+        }
+        check(!conversations.state.running) { "다른 기록(${conversations.state.source.title})이 실행 중입니다. 기록 탭에서 먼저 중지하세요" }
+        translator.stop()
+        startConversation(ConversationMode.DAILY, ConversationSource.REALTIME)
+    }
     fun retryAudio() {
         check(state.link.phase == LinkPhase.FULL && state.session?.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)) {
             "먼저 내비게이션 또는 실시간 힌트를 시작하고 안경의 확인을 기다리세요"
