@@ -28,8 +28,8 @@ internal class ConversationASR(config: JSONObject,
     private val seen = mutableSetOf<String>()
 
     @Synchronized fun start() {
-        require(key.isNotEmpty()) { "먼저 Bailian ASR API Key" }
-        require(address.startsWith("wss://")) { "ASR 서비스 주소는 다음을 사용해야 합니다: WSS" }
+        require(key.isNotEmpty()) { "먼저 Bailian ASR API Key를 입력하세요" }
+        require(address.startsWith("wss://")) { "ASR 서비스 주소는 wss://로 시작해야 합니다" }
         socket = http.newWebSocket(Request.Builder().url(address).header("Authorization", "Bearer $key").build(), this)
     }
     @Synchronized fun canAcceptAudio() = !ended && !finishing && pending.size + (socket?.queueSize() ?: 0) < 128000
