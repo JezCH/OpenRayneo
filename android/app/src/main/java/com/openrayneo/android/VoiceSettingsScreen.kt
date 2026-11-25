@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -46,13 +46,19 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         TextButton(onClick = { drafts["answerLanguage"] = KoreanLanguage.DEFAULT_LOCALE; drafts["phoneSpeechLanguage"] = KoreanLanguage.DEFAULT_LOCALE }) { Text("기본 한국어로 복원") }
         SectionLabel("한국어 음성 재생")
         Note("AI 화면에서 직접 재생할 때만 사용합니다. 기본은 무음 HUD이며 한국어 오프라인 음성이 필요합니다.")
+        val output = drafts["ttsOutput"].orEmpty().let { if (it == "media") "media" else "headphones" }
+        Text("음성 재생 출력 경로")
+        listOf("headphones" to "이어폰 경로 확인 후 재생 (기본)", "media" to "휴대폰 미디어 출력 허용").forEach { (code, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(output == code, { drafts["ttsOutput"] = code }); Text(label) }
+        }
+        Note("이어폰 기본 모드는 미디어 경로를 확인하고 변경 시 재생을 중지합니다. Bluetooth 스피커도 이어폰과 같은 A2DP 유형일 수 있고 경로 전환 순간의 소리를 완전히 차단한다고 보장할 수 없습니다. 무음이 필수인 장소에서는 HUD만 사용하세요.")
         val rate = drafts["ttsRate"]?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.5f } ?: 1f
         val pitch = drafts["ttsPitch"]?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.25f } ?: 1f
         Text("말하기 속도 · " + String.format(java.util.Locale.KOREA, "%.2f배", rate))
         Slider(value = rate, onValueChange = { drafts["ttsRate"] = it.toString() }, valueRange = 0.75f..1.5f, steps = 14)
         Text("목소리 높이 · " + String.format(java.util.Locale.KOREA, "%.2f배", pitch))
         Slider(value = pitch, onValueChange = { drafts["ttsPitch"] = it.toString() }, valueRange = 0.75f..1.25f, steps = 9)
-        TextButton(onClick = { drafts["ttsRate"] = "1.0"; drafts["ttsPitch"] = "1.0" }) { Text("음성 기본값 복원") }
+        TextButton(onClick = { drafts["ttsRate"] = "1.0"; drafts["ttsPitch"] = "1.0"; drafts["ttsOutput"] = "headphones" }) { Text("음성 기본값 복원") }
         Note("저장 후 다음 재생부터 적용됩니다. 실제 출력은 휴대폰의 미디어 연결에 따릅니다.")
         SectionLabel("안경 음성 인식 엔진 (ASR)")
         var engine by remember(model.config) { mutableStateOf(SpeechRounds.engine(model.config)) }
