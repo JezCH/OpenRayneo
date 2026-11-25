@@ -128,6 +128,7 @@ internal class ConversationRepository(context: Context) {
             .put("people", JSONArray(page.filter { !it.second.has("segments") }.map { it.second }))
             .put("acceptedDerivedIds", JSONArray(accepted))
     }
+    @Synchronized fun referenceSnapshot(): List<ConversationRecord> = records
     @Synchronized fun query(from: Long = Long.MIN_VALUE, to: Long = Long.MAX_VALUE, id: String = "", text: String = ""): JSONArray =
         JSONArray(records.filter { row -> row.createdAt < to && (row.endedAt ?: if (row.audioPending) System.currentTimeMillis() else row.segments.maxOfOrNull { row.endTimeOf(it) } ?: row.createdAt) > from &&
             (id.isBlank() || row.id == id) && (text.isBlank() || row.title.contains(text, true) || row.segments.any { it.text.contains(text, true) } ||
