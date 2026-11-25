@@ -276,8 +276,9 @@ internal fun SettingsScreen(
         ) {
             actions.appSettings()
         }
+        SettingsRow("휴대폰 알림", "앱별 안경 알림 전달 설정", Icons.Outlined.NotificationsNone) { open("phone-notifications") }
         SettingsRow(
-            "Amap 알림 접근 권한",
+            "알림 접근 권한",
             if (model.notificationAllowed) "허용됨 · ${model.state.notificationReadStatus}"
             else "내비게이션 추종 시 필요",
             Icons.Outlined.NotificationsNone,

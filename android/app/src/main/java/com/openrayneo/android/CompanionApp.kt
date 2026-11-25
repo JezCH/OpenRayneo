@@ -76,6 +76,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "navigation" -> "길 안내"
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
+                                "phone-notifications" -> "휴대폰 알림"
                                 else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                             }
                         )
@@ -164,6 +165,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
+                "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
                     { openRoute("device-settings") }, { openRoute(it) })
                 else ->
