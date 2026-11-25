@@ -6,6 +6,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
@@ -14,6 +15,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
@@ -48,6 +50,7 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
             # Fail early if the JDK cannot read the key the Android Gradle Plugin will use.
             keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
+            echo "OPENRAYNEO_FIXED_SIGNING=true" >> "$GITHUB_ENV"
             echo "Using provided signing keystore"
           else
             echo "::warning::No fixed signing key configured; this APK may not update a previously installed build."
@@ -73,18 +76,35 @@ jobs:
 
       - name: Verify APK signature
         run: |
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
+          set -o pipefail
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/openrayneo-badging.txt"
+
+      - name: Check DSH plugin policies
+        working-directory: integrations/dsh-go
+        run: node --test tests/ambient-model.test.mjs tests/hint-preview.test.mjs
+
+      - name: Pack DSH Go plugin
+        working-directory: integrations/dsh-go
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Assemble verified installation bundle
+        run: |
+          python3 scripts/build-install-bundle.py \
+            --apk android/app/build/outputs/apk/release/app-release.apk \
+            --plugin "$RUNNER_TEMP"/openrayneo-dsh-*.tgz \
+            --cert-report "$RUNNER_TEMP/openrayneo-certs.txt" \
+            --badging "$RUNNER_TEMP/openrayneo-badging.txt" \
+            --commit "$GITHUB_SHA" --run "$GITHUB_RUN_NUMBER" \
+            --fixed-signing-key "${OPENRAYNEO_FIXED_SIGNING:-false}" \
+            --out "$RUNNER_TEMP/openrayneo-install"
 
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           name: openrayneo-android-${{ github.sha }}
-          path: android/app/build/outputs/apk/release/*.apk
+          path: ${{ runner.temp }}/openrayneo-install/
           if-no-files-found: error
-
-      - name: Pack DSH Go plugin
-        working-directory: integrations/dsh-go
-        run: npm pack --pack-destination "$RUNNER_TEMP"
 
       # Optional: upload APK and plugin to a Nextcloud "file drop" (upload-only) public share.
       # Store the share link (https://host/s/TOKEN) as repository secret NEXTCLOUD_DROP_URL.
