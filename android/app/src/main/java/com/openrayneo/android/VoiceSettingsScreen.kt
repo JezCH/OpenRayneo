@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -44,6 +44,16 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         }
         Note("기본은 한국어입니다. 일반 AI 답변과 한국어 호출 질문, PC 작업 응답에 적용할 언어를 선택합니다. 사용자가 명시한 번역·다른 언어 요청은 우선합니다. 기록 원문 및 별도 요약 설정은 변경하지 않습니다.")
         TextButton(onClick = { drafts["answerLanguage"] = KoreanLanguage.DEFAULT_LOCALE; drafts["phoneSpeechLanguage"] = KoreanLanguage.DEFAULT_LOCALE }) { Text("기본 한국어로 복원") }
+        SectionLabel("한국어 음성 재생")
+        Note("AI 화면에서 직접 재생할 때만 사용합니다. 기본은 무음 HUD이며 한국어 오프라인 음성이 필요합니다.")
+        val rate = drafts["ttsRate"]?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.5f } ?: 1f
+        val pitch = drafts["ttsPitch"]?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.25f } ?: 1f
+        Text("말하기 속도 · " + String.format(java.util.Locale.KOREA, "%.2f배", rate))
+        Slider(value = rate, onValueChange = { drafts["ttsRate"] = it.toString() }, valueRange = 0.75f..1.5f, steps = 14)
+        Text("목소리 높이 · " + String.format(java.util.Locale.KOREA, "%.2f배", pitch))
+        Slider(value = pitch, onValueChange = { drafts["ttsPitch"] = it.toString() }, valueRange = 0.75f..1.25f, steps = 9)
+        TextButton(onClick = { drafts["ttsRate"] = "1.0"; drafts["ttsPitch"] = "1.0" }) { Text("음성 기본값 복원") }
+        Note("저장 후 다음 재생부터 적용됩니다. 실제 출력은 휴대폰의 미디어 연결에 따릅니다.")
         SectionLabel("안경 음성 인식 엔진 (ASR)")
         var engine by remember(model.config) { mutableStateOf(SpeechRounds.engine(model.config)) }
         Column {
