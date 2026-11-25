@@ -13,7 +13,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private val restored: (String, String, JSONObject) -> Unit, private val progress: (String) -> Unit) {
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
-        var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L) {
+        var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
+        val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate()) {
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
@@ -40,12 +41,13 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L }.map { it.json() }))
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
-               hintLifetimeMs: Long = 0L, complete: (Result<String>) -> Unit): String {
+               hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null, complete: (Result<String>) -> Unit): String {
         require(hintLifetimeMs in 0L..ProactiveHintPolicy.MAX_AGE_MS && (hintLifetimeMs == 0L || kind == "hint"))
+        require(preview == null || (hintLifetimeMs > 0L && input?.optBoolean("streamHint") == true))
         val id = UUID.randomUUID().toString()
         if (input?.optString("recordId")?.isNotBlank() == true) input.put("derivedId", id)
         val request = Request(id, text, context, complete, kind, input,
-            hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L)
+            hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview)
         synchronized(lock) {
             expireHints()
             if (request.hintDeadline > 0L) {
@@ -130,6 +132,20 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         expireHints()
         val request = checkNotNull(requests[id]) { "DSH 요청이 만료됨" }
         if (request.hintDeadline > 0L && request.state == "cancelled") return status(id)
+        if (body.optString("state") == "partial") {
+            if (request.state == "running" && request.hintDeadline > 0L && request.preview != null) {
+                request.previewGate.accept(body.optString("answer"), SystemClock.elapsedRealtime())?.let { text ->
+                    main.post {
+                        val valid = synchronized(lock) {
+                            requests[id] === request && request.state == "running" &&
+                                ProactiveHintPolicy.remaining(SystemClock.elapsedRealtime(), request.hintDeadline) > 0L
+                        }
+                        if (valid) request.preview.invoke(text)
+                    }
+                }
+            }
+            return status(id) // Preview is never stored or a terminal update.
+        }
         if (request.state == "completed" && body.optString("state") == "completed") return status(id)
         check(request.state == "running") { "DSH 요청이 종료되었거나 취소됨" }
         if (body.has("sessionId")) request.session = body.getString("sessionId")
