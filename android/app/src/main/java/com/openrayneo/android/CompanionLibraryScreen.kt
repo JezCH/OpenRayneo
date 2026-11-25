@@ -79,10 +79,18 @@ internal fun TeleprompterScreen(model: AppModel) {
     var title by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
     var speed by remember { mutableIntStateOf(2) }
+    var smartFollow by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("프롬프터 원고함", style = MaterialTheme.typography.headlineSmall)
         Note("원고는 휴대폰에 저장되며 공식 클라우드를 사용하지 않습니다. 전송 시 현재 표시와 음성 수신을 중지한 뒤 안경으로 전송합니다.")
         Note(state.notice)
+        if (state.smartFollow) {
+            Note(state.followStatus)
+            if (state.followTotal > 0) {
+                LinearProgressIndicator(progress = { state.followOffset.toFloat().div(state.followTotal).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                Note("원고 위치 전송 ${state.followOffset} / ${state.followTotal} 바이트 (안경 표시 미확인)")
+            }
+        }
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.active != null) Row {
             TextButton(onClick = { model.attempt { model.service().teleprompter.control(if (state.paused) "resume" else "pause") {} } }, enabled = !state.busy) { Text(if (state.paused) "계속" else "일시정지") }
@@ -93,11 +101,19 @@ internal fun TeleprompterScreen(model: AppModel) {
         }
         OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목") })
         OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("본문") }, minLines = 6, maxLines = 16)
-        Text("스크롤 속도 $speed")
-        Slider(speed.toFloat(), { speed = it.toInt() }, valueRange = 1f..10f, steps = 8)
+        Row {
+            Checkbox(smartFollow, { smartFollow = it }, enabled = !state.busy && state.active == null)
+            Text("Smart Follow · 음성 따라 읽기 (실험적)")
+        }
+        if (smartFollow) {
+            Note("설치된 기기 내장 ASR을 선택해야 합니다. 원고와 음성은 외부 AI로 보내지 않으며 음성 기록을 저장하지 않습니다. 다른 화면과 녹음 기능을 먼저 종료하세요. 읽은 내용에 맞춰 원고 위치를 전송합니다. 실패 또는 오디오 중단 시 멈추며 일시정지 후 재개할 수 있습니다. 한국어 전사 정확도와 안경 줄바꿈은 실기기 확인이 필요합니다.")
+        } else {
+            Text("스크롤 속도 $speed")
+            Slider(speed.toFloat(), { speed = it.toInt() }, valueRange = 1f..10f, steps = 8)
+        }
         ToolOutlinedButton(onClick = { model.attempt { selected = model.service().teleprompter.save(title.trim(), text, selected ?: java.util.UUID.randomUUID().toString()); model.notice = "원고가 휴대폰에 저장됨" } }, enabled = title.isNotBlank() && text.isNotBlank() && !state.busy) { Text("원고 저장") }
-        ToolButton(onClick = { model.attempt { model.service().startTeleprompter(title.trim(), text, speed, selected) {} } },
-            enabled = title.isNotBlank() && text.isNotBlank() && !state.busy && model.state.glasses.link.phase == LinkPhase.FULL) { Text("저장 후 안경에서 재생") }
+        ToolButton(onClick = { model.attempt { model.service().startTeleprompter(title.trim(), text, speed, selected, smartFollow) {} } },
+            enabled = title.isNotBlank() && text.isNotBlank() && !state.busy && !state.smartFollow && (!smartFollow || state.active == null) && model.state.glasses.link.phase == LinkPhase.FULL) { Text(if (smartFollow) "저장 후 음성 따라 읽기" else "저장 후 안경에서 재생") }
         TextButton(onClick = { selected = null; title = ""; text = "" }) { Text("새 원고") }
     }
 }
