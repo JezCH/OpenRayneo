@@ -703,7 +703,7 @@ internal class BridgeService : Service() {
             input.put("streamHint", true).put("voiceContext", payload)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
             if (!isRealtimeStreamCurrent(input)) return true
-            realtimeStreamId = agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+            realtimeStreamId = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime, preview = { text ->
                     if (isRealtimeStreamCurrent(input)) {
                         realtimePreviewRequest = input.optLong("realtimeRequest")
@@ -726,14 +726,14 @@ internal class BridgeService : Service() {
                 state.link.phase != LinkPhase.FULL || voiceTransport.source != ConversationSource.ALWAYS_ON) return true
             input.put("voiceContext", payload).put("focusGeneration", focusPolicy.generation).put("hintSequence", ++nextAnswer)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
-            agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+            agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime) { result ->
                 result.onSuccess { answer -> deliverExternalVoice(request.text, answer, input) }
             }
             return true
         }
         // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
-        agent.harness.submit(request.text, request.context + limit, input = input) { result ->
+        agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(request.context + limit, settings.read().optString("answerLanguage")), input = input) { result ->
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
         return true
@@ -855,11 +855,12 @@ internal class BridgeService : Service() {
         cancelAlwaysOnRecovery()
         if (speechOutput.speaking) speechOutput.stop()
         if (wake) {
-            wakeResult = "2분간 호출 대기 · 자비스 또는 레이네오야"
+            val options = KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds"))
+            wakeResult = "호출 대기 · ${options.seconds}초 · " + options.phrases.joinToString(" / ")
             translator.startWake(config) { question -> handleKoreanWake(question, allowAI) }
         } else translator.start(config, captions = true)
         dispatch(GlassesEvent.StartCaption)
-        if (wake && translator.wakeActive) dispatch(GlassesEvent.TranslationText(TranslationView("한국어 호출 대기", "자비스, 질문하세요")))
+        if (wake && translator.wakeActive) dispatch(GlassesEvent.TranslationText(TranslationView("한국어 호출 대기", KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds")).phrases.first() + ", 질문하세요")))
     }
     fun stopCaption() { if (translator.active && translator.captionOnly) stopTranslation() }
     fun cancelKoreanWake() {
@@ -900,8 +901,8 @@ internal class BridgeService : Service() {
         val token = ++wakeGeneration
         wakeResult = "질문 전용 AI 응답 대기 중"; notifyUI()
         try {
-            wakeRequest = agent.harness.submit(question, "한국어로 간결하게 답변하세요. 도구를 호출하거나 작업을 실행하지 말고, 질문에만 답변하세요. 안경 표시를 위해 100자 이내로 답변하세요.",
-                kind = "hint", input = JSONObject().put("purpose", "korean_wake"), hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
+            wakeRequest = agent.harness.submit(question, KoreanLanguage.withAnswerPolicy("간결하게 답변하세요. 도구를 호출하거나 작업을 실행하지 말고, 질문에만 답변하세요. 안경 표시를 위해 100자 이내로 답변하세요.", settings.read().optString("answerLanguage")),
+                kind = "hint", input = JSONObject().put("purpose", "korean_wake").put("question", question), hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
                 if (destroyed || token != wakeGeneration) return@submit
                 wakeRequest = null
                 wakeResult = result.getOrNull()?.takeIf { it.isNotBlank() } ?: "AI 응답 실패 또는 만료"
@@ -961,6 +962,7 @@ internal class BridgeService : Service() {
     fun submitAnswer(source: AnswerSource, text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = false) {
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
+        check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }
         }
