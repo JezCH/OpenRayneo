@@ -856,7 +856,7 @@ internal class BridgeService : Service() {
         if (speechOutput.speaking) speechOutput.stop()
         if (wake) {
             val options = KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds"))
-            wakeResult = "호출 대기 · ${options.seconds}초 · " + options.phrases.joinToString(" / ")
+            wakeResult = "호출 대기 · ${options.listenSeconds}초 · " + options.phrases.joinToString(" / ")
             translator.startWake(config) { question -> handleKoreanWake(question, allowAI) }
         } else translator.start(config, captions = true)
         dispatch(GlassesEvent.StartCaption)
