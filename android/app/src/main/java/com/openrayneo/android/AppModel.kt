@@ -217,7 +217,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 translationActive = s.translator.active,
                 wakeActive = s.translator.wakeActive,
                 wakePending = s.wakePending,
-                wakeResult = s.wakeResult,
+                wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("2분간")) s.translator.status else s.wakeResult,
                 captionActive = s.translator.active && s.translator.captionOnly && !s.translator.wakeActive,
                 captionStatus = if (s.translator.captionOnly) s.translator.status else "실시간 자막 꺼짐",
                 translationStatus = if (s.translator.captionOnly) "실시간 번역 꺼짐" else s.translator.status,
