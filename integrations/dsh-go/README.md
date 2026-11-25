@@ -35,6 +35,7 @@ Read the actual tool definitions before use; they define the available glasses a
 `record_annotate` attaches `analysis`, `note` or `tags` using the queried `sourceRevision`.
 Use a stable annotation `id` for retries; source corrections mark derived results stale.
 Todo/calendar mutations require stable `request_id` values and readback after uncertain outcomes.
+External `/v1/tools/call` writes require approval of their exact arguments in the OpenRayneo AI screen within 40 seconds. Read-only tool calls retain the existing authorization model. The existing `state=running` polling contract is preserved; `phase=awaiting_approval` distinguishes review from execution. Reject/expiry never grants approval. The plugin's overall tool deadline still applies; after interruption, inspect the actual device state rather than retrying a write. A completed tool response, queued notification, or cancellation is not a guarantee of physical device state. The separate record synchronization API contract is unchanged.
 Raw audio, voice embeddings, model API keys and vendor-cloud credentials are not needed by this plugin.
 
 ## Voice delivery and conversation reuse

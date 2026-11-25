@@ -26,6 +26,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private val harness: () -> DshRelay,
     private val recordAPI: (String, String, JSONObject) -> JSONObject?) {
     data class Review(val id: String, val name: String, val arguments: String, val expiresAt: Long)
+    data class Receipt(val id: String, val name: String, val status: String, val detail: String, val createdAt: Long)
     private data class Task(val name: String, val args: JSONObject, val approval: Boolean,
         val id: String = UUID.randomUUID().toString(), val createdAt: Long = System.currentTimeMillis(),
         val startedAt: Long = SystemClock.elapsedRealtime(),
@@ -39,6 +40,23 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         SystemClock.elapsedRealtime() - it.startedAt < reviewMs }.map {
         Review(it.id, it.name, it.args.toString(2), it.createdAt + reviewMs)
     }
+    // Recent receipts contain only the operation name and status, not private arguments/results.
+    val receipts: List<Receipt> get() = tasks.values.filter { it.approval && it.phase != "awaiting_approval" }
+        .takeLast(8).asReversed().map { task ->
+            val result = task.result
+            val status = when {
+                task.phase == "executing" -> "실행 중"
+                task.phase == "not_executed" -> "미실행"
+                task.phase == "outcome_unknown" -> "결과 미확인"
+                result?.optBoolean("duplicate") == true -> "중복 요청 · 재조회 필요"
+                result?.optBoolean("readBack") == true -> "기기 재조회 확인"
+                result?.optBoolean("persisted") == true -> "로컬 저장 확인"
+                result?.has("readBack") == true -> "기기 결과 미확인"
+                result?.has("queued") == true -> if (result.optBoolean("queued")) "전송 대기열 등록 · 표시 미확인" else "전송 안 됨"
+                else -> "도구 응답 반환 · 결과 별도 확인"
+            }
+            Receipt(task.id, task.name, status, if (task.phase == "outcome_unknown") "이미 실행된 변경이 있을 수 있습니다. 재조회하세요." else "", task.createdAt)
+        }
     private fun end(task: Task, reason: String) {
         if (task.state != "running") return
         val executing = task.phase == "executing"
@@ -46,6 +64,11 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         task.phase = if (executing) "outcome_unknown" else "not_executed"
         task.error = reason + if (executing) " · 이미 실행된 변경은 취소되지 않을 수 있습니다. 재조회하세요." else " · 실행하지 않았습니다."
         changed()
+    }
+    fun cancelReviewExecution(id: String) {
+        val task = checkNotNull(tasks[id]) { "요청이 없거나 만료되었습니다" }
+        check(task.approval) { "외부 승인 작업이 아닙니다" }
+        end(task, "사용자가 남은 실행을 취소함")
     }
     fun cancelOutstanding(reason: String) {
         tasks.values.toList().forEach { end(it, reason) }
@@ -204,8 +227,14 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     }
     private fun mainResult(action: () -> JSONObject): JSONObject {
         val latch = CountDownLatch(1); var result: Result<JSONObject>? = null
-        main.post { result = runCatching(action); latch.countDown() }
-        check(latch.await(5, TimeUnit.SECONDS)) { "메인 서비스가 응답하지 않음" }; return checkNotNull(result).getOrThrow()
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        main.post {
+            result = runCatching {
+                check(SystemClock.elapsedRealtime() < deadline) { "HTTP 요청 대기 시간 만료 · 실행하지 않음" }
+                action()
+            }; latch.countDown()
+        }
+        check(latch.await(5, TimeUnit.SECONDS)) { "메인 서비스 응답 시간 초과 · 실행 결과 미확인" }; return checkNotNull(result).getOrThrow()
     }
     private fun taskJSON(task: Task) = JSONObject().put("id", task.id).put("state", task.state)
         .put("phase", task.phase).put("result", task.result).put("error", task.error)

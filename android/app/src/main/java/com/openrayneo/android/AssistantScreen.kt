@@ -176,6 +176,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             s.agentReviews.forEach { review ->
                 item(key = "agent-review:${review.id}") { AgentWriteReviewCard(model, review) }
             }
+            if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
+                AgentReceiptCard(model, s.agentReceipts)
+            }
             if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
             if (configured) item(key = "hud-remote") { HudRemoteCard(model, source) }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
@@ -457,6 +460,24 @@ private fun ConversationTurn(question: String, answer: String) {
                     }
                 }
             }
+    }
+}
+
+@Composable
+private fun AgentReceiptCard(model: AppModel, receipts: List<LocalAgentServer.Receipt>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    ContentCard {
+        TextButton(onClick = { expanded = !expanded }) { Text("최근 외부 작업 결과 (${receipts.size})") }
+        if (expanded) {
+            Note("현재 로컬 Agent 세션의 최근 상태입니다. 도구 응답과 실제 안경 상태를 구별합니다. 영구 작업 기록은 아닙니다.")
+            receipts.forEach { receipt ->
+                Text(receipt.name + " · " + receipt.status, fontWeight = FontWeight.Medium)
+                if (receipt.detail.isNotBlank()) Note(receipt.detail)
+                if (receipt.status == "실행 중") TextButton(onClick = {
+                    model.attempt { model.service().agentServer.cancelReviewExecution(receipt.id) }
+                }) { Text("남은 실행 취소") }
+            }
+        } else Note(receipts.first().name + " · " + receipts.first().status)
     }
 }
 
