@@ -15,7 +15,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
         val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate()) {
-        val userReview: Boolean get() = kind == "hint" && input?.optString("purpose") == "record_followup"
+        val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe")
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
@@ -57,9 +57,9 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview)
         synchronized(lock) {
             expireHints()
-            if (request.hintDeadline > 0L && !request.userReview) {
-                // Ambient updates may coalesce, but must never replace an explicit record review.
-                requests.values.filter { it.hintDeadline > 0L && !it.userReview && it.state == "queued" }.forEach { cancelHint(it) }
+            if (request.hintDeadline > 0L && !request.explicitHint) {
+                // Ambient updates may coalesce, but must never replace an explicit review or diagnostic.
+                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && it.state == "queued" }.forEach { cancelHint(it) }
             }
             requests[request.id] = request; persist(); lock.notifyAll()
         }
@@ -108,7 +108,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             expireHints()
             // Explicit/durable tasks take precedence over suggestions.
             val request = requests.values.firstOrNull { it.state == "queued" && it.hintDeadline == 0L }
-                ?: requests.values.firstOrNull { it.state == "queued" && it.userReview }
+                ?: requests.values.firstOrNull { it.state == "queued" && it.explicitHint }
                 ?: requests.values.firstOrNull { it.state == "queued" }
                 ?: return JSONObject().put("request", JSONObject.NULL)
             val hintRemaining = if (request.hintDeadline > 0L)

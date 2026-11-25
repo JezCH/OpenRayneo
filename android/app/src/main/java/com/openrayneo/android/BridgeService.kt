@@ -305,11 +305,13 @@ internal class BridgeService : Service() {
     }
 
     fun scan() {
+        resetAgentProbe()
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
         resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
         updateNotification(); notifyUI()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
+        resetAgentProbe()
         check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
         resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
@@ -319,6 +321,7 @@ internal class BridgeService : Service() {
         }
     }
     fun disconnect() {
+        resetAgentProbe()
         resetFocus(); localClock.clear()
         supervisor.cancelRetries()
         stopConversation()
@@ -348,7 +351,7 @@ internal class BridgeService : Service() {
             }
             agentServer.start()
             startForegroundService(Intent(this, BridgeService::class.java))
-        } else agentServer.stop()
+        } else { resetAgentProbe(); agentServer.stop() }
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, smartFollow: Boolean = false, completion: (Result<JSONObject>) -> Unit) {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -974,6 +977,60 @@ internal class BridgeService : Service() {
             else -> null
         }
     }
+    private val agentProbe = AgentProbePolicy.Probe()
+    val agentProbeState get() = agentProbe.state
+    private var agentProbeToken: String? = null
+    private var agentProbeRequest: String? = null
+    fun startAgentProbe() {
+        check(!destroyed && agentServer.state.enabled && !agent.running && !codex.running &&
+            !conversations.state.running && !translator.active && !teleprompter.state.smartFollow) {
+            "로컬 Agent를 연결하고 현재 작업 및 음성 기능을 종료하세요"
+        }
+        val token = java.util.UUID.randomUUID().toString()
+        val code = "OR-" + token.take(8).uppercase(java.util.Locale.ROOT)
+        agentProbe.begin(code, SystemClock.elapsedRealtime())
+        agentProbeToken = token
+        notifyUI()
+        try {
+            agentProbeRequest = agent.harness.submit("AI 연결 진단", AgentProbePolicy.CONTEXT,
+                kind = "hint", input = JSONObject().put("purpose", "agent_probe").put("code", code),
+                hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
+                if (destroyed || agentProbeToken != token) return@submit
+                agentProbeToken = null; agentProbeRequest = null
+                agentProbe.finish(code, result.getOrNull(), SystemClock.elapsedRealtime())
+                notifyUI()
+            }
+        } catch (error: Exception) {
+            agentProbeToken = null; agentProbeRequest = null
+            agentProbe.finish(code, null, SystemClock.elapsedRealtime())
+            notifyUI()
+            throw error
+        }
+    }
+    fun cancelAgentProbe() {
+        val request = agentProbeRequest
+        agentProbeToken = null; agentProbeRequest = null
+        if (agentProbe.cancel()) {
+            request?.let(agent.harness::cancelRequest)
+            notifyUI()
+        }
+    }
+    private fun resetAgentProbe() {
+        cancelAgentProbe()
+        agentProbe.reset()
+    }
+    fun sendAgentProbeHud() {
+        val probe = agentProbe.state
+        check(probe.phase == AgentProbePolicy.Phase.PASSED && probe.hud == AgentProbePolicy.Hud.NOT_SENT)
+        check(state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
+            !voiceTransport.nativeActive && !teleprompter.state.smartFollow && !translator.active) {
+            "다른 화면과 음성 기능을 먼저 종료하세요"
+        }
+        check(sendCompanionNotification("AI 연결 진단", probe.code)) { "안경 연결과 집중 모드/알림 설정을 확인하세요" }
+        agentProbe.hudRequested(); notifyUI()
+    }
+    fun confirmAgentProbeHud() { agentProbe.hudConfirmed(); notifyUI() }
+
     private var followUpExtraction: String? = null
     fun extractFollowUps(recordId: String, revision: Int, page: Int, completion: (Result<Int>) -> Unit) {
         check(!destroyed && !conversations.state.running && followUpExtraction == null) { "현재 기록 또는 후보 추출을 먼저 마치세요" }
@@ -1118,6 +1175,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
+        agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()

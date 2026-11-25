@@ -164,6 +164,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Note(if (mobile) "이렇게 물어보세요: 지금 안경의 내비게이션 추종 상태는 어때?" else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
                     }
                 }
+            if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
             if (question.isNotBlank())
                 item {
@@ -288,6 +289,56 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             }
         }
     }
+}
+
+@Composable
+private fun AgentProbeCard(model: AppModel) {
+    val s = model.state
+    val p = s.agentProbe
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var consent by remember { mutableStateOf(false) }
+    ContentCard {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "AI 연결 진단 접기" else "AI 연결 및 안경 표시 진단")
+        }
+        if (expanded) {
+            Note("기본 DSH 모델에 무작위 코드만 보내 응답을 확인합니다. 원문·개인화 정보·업무 자료를 첨부하거나 도구를 실행하지 않습니다. 모델 이용량 또는 요금이 발생할 수 있습니다. 이 시험은 실제 일반 Agent 업무 실행이나 제조사 AI 이용권을 검증하지 않습니다.")
+            Note(when (p.phase) {
+                AgentProbePolicy.Phase.IDLE -> "실행 전"
+                AgentProbePolicy.Phase.WAITING -> "응답 대기 (최대 60초, 대기열 포함)"
+                AgentProbePolicy.Phase.PASSED -> "테스트 코드 일치 · 휴대폰 응답 수신 확인"
+                AgentProbePolicy.Phase.MISMATCH -> "응답은 도착했지만 코드 불일치"
+                AgentProbePolicy.Phase.FAILED -> "응답 실패 또는 만료 · DSH 연결과 모델 설정 확인"
+                AgentProbePolicy.Phase.CANCELLED -> "취소됨"
+            })
+            if (p.elapsedMs != null) Note("전체 대기·응답 시간: ${p.elapsedMs}ms")
+            if (p.code.isNotBlank()) Note("테스트 코드: ${p.code}")
+            if (p.phase == AgentProbePolicy.Phase.WAITING) {
+                TextButton(onClick = { model.attempt { model.service().cancelAgentProbe() } }) { Text("진단 취소") }
+            } else {
+                ToolButton(onClick = { consent = true }, enabled = s.available && s.agentServer.enabled &&
+                    !s.phoneRunning && !s.computerRunning && !s.conversation.running && !s.translationActive &&
+                    !s.teleprompter.smartFollow) { Text("AI 응답 진단 실행") }
+            }
+            if (p.phase == AgentProbePolicy.Phase.PASSED) {
+                when (p.hud) {
+                    AgentProbePolicy.Hud.NOT_SENT -> TextButton(onClick = { model.attempt { model.service().sendAgentProbeHud() } },
+                        enabled = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting &&
+                            !s.focusMode && s.appNotificationsEnabled) { Text("같은 코드를 안경 알림으로 보내기") }
+                    AgentProbePolicy.Hud.REQUESTED -> {
+                        Note("안경 알림 전송을 요청했습니다. 실제 표시 여부는 확인되지 않았습니다.")
+                        TextButton(onClick = { model.attempt { model.service().confirmAgentProbeHud() } }) { Text("안경에서 같은 코드가 보였음") }
+                    }
+                    AgentProbePolicy.Hud.CONFIRMED -> Note("사용자가 실제 안경에서 같은 코드 표시를 확인함")
+                }
+            }
+        }
+    }
+    if (consent) AlertDialog(onDismissRequest = { consent = false },
+        title = { Text("AI 모델에 진단 요청을 보낼까요?") },
+        text = { Text("설정된 기본 DSH 모델에 테스트 코드 한 건을 보냅니다. 이용량 또는 비용이 발생할 수 있습니다.") },
+        confirmButton = { TextButton(onClick = { consent = false; model.attempt { model.service().startAgentProbe() } }) { Text("진단 실행") } },
+        dismissButton = { TextButton(onClick = { consent = false }) { Text("취소") } })
 }
 
 @Composable
