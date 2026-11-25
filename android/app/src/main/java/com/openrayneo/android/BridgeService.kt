@@ -604,8 +604,7 @@ internal class BridgeService : Service() {
             request.retainInAgentContext = false; return true
         }
         val cfg = settings.read()
-        if (!agentServer.state.enabled && (request.source == ConversationSource.ALWAYS_ON ||
-                (request.source == ConversationSource.REALTIME && cfg.optBoolean("fastRealtimeHints")))) {
+        if (!agentServer.state.enabled && request.source != ConversationSource.NATIVE) {
             request.retainInAgentContext = false; return true
         }
         val identity = nativeIdentity()
@@ -729,22 +728,23 @@ internal class BridgeService : Service() {
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
         val limit = if (maxChars > 0) "\n[안경 표시] 답변은 ${maxChars}자 이내. 더 필요하면 요약하고, 자세히 요청받을 때만 이어서 말한다." else ""
-        // Optional fast mode uses the existing standby page; never opens or steals a page.
-        if (request.source == ConversationSource.REALTIME && !request.backfill && settings.read().optBoolean("fastRealtimeHints")) {
+        // All passive realtime hints are transient and tool-free. Fast mode only changes preview delivery.
+        if (request.source == ConversationSource.REALTIME && !request.backfill) {
+            val stream = cfg.optBoolean("fastRealtimeHints")
             val payload = request.hintContext
             val lifetime = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt)
             if (payload == null || lifetime == 0L || request.recordId.isNullOrBlank()) return true
-            input.put("streamHint", true).put("voiceContext", payload)
+            input.put("realtimeHint", true).put("streamHint", stream).put("voiceContext", payload)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
             if (!isRealtimeStreamCurrent(input)) return true
             realtimeStreamId = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
-                kind = "hint", input = input, hintLifetimeMs = lifetime, preview = { text ->
+                kind = "hint", input = input, hintLifetimeMs = lifetime, preview = if (stream) ({ text: String ->
                     if (isRealtimeStreamCurrent(input)) {
                         realtimePreviewRequest = input.optLong("realtimeRequest")
                         realtimePreviewRevision = state.revision
                         dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트 · 작성 중", text)))
                     }
-                }) { result -> finishRealtimeStream(input, result) }
+                }) else null) { result -> finishRealtimeStream(input, result) }
             return true
         }
         // Do not submit new ambient inference (including backfill) while companion output is muted.
@@ -766,7 +766,9 @@ internal class BridgeService : Service() {
             }
             return true
         }
-        // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
+        // Only firmware-invoked voice requests reach the existing general Agent path.
+        // Passive capture is never queued as durable tool-executing work.
+        if (request.source != ConversationSource.NATIVE) return true
         agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(request.context + limit, settings.read().optString("answerLanguage")), input = input) { result ->
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
@@ -774,7 +776,7 @@ internal class BridgeService : Service() {
     }
     private fun isRealtimeStreamCurrent(input: JSONObject): Boolean {
         val active = conversations.state
-        return input.optBoolean("streamHint") && !destroyed && !state.disconnecting &&
+        return input.optBoolean("realtimeHint") && !destroyed && !state.disconnecting &&
             state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP &&
             state.intent == DisplayIntent.PromptStandby && conversationOwnsDisplay &&
             state.session?.mode == PageMode.PROMPT && state.session?.phase != PagePhase.CLOSING &&
@@ -784,7 +786,7 @@ internal class BridgeService : Service() {
             input.optString("contextKey") == settings.read().optString("nativeConversationKey") &&
             input.optLong("realtimeRequest") == latestRealtimeRequest && input.optLong("displayRevision", -1) == state.revision &&
             ProactiveHintPolicy.remaining(SystemClock.elapsedRealtime(), input.optLong("hintDeadline")) > 0L &&
-            settings.read().optBoolean("fastRealtimeHints")
+            input.optBoolean("streamHint") == settings.read().optBoolean("fastRealtimeHints")
     }
     fun cancelRealtimeStream() {
         val id = realtimeStreamId
@@ -1264,23 +1266,25 @@ internal class BridgeService : Service() {
     val agentProbeState get() = agentProbe.state
     private var agentProbeToken: String? = null
     private var agentProbeRequest: String? = null
-    fun startAgentProbe() {
+    fun startAgentProbe(target: AgentProbePolicy.Target = AgentProbePolicy.Target.DEFAULT) {
         check(!destroyed && agentServer.state.enabled && !agent.running && !codex.running &&
             !conversations.state.running && !translator.active && !teleprompter.state.smartFollow) {
             "로컬 Agent를 연결하고 현재 작업 및 음성 기능을 종료하세요"
         }
         val token = java.util.UUID.randomUUID().toString()
         val code = "OR-" + token.take(8).uppercase(java.util.Locale.ROOT)
-        agentProbe.begin(code, SystemClock.elapsedRealtime())
+        agentProbe.begin(code, SystemClock.elapsedRealtime(), target)
         agentProbeToken = token
         notifyUI()
         try {
             agentProbeRequest = agent.harness.submit("AI 연결 진단", AgentProbePolicy.CONTEXT,
-                kind = "hint", input = JSONObject().put("purpose", "agent_probe").put("code", code),
+                kind = "hint", input = JSONObject().put("purpose", "agent_probe").put("code", code)
+                    .put("probeRoute", if (target == AgentProbePolicy.Target.AMBIENT) "ambient" else "default"),
                 hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
                 if (destroyed || agentProbeToken != token) return@submit
+                val route = agent.harness.probeModelRoute(agentProbeRequest)
                 agentProbeToken = null; agentProbeRequest = null
-                agentProbe.finish(code, result.getOrNull(), SystemClock.elapsedRealtime())
+                agentProbe.finish(code, result.getOrNull(), SystemClock.elapsedRealtime(), route)
                 notifyUI()
             }
         } catch (error: Exception) {

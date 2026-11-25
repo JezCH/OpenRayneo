@@ -14,7 +14,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
-        val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate()) {
+        val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate(),
+        var modelRoute: AgentProbePolicy.ModelRoute? = null) {
         val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe", "korean_wake", "explicit_question")
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
@@ -131,6 +132,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             .put("claimedAt", request.claimedAt).put("createdAt", request.createdAt).put("recordId", request.input?.optString("recordId"))
             .put("backfill", request.input?.optBoolean("backfill") ?: false)
     }) }
+    fun probeModelRoute(id: String?): AgentProbePolicy.ModelRoute? = synchronized(lock) { id?.let { requests[it]?.modelRoute } }
     fun status(id: String): JSONObject = synchronized(lock) {
         expireHints()
         val request = requests[id]
@@ -157,6 +159,12 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.state == "completed" && body.optString("state") == "completed") return status(id)
         check(request.state == "running") { "DSH 요청이 종료되었거나 취소됨" }
         if (body.has("sessionId")) request.session = body.getString("sessionId")
+        if (request.kind == "hint" && request.input?.optString("purpose") == "agent_probe" &&
+            body.optString("state") in setOf("completed", "failed")) {
+            body.optJSONObject("modelRoute")?.let {
+                request.modelRoute = AgentProbePolicy.ModelRoute.from(it.optString("provider"), it.optString("model"), it.optString("selection"))
+            }
+        }
         when (body.getString("state")) {
             "running" -> main.post { progress(body.optString("message", "DSH Go 작업 처리 중")) }
             "completed" -> {

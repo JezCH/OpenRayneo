@@ -3,7 +3,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import { createHintPreview } from './hint-preview.js'
-import { selectHintRoute } from './ambient-model.js'
+import { selectHintRoute, modelRouteMetadata } from './ambient-model.js'
 import { ApiError } from './api.js'
 import {nativeScope, nativeSession} from './native-sessions.js'
 import modePrompts from './voice-modes.json' with {type: 'json'}
@@ -76,7 +76,7 @@ export function startHarness(ctx, config, api, lifetime, opening) {
     const signal = AbortSignal.any([lifetime, controller.signal, deadline])
     const monitorController = new AbortController()
     const monitorSignal = AbortSignal.any([signal, monitorController.signal])
-    let sessionId, watching, agent, result, reservation, cancellationSent = false, cancelWork = Promise.resolve()
+    let sessionId, watching, agent, result, reservation, modelRoute, cancellationSent = false, cancelWork = Promise.resolve()
     const cancel = () => {
       if (!sessionId || cancellationSent || !result) return
       cancellationSent = true
@@ -133,6 +133,7 @@ export function startHarness(ctx, config, api, lifetime, opening) {
       if (request.input?.backfill === true) throw new Error('과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다. 기록 화면에서 직접 요청하세요.')
       if (request.kind === 'route' || request.kind === 'hint') {
         const route = await selectHintRoute(ctx, config, request, signal)
+        if (request.input?.purpose === 'agent_probe') modelRoute = modelRouteMetadata(route, config, request)
         const assembler = new BlockAssembler()
         const preview = request.kind === 'hint' && request.input?.streamHint === true
           ? createHintPreview(answer => {
@@ -161,7 +162,7 @@ export function startHarness(ctx, config, api, lifetime, opening) {
         const answer = textOf(assembler.blocks()).trim()
         if (!answer && request.kind !== 'hint') throw new Error('음성 분류가 본문을 반환하지 않음')
         monitorController.abort(); await watching
-        await settle(request.id, {state: 'completed', answer})
+        await settle(request.id, {state: 'completed', answer, ...(modelRoute ? {modelRoute} : {})})
         return
       }
       const scope = nativeScope(ctx, config, request)
@@ -203,7 +204,7 @@ export function startHarness(ctx, config, api, lifetime, opening) {
       cancel()
       agent ??= sessionId ? ctx.agents.get(sessionId) : undefined
       if (result) await agent?.whenIdle().catch(() => {})
-      await settle(request.id, {state: 'failed', ...(sessionId ? {sessionId} : {}),
+      await settle(request.id, {state: 'failed', ...(sessionId ? {sessionId} : {}), ...(modelRoute ? {modelRoute} : {}),
         error: (signal.aborted ? signal.reason?.message : error.message) || 'DSH 작업이 완료되지 않았습니다. DSH를 열어 확인하세요'})
     } finally {
       monitorController.abort()

@@ -153,7 +153,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Checkbox(fastRealtimeHints, { fastRealtimeHints = it; drafts["fastRealtimeHints"] = it.toString() })
             Text("실시간 힌트 화면: 빠른 스트리밍 (도구 없는 답변)")
         }
-        Note("선택하면 실시간 듣기 화면을 유지한 채 작성 중인 짧은 힌트를 갱신합니다. 새 발화·화면 전환·만료 시 이전 갱신을 중단합니다. 기억 조회·실시간 검색·업무 실행에는 기존 일반 Agent 모드 또는 직접 깨우기를 사용하세요. DSH Go 플러그인 업데이트가 필요하며 미지원 시 최종 답변만 표시됩니다. 최종 힌트는 다음 발화 또는 화면 전환까지 유지됩니다.")
+        Note("실시간 힌트는 켜짐/꺼짐 모두 도구 없는 질문 경로입니다. 선택하면 작성 중에도 갱신하고, 끄면 최종 힌트만 표시합니다. 새 발화·화면 전환·만료 시 이전 요청을 중단합니다. 기억 조회·실시간 검색·업무 실행은 일반 Agent 화면 또는 직접 깨우기를 사용하세요. 이전 플러그인은 최종 답변만 표시할 수 있습니다.")
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 원본 저장 모드의 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")

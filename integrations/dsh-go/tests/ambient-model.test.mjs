@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {isAmbientHint, ambientOverride, selectHintRoute} from '../lib/ambient-model.js'
+import {isAmbientHint, ambientOverride, selectHintRoute, modelRouteMetadata} from '../lib/ambient-model.js'
 let n = 0
 function eq(a,b){assert.deepEqual(a,b);n++}
 function throws(fn){assert.throws(fn);n++}
@@ -35,4 +35,17 @@ await rejects(()=>selectHintRoute(ctx,config,ambient,c.signal))
 const c2 = new AbortController()
 await rejects(()=>selectHintRoute({...ctx,llm:{resolveCallConfig:async x=>{c2.abort();return x}}},config,ambient,c2.signal))
 eq(calls,2)
+const ambientProbe = {kind:'hint',input:{purpose:'agent_probe',probeRoute:'ambient',code:'OR-12345678'}}
+const defaultProbe = {kind:'hint',input:{purpose:'agent_probe',probeRoute:'default'}}
+const finalRealtime = {kind:'hint',input:{...real.input,streamHint:false,realtimeHint:true}}
+eq(isAmbientHint(finalRealtime),true)
+eq(await selectHintRoute(ctx,config,finalRealtime),{...chosen,maxTokens:500})
+eq(await selectHintRoute(ctx,config,ambientProbe),{...chosen,maxTokens:500})
+eq(await selectHintRoute(ctx,{},ambientProbe),defaults)
+eq(await selectHintRoute(ctx,config,defaultProbe),defaults)
+eq(modelRouteMetadata({...chosen,key:'secret'},config,ambientProbe),{provider:'registered',model:'compact',selection:'ambient_override'})
+eq(modelRouteMetadata(defaults,{},ambientProbe),{provider:'default',model:'strong',selection:'ambient_default'})
+eq(modelRouteMetadata(defaults,config,defaultProbe),{provider:'default',model:'strong',selection:'default'})
+eq(modelRouteMetadata({provider:'bad\n',model:'m'},config,defaultProbe),undefined)
+eq(modelRouteMetadata({provider:'p'},config,defaultProbe),undefined)
 console.log(`${n} model-route assertions passed`)
