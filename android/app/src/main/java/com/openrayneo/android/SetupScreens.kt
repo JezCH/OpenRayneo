@@ -263,6 +263,8 @@ internal fun SettingsScreen(
             open("computer")
         }
         SettingsRow("DSH Go 및 외부 Agent", "음성 작업 위임, 안경 도구 및 로컬 API", Icons.Outlined.Hub) { open("agent-api") }
+        SectionLabel("개인화")
+        SettingsRow("호출어 및 대기 시간", "한국어 소프트웨어 호출 설정", Icons.Outlined.Mic) { open("korean-wake") }
         SectionLabel("권한 및 기기")
         SettingsRow("한국어 호출", "나만의 호출어, 호출 대기 시간", Icons.Outlined.Mic) { open("korean-wake") }
         SettingsRow("음성 및 요약", "안경 ASR, 인물 분석 및 기록 요약", Icons.Outlined.Mic) { open("voice-settings") }
