@@ -105,10 +105,72 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     fun readBatteryForVoice(): Int? = readStatusIntForVoice("battery", 0..100)
 
+    private fun readSettingsForVoice(): JSONObject? =
+        requests.request(15, 4, envelope("request_general_settings")) { type, body ->
+            type == 4 && body.has("generalSettings")
+        }?.optJSONObject("generalSettings")
+    private fun exactInt(value: Any?): Int? {
+        val number = (value as? Number)?.toDouble() ?: return null
+        return number.toInt().takeIf { number == it.toDouble() }
+    }
+    private fun executeSettingVoice(command: LocalDeviceQuery.Command): String {
+        val kind = command.kind
+        val height = kind in setOf(LocalDeviceQuery.Kind.DISPLAY_HEIGHT_READ, LocalDeviceQuery.Kind.DISPLAY_HEIGHT_SET)
+        val distance = kind in setOf(LocalDeviceQuery.Kind.DISPLAY_DISTANCE_READ, LocalDeviceQuery.Kind.DISPLAY_DISTANCE_SET)
+        val writing = kind in setOf(LocalDeviceQuery.Kind.DISPLAY_HEIGHT_SET, LocalDeviceQuery.Kind.DISPLAY_DISTANCE_SET, LocalDeviceQuery.Kind.AUTO_LOCK_SET)
+        val label = if (height) "화면 높이" else if (distance) "화면 거리" else "자동 절전 시간"
+        val unit = if (height || distance) "단계" else "초"
+        if (writing && !LocalDeviceQuery.validSetting(kind, command.level)) return when {
+            height -> "안경 화면 높이는 1~6단계로 지정해 주세요."
+            distance -> "안경 화면 거리는 1~3단계로 지정해 주세요."
+            else -> "자동 절전 시간은 5, 10, 15, 25, 40, 60, 120초 중에서 지정해 주세요."
+        }
+        val before = readSettingsForVoice() ?: return "$label 설정을 확인하지 못했습니다."
+        val display = before.optJSONObject("displayConfig")
+        val oldHeight = exactInt(display?.opt("height"))
+        val oldDistance = exactInt(display?.opt("distance"))
+        val current = if (height) oldHeight else if (distance) oldDistance else exactInt(before.opt("autoLockTime"))
+        if (!LocalDeviceQuery.validSetting(kind, current)) return "$label 설정을 확인하지 못했습니다."
+        if (!writing) return "현재 $label: $current$unit"
+        val target = checkNotNull(command.level)
+        if (target == current) return "이미 $label $current${unit}입니다."
+        val newHeight = if (height) target else oldHeight
+        val newDistance = if (distance) target else oldDistance
+        if ((height || distance) && (newHeight !in 1..6 || newDistance !in 1..3)) return "화면의 다른 설정을 확인하지 못해 변경하지 않았습니다."
+        val wire = if (height || distance) "display_config" else "auto_lock_time"
+        val data = if (height || distance) payload(data = JSONObject().put("height", newHeight).put("distance", newDistance).toString()) else payload(target)
+        try {
+            requests.request(15, 5, JSONObject().put("cmd", wire).put("payload", data)) { type, body ->
+                type == 6 && body.optString("cmd") == wire
+            }
+        } catch (_: IllegalStateException) { /* Confirm only by fresh readback, never an ACK. */ }
+        val after = readSettingsForVoice() ?: return "$label 변경 결과를 확인하지 못했습니다."
+        val actualDisplay = after.optJSONObject("displayConfig")
+        val actualHeight = exactInt(actualDisplay?.opt("height"))
+        val actualDistance = exactInt(actualDisplay?.opt("distance"))
+        val actual = if (height) actualHeight else if (distance) actualDistance else exactInt(after.opt("autoLockTime"))
+        if (!LocalDeviceQuery.validSetting(kind, actual)) return "$label 변경 결과를 확인하지 못했습니다."
+        val matches = if (height || distance) actualHeight == newHeight && actualDistance == newDistance else actual == target
+        return if (matches) "$label ${target}${unit}로 설정했습니다." else "요청한 설정과 재조회 값이 다릅니다. 현재 $label: $actual$unit"
+    }
+
     /** Run on the existing serialized device queue with a current-wake permission. */
     fun executeVoiceCommand(command: LocalDeviceQuery.Command): String {
         if (command.kind == LocalDeviceQuery.Kind.BATTERY)
             return LocalDeviceQuery.batteryAnswer(readBatteryForVoice())
+        if (command.kind == LocalDeviceQuery.Kind.AUTO_BRIGHTNESS_READ) {
+            val reply = requests.request(15, 1, envelope("request_general_status")) { type, body -> type == 1 && body.has("generalStatus") }
+            val raw = reply?.optJSONObject("generalStatus")?.opt("automaticBrightness")
+            val enabled = if (raw is Boolean) raw else exactInt(raw)?.let { if (it in 0..1) it == 1 else null }
+            return when (enabled) {
+                true -> "안경 화면 자동 밝기가 켜져 있습니다."
+                false -> "안경 화면 자동 밝기가 꺼져 있습니다."
+                null -> "안경 화면 자동 밝기 상태를 확인하지 못했습니다."
+            }
+        }
+        if (command.kind in setOf(LocalDeviceQuery.Kind.DISPLAY_HEIGHT_READ, LocalDeviceQuery.Kind.DISPLAY_HEIGHT_SET,
+                LocalDeviceQuery.Kind.DISPLAY_DISTANCE_READ, LocalDeviceQuery.Kind.DISPLAY_DISTANCE_SET,
+                LocalDeviceQuery.Kind.AUTO_LOCK_READ, LocalDeviceQuery.Kind.AUTO_LOCK_SET)) return executeSettingVoice(command)
         if (command.kind == LocalDeviceQuery.Kind.BRIGHTNESS_SET && !LocalDeviceQuery.validLevel(command.level))
             return "안경 밝기는 1~17단계로 지정해 주세요."
         val current = readStatusIntForVoice("brightness", 1..17)

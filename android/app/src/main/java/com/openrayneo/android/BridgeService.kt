@@ -470,7 +470,7 @@ internal class BridgeService : Service() {
                         if (allowed()) {
                             val answer = result.getOrElse {
                                 if (localCommand.kind == LocalDeviceQuery.Kind.BATTERY) LocalDeviceQuery.batteryAnswer(null)
-                                else "안경 밝기 처리 결과를 확인하지 못했습니다."
+                                else "안경 설정 처리 결과를 확인하지 못했습니다."
                             }
                             deliverExternalVoice(request.text, answer, input)
                         }
