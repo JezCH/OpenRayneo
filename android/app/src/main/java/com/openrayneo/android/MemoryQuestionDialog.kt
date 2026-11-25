@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 
 /** Local search first; only explicitly checked excerpts travel with a single question. */
 @Composable
-internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, dismiss: () -> Unit) {
+internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, autoSuggest: Boolean = false, dismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var question by remember { mutableStateOf(initialQuestion.take(2000)) }
     var result by remember { mutableStateOf<MemoryReferencePolicy.Result?>(null) }
@@ -20,6 +20,20 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, dism
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var confirmed by remember { mutableStateOf(false) }
+    var suggested by remember { mutableStateOf(autoSuggest) }
+    val config = model.config
+    val days = config.optString("memorySuggestionDays").toIntOrNull()?.takeIf { it in AutomaticMemoryPolicy.days } ?: 30
+    val limit = config.optString("memorySuggestionLimit").toIntOrNull()?.takeIf { it in AutomaticMemoryPolicy.limits } ?: 3
+    fun suggest() {
+        busy = true; error = ""; result = null; selected = emptySet(); confirmed = false; suggested = true
+        try {
+            model.service().suggestQuestionMemory(question) { value ->
+                busy = false
+                value.fold({ result = it }, { error = "기억 추천 실패 · 직접 검색할 수 있습니다" })
+            }
+        } catch (_: Exception) { busy = false; error = "기억 추천을 시작하지 못했습니다" }
+    }
+    LaunchedEffect(autoSuggest) { if (autoSuggest && question.isNotBlank()) suggest() }
     val current = result
     val hits = current?.hits.orEmpty()
     val enabled = !busy && !model.state.phoneRunning && !model.state.migration.busy && model.state.agentServer.enabled
@@ -27,10 +41,12 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, dism
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Note("과거 기록을 휴대폰에서 먼저 검색합니다. 선택한 전사 일부와 질문만 연결된 AI로 전송합니다. 일반 AI 작업과 달리 도구를 사용하지 않습니다.")
+                Note("자동 추천 범위: 최근 ${days}일 · 최대 ${limit}개. 추천은 기기 내 단어 일치 방식이며 실제 관련성을 보장하지 않습니다.")
+                ToolOutlinedButton(onClick = { suggest() }, enabled = !busy && question.isNotBlank() && !model.state.migration.busy) { Text("질문에 맞는 기억 추천") }
                 OutlinedTextField(query, { query = it.take(160); result = null; selected = emptySet(); confirmed = false; error = "" },
                     Modifier.fillMaxWidth(), enabled = !busy, singleLine = true, label = { Text("기억 검색어") })
                 ToolOutlinedButton(onClick = {
-                    busy = true; error = ""; result = null; selected = emptySet(); confirmed = false
+                    busy = true; error = ""; result = null; selected = emptySet(); confirmed = false; suggested = false
                     try {
                         model.service().searchQuestionMemory(query) { value ->
                             busy = false
@@ -40,7 +56,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, dism
                 }, enabled = !busy && query.isNotBlank() && !model.state.migration.busy) { Text("내 기록 검색") }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
-                if (current != null && hits.isEmpty()) Note("일치하는 전사 기록이 없습니다. 검색어를 바꿔 보세요.")
+                if (current != null && hits.isEmpty()) Note("일치하는 전사 기록이 없습니다. 검색어를 바꿔 보거나 기억 없이 질문할 수 있습니다.")
                 hits.forEachIndexed { index, hit ->
                     Row(verticalAlignment = Alignment.Top) {
                         Checkbox(index in selected, { checked ->
@@ -57,8 +73,13 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, dism
                     HorizontalDivider()
                 }
                 if (current?.more == true) Note("추가 결과가 있습니다. 검색어를 구체화하면 더 정확히 선택할 수 있습니다.")
-                OutlinedTextField(question, { question = it.take(2000); confirmed = false }, Modifier.fillMaxWidth(),
-                    label = { Text("AI에게 할 질문") }, minLines = 2, maxLines = 5)
+                OutlinedTextField(question, { question = it.take(2000); confirmed = false; if (suggested) { result = null; selected = emptySet() } }, Modifier.fillMaxWidth(),
+                    label = { Text("AI에게 할 질문") }, enabled = !busy, minLines = 2, maxLines = 5)
+                if (autoSuggest) TextButton(enabled = enabled && question.isNotBlank(), onClick = {
+                    model.phoneDraft = question
+                    model.send(AnswerSource.MOBILE_AGENT)
+                    dismiss()
+                }) { Text("기억 첨부 없이 일반 AI로 보내기") }
                 if (selected.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(confirmed, { confirmed = it })

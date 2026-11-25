@@ -33,6 +33,14 @@ internal object MemoryReferenceSearch {
             } }
         return MemoryReferencePolicy.search(scope, sources)
     }
+    fun automatic(question: String, options: AutomaticMemoryPolicy.Options, now: Long, records: List<ConversationRecord>): MemoryReferencePolicy.Result {
+        val sources = records.asSequence().filter { it.endedAt != null && !it.processingPending && !it.audioPending && it.mode != ConversationMode.ENROLL }
+            .flatMap { row -> row.segments.asSequence().map { segment ->
+                MemoryReferencePolicy.Source(row.id, row.revision, segment.id, row.timeOf(segment), row.endTimeOf(segment),
+                    segment.text, segment.personId, segment.stable, segment.mixed, segment.identityBasis, segment.timeBasis, row.transcriptIncomplete)
+            } }
+        return AutomaticMemoryPolicy.search(question, options, now, sources)
+    }
     fun current(result: MemoryReferencePolicy.Result, records: List<ConversationRecord>): Boolean =
         result.hits.all { hit -> records.any { it.id == hit.source.recordId && it.revision == hit.source.recordRevision } }
 

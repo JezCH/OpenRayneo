@@ -273,6 +273,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
         values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
+        values["memorySuggestOnSend"]?.let { require(it in setOf("true", "false")) }
+        values["memorySuggestionDays"]?.let { require(it.toIntOrNull() in AutomaticMemoryPolicy.days) }
+        values["memorySuggestionLimit"]?.let { require(it.toIntOrNull() in AutomaticMemoryPolicy.limits) }
         values["ttsOutput"]?.let { require(it in setOf("headphones", "media")) { "지원하는 음성 출력 방식을 선택하세요" } }
         values["ttsRate"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.5f } == true) { "음성 속도는 0.75~1.5배로 설정하세요" } }
         values["ttsPitch"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.25f } == true) { "음성 높이는 0.75~1.25배로 설정하세요" } }
@@ -313,6 +316,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 "asrLanguage" -> SpeechRounds.languageHints(config)
                 "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
                 "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
+                "memorySuggestOnSend" -> (config.optString(it) == "true").toString()
+                "memorySuggestionDays" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.days }?.toString() ?: "30"
+                "memorySuggestionLimit" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.limits }?.toString() ?: "3"
                 "ttsOutput" -> config.optString(it).takeIf { value -> value in setOf("headphones", "media") } ?: "headphones"
                 "ttsRate", "ttsPitch" -> config.optString(it).ifBlank { "1.0" }
                 else -> config.optString(it)
@@ -326,7 +332,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 

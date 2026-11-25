@@ -1000,6 +1000,19 @@ internal class BridgeService : Service() {
             main.post { if (!destroyed) completion(result) }
         }
     }
+    fun suggestQuestionMemory(question: String, completion: (Result<MemoryReferencePolicy.Result>) -> Unit) {
+        check(!destroyed && !migration.state.busy) { "기록 이전을 먼저 종료하세요" }
+        require(question.isNotBlank() && question.length <= 2000)
+        val config = settings.read()
+        val options = AutomaticMemoryPolicy.Options(config.optString("memorySuggestionDays").toIntOrNull()?.takeIf { it in AutomaticMemoryPolicy.days } ?: 30,
+            config.optString("memorySuggestionLimit").toIntOrNull()?.takeIf { it in AutomaticMemoryPolicy.limits } ?: 3)
+        val snapshot = conversations.repository.referenceSnapshot()
+        val now = System.currentTimeMillis()
+        memoryReferenceWorker.execute {
+            val result = runCatching { MemoryReferenceSearch.automatic(question, options, now, snapshot) }
+            main.post { if (!destroyed) completion(result) }
+        }
+    }
     fun submitMemoryQuestion(question: String, selected: MemoryReferencePolicy.Result) {
         require(question.isNotBlank() && question.length <= 2000 && selected.hits.size in 1..MemoryReferencePolicy.MAX_RESULTS)
         check(!migration.state.busy && MemoryReferenceSearch.current(selected, conversations.repository.referenceSnapshot())) {
