@@ -913,14 +913,14 @@ internal class BridgeService : Service() {
         val question = match.question
         if (question == null) {
             ambientWakeStatus = "호출어 감지 · 다음 질문을 기다립니다"
-            sendCompanionNotification("한국어 호출", "질문하세요", FocusPolicy.Output.DIRECT_ANSWER)
+            runCatching { sendCompanionNotification("한국어 호출", "질문하세요", FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
         }
         val token = ++ambientWakeGeneration
         ambientWakeRequest?.let(agent.harness::cancelRequest); ambientWakeRequest = null
         fun answer(text: String) {
             ambientWakeStatus = text
-            if (ambientWakeCurrent(recordId)) sendCompanionNotification("한국어 호출", text.take(100), FocusPolicy.Output.DIRECT_ANSWER)
+            if (ambientWakeCurrent(recordId)) runCatching { sendCompanionNotification("한국어 호출", text.take(100), FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI()
         }
         val normalized = KoreanLanguage.normalize(question).filterNot(Char::isWhitespace).trimEnd('?','!','.')
@@ -935,7 +935,7 @@ internal class BridgeService : Service() {
         if (!agentServer.state.enabled) { answer("호출 인식 완료 · AI 연결 설정 필요"); return }
         ambientWakeStatus = "호출 인식 · AI 응답 대기"
         notifyUI()
-        ambientWakeRequest = agent.harness.submit(question,
+        try { ambientWakeRequest = agent.harness.submit(question,
             KoreanLanguage.withAnswerPolicy("직접 호출 뒤의 질문입니다. 질문에만 간결하게 답하세요. 도구 사용, 기억 조회 및 업무 실행은 하지 마세요. 안경 표시를 위해 100자 이내로 답하세요.", config.optString("answerLanguage")),
             kind = "hint", input = JSONObject().put("purpose", "korean_wake").put("question", question),
             hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
@@ -943,7 +943,7 @@ internal class BridgeService : Service() {
             ambientWakeRequest = null
             if (ambientWakeCurrent(recordId) && settings.read().optBoolean("ambientWakeEnabled"))
                 answer(result.getOrNull()?.takeIf { it.isNotBlank() } ?: "AI 응답 실패 또는 만료")
-        }
+        } } catch (error: Exception) { ambientWakeRequest = null; answer("AI 질문 전송 실패") }
     }
     private fun handleKoreanWake(question: String, allowAI: Boolean) {
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle ||

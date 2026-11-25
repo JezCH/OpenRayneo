@@ -5,7 +5,7 @@ package com.openrayneo.android
 internal data class KoreanWakeOptions(val phrases: List<String>, val listenSeconds: Int, val followupSeconds: Int) {
     val label get() = phrases.joinToString(" / ")
     companion object {
-        const val DEFAULT_PHRASES = "자비스, 레이네오야, 레이네오"
+        const val DEFAULT_PHRASES = "자비스, 레이네오야"
         val listenChoices = listOf(30, 60, 120)
         val followupChoices = listOf(5, 8, 12)
         // Empty values from pre-feature configurations mean the defaults. Invalid nonempty values fail.
@@ -14,7 +14,7 @@ internal data class KoreanWakeOptions(val phrases: List<String>, val listenSecon
             followup.ifBlank { "12" }.toIntOrNull() ?: 0)
         fun parse(raw: String = DEFAULT_PHRASES, listen: Int = 120, followup: Int = 12): KoreanWakeOptions {
             val phrases = raw.split(',').map { KoreanLanguage.normalize(it).trim().replace(Regex("\\s+"), " ") }
-            require(phrases.size in 1..3 && phrases.distinct().size == phrases.size &&
+            require(phrases.size in 1..3 && phrases.map { it.filterNot(Char::isWhitespace) }.distinct().size == phrases.size &&
                 phrases.all { it.matches(Regex("[가-힣]+(?: [가-힣]+)*")) && it.count { ch -> ch != ' ' } in 2..12 }) {
                 "호출어는 한글 2~12자, 쉼표로 구분하여 최대 3개를 입력하세요. 중복은 허용하지 않습니다."
             }
@@ -31,8 +31,19 @@ internal class KoreanWakeMatcher(options: KoreanWakeOptions) {
     fun clean(text: String): String = KoreanLanguage.normalize(text).trim()
         .trimEnd('.', '!', '?', '。', '！', '？').replace(Regex("\\s+"), " ")
     /** null = not a wake, empty = wake only, otherwise the question. */
-    fun match(text: String): String? = prefix.matchEntire(clean(text))?.groupValues?.get(1)
-        ?.trimStart(' ', ',', '，', ':', '：', '.', '。', '!', '！', '?', '？', '-', '–', '—')?.trim()
+    fun match(text: String): String? {
+        val rest = prefix.matchEntire(clean(text))?.groupValues?.get(1) ?: return null
+        val tail = rest.trimStart(' ', ',', '，', ':', '：', '.', '。', '!', '！', '?', '？', '-', '–', '—').trim()
+        if (tail.isEmpty()) return ""
+        // A joined Korean question is a common ASR output; do not turn a bare name + noun/particle into a request.
+        if (rest.firstOrNull()?.isLetterOrDigit() == true && !joinedQuestionStarts.any { tail.startsWith(it) }) return null
+        if (Regex("^(가|는|은|를|을|이|의|에|와|과|라는|이라고|라고)(\\s|$)").containsMatchIn(tail) ||
+            listOf("라는", "이라고", "라고").any { tail.startsWith(it) }) return null
+        return tail
+    }
+    private val joinedQuestionStarts = listOf("지금", "오늘", "내일", "어제", "현재", "안경", "몇", "뭐", "무엇", "무슨",
+        "왜", "어떻게", "얼마", "누구", "어디", "언제", "시간", "날짜", "타이머", "스톱워치", "알려", "보여", "설명", "정리", "번역", "계산")
+
 }
 
 /** Explicit bounded listening; one command per window. */
