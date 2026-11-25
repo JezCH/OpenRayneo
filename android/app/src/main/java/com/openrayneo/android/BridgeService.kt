@@ -68,6 +68,9 @@ internal class BridgeService : Service() {
     private var resumeAlwaysOn: ConversationMode? = null
     private val voiceAlwaysOnStart = AlwaysOnVoicePolicy.PendingStart()
     private val localClock = LocalClockPolicy.Clock()
+    private val focusPolicy = FocusPolicy.State()
+    val focusMode get() = focusPolicy.focused
+    val appNotificationsEnabled get() = focusPolicy.notificationsEnabled
     private val reconnectCapture = AlwaysOnReconnectPolicy()
     val alwaysOnResumePending: Boolean get() = reconnectCapture.pending
     private var notificationText = ""
@@ -300,12 +303,12 @@ internal class BridgeService : Service() {
 
     fun scan() {
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
+        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
         updateNotification(); notifyUI()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         runCatching { supervisor.connect(device, bleOnly) }.onFailure {
@@ -313,7 +316,7 @@ internal class BridgeService : Service() {
         }
     }
     fun disconnect() {
-        localClock.clear()
+        resetFocus(); localClock.clear()
         supervisor.cancelRetries()
         stopConversation()
         dispatch(GlassesEvent.Disconnect)
@@ -480,6 +483,26 @@ internal class BridgeService : Service() {
             } else { voiceAudio.stop(); voiceTransport.stop() }
         }
     }
+    fun applyFocusCommand(command: FocusPolicy.Command): String {
+        check(!destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL) { "안경을 먼저 연결하세요" }
+        val previous = focusPolicy.generation
+        val answer = focusPolicy.apply(command)
+        if (previous != focusPolicy.generation) {
+            if (!focusPolicy.allows(FocusPolicy.Output.PASSIVE_HINT)) agent.harness.cancelPassiveHints()
+            updateNotification(); notifyUI()
+        }
+        return answer
+    }
+    private fun resetFocus() {
+        focusPolicy.reset()
+        agent.harness.cancelPassiveHints()
+    }
+    private fun sendCompanionNotification(title: String, body: String,
+                                          output: FocusPolicy.Output = FocusPolicy.Output.GENERAL_NOTIFICATION): Boolean {
+        if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL || !focusPolicy.allows(output)) return false
+        connection.sendNotification(title, body)
+        return true
+    }
     private fun pollLocalClock() {
         if (destroyed || !localClock.poll(SystemClock.elapsedRealtime())) return
         val title = "타이머 완료"
@@ -494,7 +517,7 @@ internal class BridgeService : Service() {
             } else onLog("타이머 완료: 휴대폰 알림이 차단되어 있습니다.")
         }.onFailure { onLog("타이머 휴대폰 알림 전송 실패") }
         if (state.link.phase == LinkPhase.FULL && !state.disconnecting) {
-            runCatching { connection.sendNotification(title, body) }
+            runCatching { sendCompanionNotification(title, body, FocusPolicy.Output.TIMER_NOTIFICATION) }
                 .onFailure { onLog("타이머 안경 알림 전송 실패") }
         }
         onLog("휴대폰 타이머 완료")
@@ -512,6 +535,25 @@ internal class BridgeService : Service() {
             cancelRealtimeStream()
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
+        }
+        val focusCommand = FocusPolicy.parse(request.text, request.source, request.backfill)
+        if (focusCommand != null) {
+            val active = conversations.state
+            val wake = request.wakeId
+            val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
+            val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
+                segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
+            } == true
+            if (fresh && wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                active.source == ConversationSource.NATIVE && request.recordId != null &&
+                active.activeRecord?.id == request.recordId && !destroyed && foreground &&
+                state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                val answer = if (unmixed) applyFocusCommand(focusCommand) else "겹친 발화입니다. 다시 요청해 주세요."
+                input.put("derivedId", java.util.UUID.randomUUID().toString())
+                deliverExternalVoice(request.text, answer, input)
+            }
+            return true
         }
         val clockCommand = LocalClockPolicy.parse(request.text, request.source, request.backfill)
         if (clockCommand != null) {
@@ -621,6 +663,8 @@ internal class BridgeService : Service() {
                 }) { result -> finishRealtimeStream(input, result) }
             return true
         }
+        // Do not submit new ambient inference (including backfill) while companion output is muted.
+        if (request.source == ConversationSource.ALWAYS_ON && !focusPolicy.allows(FocusPolicy.Output.PASSIVE_HINT)) return true
         // Passive AlwaysOn suggestions reuse the existing tool-free DSH hint path, not durable Agent tasks.
         if (request.source == ConversationSource.ALWAYS_ON && !request.backfill) {
             val active = conversations.state
@@ -630,7 +674,7 @@ internal class BridgeService : Service() {
                 !active.running || active.stopping || active.activeRecord?.id != request.recordId ||
                 active.source != ConversationSource.ALWAYS_ON || destroyed || state.disconnecting ||
                 state.link.phase != LinkPhase.FULL || voiceTransport.source != ConversationSource.ALWAYS_ON) return true
-            input.put("voiceContext", payload).put("hintSequence", ++nextAnswer)
+            input.put("voiceContext", payload).put("focusGeneration", focusPolicy.generation).put("hintSequence", ++nextAnswer)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
             agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
                 kind = "hint", input = input, hintLifetimeMs = lifetime) { result ->
@@ -694,7 +738,7 @@ internal class BridgeService : Service() {
         // Preserve that existing notification path; it is not a passive voice hint.
         if (input.length() == 0) {
             if (answer.isNotBlank() && !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting)
-                connection.sendNotification("어시스턴트", answer)
+                sendCompanionNotification("어시스턴트", answer)
             return
         }
         val source = ConversationSource.values().firstOrNull { it.name == input.optString("source") }
@@ -702,6 +746,7 @@ internal class BridgeService : Service() {
         if (!passiveHint && VoiceOutputPolicy.isSilent(answer, source)) return
         val id = input.optString("recordId")
         if (passiveHint) {
+            if (!focusPolicy.acceptsHint(input.optLong("focusGeneration", -1L))) return
             val active = conversations.state
             if (source != ConversationSource.ALWAYS_ON || !active.running || active.stopping || active.activeRecord?.id != id ||
                 active.source != ConversationSource.ALWAYS_ON || destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
@@ -739,7 +784,7 @@ internal class BridgeService : Service() {
                 autoClearFor = ref; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null
                 dispatch(GlassesEvent.AnswerCompleted(AnswerContent(ref, question, answer), permit))
             }
-            VoiceOutputPolicy.Route.NOTIFICATION -> connection.sendNotification("어시스턴트", answer)
+            VoiceOutputPolicy.Route.NOTIFICATION -> sendCompanionNotification("어시스턴트", answer)
             VoiceOutputPolicy.Route.NONE -> Unit
         }
     }
@@ -846,11 +891,11 @@ internal class BridgeService : Service() {
             if (delivery.source == ConversationSource.NATIVE) {
                 if (voiceTransport.nativeActive && delivery.wakeId == voiceTransport.wakeId && delivery.wakeId != null)
                     voiceTransport.reply(text, question, delivery.wakeId)
-                else if (state.link.phase == LinkPhase.FULL) connection.sendNotification("어시스턴트", text)
+                else if (state.link.phase == LinkPhase.FULL) sendCompanionNotification("어시스턴트", text)
                 return
             }
             if (delivery.source == ConversationSource.ALWAYS_ON || state.answerPermit != permit) {
-                if (state.link.phase == LinkPhase.FULL) connection.sendNotification("어시스턴트", text)
+                if (state.link.phase == LinkPhase.FULL) sendCompanionNotification("어시스턴트", text)
                 return
             }
         }
@@ -911,8 +956,9 @@ internal class BridgeService : Service() {
                 .put("notificationPresent", navigation.selected != null).put("status", navigation.status)))
             "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("gaodeNavigationChanged", false))) }
             "show_notification" -> {
-                connection.sendNotification(args.getString("title"), args.getString("body"))
-                completion(Result.success(JSONObject().put("queued", true).put("visible", "unverified")))
+                val queued = sendCompanionNotification(args.getString("title"), args.getString("body"))
+                completion(Result.success(JSONObject().put("queued", queued).put("visible", if (queued) "unverified" else "not_sent")
+                    .put("reason", if (queued) "" else "집중 모드, 알림 설정 또는 연결 상태로 전송하지 않음")))
             }
             "record_query" -> completion(Result.success(JSONObject().put("items", conversations.repository.query(args.optLong("from", Long.MIN_VALUE),
                 args.optLong("to", Long.MAX_VALUE), args.optString("recordId"), args.optString("text")))))
@@ -966,7 +1012,7 @@ internal class BridgeService : Service() {
         if (!dispatching) notifyUI()
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    private fun summary() = state.displayDescription + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
+    private fun summary() = state.displayDescription + (if (focusMode) " · 앱 집중 모드" else "") + (if (!appNotificationsEnabled) " · 앱 안경 알림 꺼짐" else "") + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
         AudioPhase.RECEIVING -> " · 음성 수신 중"
         AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
         AudioPhase.STALLED -> " · 오디오 중단됨"
