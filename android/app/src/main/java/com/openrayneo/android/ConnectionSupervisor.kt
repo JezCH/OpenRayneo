@@ -108,7 +108,7 @@ internal class ConnectionSupervisor(
             return
         }
         if (starting && automatic && !busy) return
-        if (!starting && !busy && (wasReady || automatic)) {
+        if (!starting && !busy && target?.classicAddress != null && (wasReady || automatic)) {
             if (wasReady) { failures = 0; scheduleWatch(1_000) }
             else retryWatch(text)
             return
