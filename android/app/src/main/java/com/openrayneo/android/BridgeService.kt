@@ -35,6 +35,7 @@ internal class BridgeService : Service() {
     lateinit var agent: MobileAgent; private set
     lateinit var codex: CodexClient; private set
     lateinit var translator: LiveTranslator; private set
+    lateinit var speechOutput: KoreanSpeechOutput; private set
     var state = GlassesState(); private set
     val status get() = state.link.detail
     val ready get() = state.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
@@ -107,6 +108,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        speechOutput = KoreanSpeechOutput(this, main, ::notifyUI)
         LocalModels.keepResident(this, settings.read())
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
@@ -449,6 +451,7 @@ internal class BridgeService : Service() {
         updateNotification(); notifyUI()
     }
     private fun nativeWake() {
+        if (speechOutput.speaking) speechOutput.stop()
         notifyUI()
         if (translator.active && translator.captionOnly) return
         if (teleprompter.state.smartFollow) { teleprompter.suspendFollow("음성 깨우기 감지: 따라 읽기 중지. 원고 상태를 확인하세요"); return }
@@ -497,6 +500,7 @@ internal class BridgeService : Service() {
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
         if (start) {
+            if (speechOutput.speaking) speechOutput.stop()
             check(!destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting && !conversations.state.stopping) {
                 "음성 수신 시작 전에 안경 연결 또는 기록 세션이 종료됨"
             }
@@ -839,21 +843,27 @@ internal class BridgeService : Service() {
         translator.captionConfig(config)
         cancelVoiceAlwaysOnStart()
         cancelAlwaysOnRecovery()
+        if (speechOutput.speaking) speechOutput.stop()
         translator.start(config, captions = true)
         dispatch(GlassesEvent.StartCaption)
     }
     fun stopCaption() { if (translator.active && translator.captionOnly) stopTranslation() }
-    fun startTranslation() {
+    fun startTranslation(local: Boolean = false) {
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val config = settings.read()
-        translator.validate(config)
+        translator.validate(config, local)
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
-        translator.start(config)
+        if (speechOutput.speaking) speechOutput.stop()
+        translator.start(config, local = local)
         dispatch(GlassesEvent.StartTranslation)
+    }
+    fun speakKorean(text: String) {
+        check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow) { "녹음·음성 기능을 먼저 종료하세요" }
+        speechOutput.speak(text)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() { check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }; cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
@@ -1213,7 +1223,7 @@ internal class BridgeService : Service() {
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
-        translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
+        speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
