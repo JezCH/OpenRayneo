@@ -19,13 +19,22 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
         Text("앱 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
         Note("음성 특징과 화자 처리는 이 기기에서 실행되며 ASR과 기록 요약은 설정한 서비스를 사용합니다. 답변, 짧은 힌트, 작업 판단은 휴대폰 로컬 Agent가 맡고 키는 Android Keystore로 암호화 저장됩니다.")
-        SectionLabel("ASR 엔진")
+        SectionLabel("휴대폰 음성 질문 언어")
+        val phoneLanguage = KoreanLanguage.phoneInput(drafts["phoneSpeechLanguage"].orEmpty())
+        KoreanLanguage.phoneInputOptions.forEach { (code, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(phoneLanguage == code, { drafts["phoneSpeechLanguage"] = code })
+                Text(label)
+            }
+        }
+        Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 휴대폰에 설치된 시스템 음성 인식 서비스의 언어 및 네트워크 지원을 따릅니다. 아래 안경 ASR과 별도 설정입니다.")
+        SectionLabel("안경 음성 인식 엔진 (ASR)")
         var engine by remember(model.config) { mutableStateOf(model.config.optString("asrEngine").ifBlank { "cloud" }) }
         Column {
             listOf("cloud" to "클라우드 (Bailian Qwen)", "nemotron" to "기기 내장 · 실시간 다국어 (Nemotron)", "stream" to "기기 내장 · 실시간 한국어 (zipformer)",
@@ -310,7 +319,7 @@ private fun PersonMergeDialog(model: AppModel, initial: VoicePerson, dismiss: ()
                     Checkbox(record.id in recordIds, { checked -> recordIds = if (checked) recordIds + record.id else recordIds - record.id })
                     Column(Modifier.weight(1f).padding(top = 8.dp)) {
                         Text(record.title)
-                        Note(java.text.SimpleDateFormat("M월 d일 HH:mm", java.util.Locale.CHINA).format(java.util.Date(record.createdAt)))
+                        Note(java.text.SimpleDateFormat("M월 d일 HH:mm", java.util.Locale.KOREA).format(java.util.Date(record.createdAt)))
                     }
                 }
             }
