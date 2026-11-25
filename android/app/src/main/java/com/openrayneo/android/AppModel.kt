@@ -263,10 +263,10 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         val old = settings.read()
         val updated = JSONObject(old.toString())
         values.forEach { (key, value) -> updated.put(key, value.trim()) }
-        if (values.keys.any { it in setOf("wakePhrases", "wakeListenSeconds", "wakeFollowupSeconds") }) {
+        if (values.keys.any { it in setOf("wakePhrases", "wakeSeconds", "wakeFollowSeconds") }) {
             KoreanWakeOptions.parse(updated.optString("wakePhrases", KoreanWakeOptions.DEFAULT_PHRASES),
-                updated.optString("wakeListenSeconds", "120").toIntOrNull() ?: 0,
-                updated.optString("wakeFollowupSeconds", "12").toIntOrNull() ?: 0)
+                updated.optString("wakeSeconds", "120").toIntOrNull() ?: 0,
+                updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
         val mobileChanged =
@@ -304,7 +304,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             formDrafts[it] = when (it) {
                 "asrEngine" -> SpeechRounds.engine(config)
                 "asrLanguage" -> SpeechRounds.languageHints(config)
-                "phoneSpeechLanguage", "responseLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
                 else -> config.optString(it)
             }
         }
@@ -316,7 +317,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "responseLanguage", "wakePhrases", "wakeListenSeconds", "wakeFollowupSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
