@@ -94,6 +94,15 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         return if ((reported[field] ?: 0) < before) "전송됨, 기기가 아직 새 값을 보고하지 않음"
             else if (matches(state)) "안경 재조회로 확인됨" else if (acknowledgementMissing) "변경 응답을 받지 못했고 현재 재조회 값이 요청과 다름" else "기기 재조회 값이 요청과 다릅니다. 현재 값을 확인하세요"
     }
+    /** Read the battery from this request's reply, not a cached or disconnected device state. */
+    fun readBatteryForVoice(): Int? {
+        val reply = requests.request(15, 1, envelope("request_general_status")) { type, body ->
+            type == 1 && body.has("generalStatus")
+        }
+        val value = reply?.optJSONObject("generalStatus")?.opt("battery") as? Number ?: return null
+        val percent = value.toDouble()
+        return percent.toInt().takeIf { percent == it.toDouble() && it in 0..100 }
+    }
     fun readForTool(): JSONObject { readAll(); return JSONObject().put("status", state.status).put("settings", state.settings) }
     fun tool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
         requests.perform({
