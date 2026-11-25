@@ -346,6 +346,19 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun sendMemoryQuestion(question: String, selected: MemoryReferencePolicy.Result): Boolean {
+        var submitted = false
+        attempt {
+            val old = ChatRecord(state.phoneQuestion, state.phoneAnswer)
+            val oldWasEphemeral = state.phoneEphemeral
+            service().submitMemoryQuestion(question.trim(), selected)
+            if (old.question.isNotBlank() && !oldWasEphemeral) phoneHistory = (phoneHistory + old).takeLast(30)
+            phoneDraft = ""
+            submitted = true
+        }
+        return submitted
+    }
+
     fun newConversation(source: AnswerSource) = attempt {
         if (source == AnswerSource.MOBILE_AGENT) {
             service().newMobileConversation()
