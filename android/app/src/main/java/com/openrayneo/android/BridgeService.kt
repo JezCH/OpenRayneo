@@ -72,6 +72,11 @@ internal class BridgeService : Service() {
     private val localClock = LocalClockPolicy.Clock()
     private var wakeRequest: String? = null
     private var wakeGeneration = 0L
+    private val ambientWake = AmbientKoreanWake()
+    private val ambientWakeSegments = linkedSetOf<String>()
+    private var ambientWakeRequest: String? = null
+    private var ambientWakeGeneration = 0L
+    var ambientWakeStatus = "호출 대기"; private set
     var wakeResult = "한국어 호출 대기 꺼짐"; private set
     val wakePending get() = wakeRequest != null
     private val focusPolicy = FocusPolicy.State()
@@ -107,6 +112,7 @@ internal class BridgeService : Service() {
             if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
             pollLocalClock()
             translator.pollWake(SystemClock.elapsedRealtime())
+            if (ambientWakeRequest != null && (!ambientWakeCurrent() || !settings.read().optBoolean("ambientWakeEnabled"))) resetAmbientWake()
             if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
             main.postDelayed(this, 1_000)
         }
@@ -148,6 +154,7 @@ internal class BridgeService : Service() {
         conversations = ConversationController(this, settings, ::notifyUI, ::conversationCapture, ::submitVoiceRequest,
             { segment, source ->
                 if (source == ConversationSource.NATIVE) segment.roundId?.let { voiceTransport.asr(segment.text, it) }
+                if (source == ConversationSource.ALWAYS_ON) handleAmbientWake(segment)
                 // Realtime hint: show what was just heard so the wearer knows the glasses are listening.
                 if (source == ConversationSource.REALTIME && conversationOwnsDisplay) {
                     cancelRealtimeStream()
@@ -460,6 +467,7 @@ internal class BridgeService : Service() {
         updateNotification(); notifyUI()
     }
     private fun nativeWake() {
+        resetAmbientWake()
         if (speechOutput.speaking) speechOutput.stop()
         notifyUI()
         if (translator.active && translator.captionOnly) return
@@ -508,6 +516,7 @@ internal class BridgeService : Service() {
         runCatching { startConversation(mode, ConversationSource.ALWAYS_ON) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
+        if (source == ConversationSource.ALWAYS_ON) resetAmbientWake()
         if (start) {
             if (speechOutput.speaking) speechOutput.stop()
             check(!destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting && !conversations.state.stopping) {
@@ -577,6 +586,8 @@ internal class BridgeService : Service() {
     private fun submitVoiceRequest(request: VoiceRequest): Boolean? {
         // Backfill is retained by the record controller, not a new authorization to execute work.
         if (request.backfill) return true
+        if (request.source == ConversationSource.ALWAYS_ON &&
+            (ambientWakeRequest != null || request.segmentIds.any { it in ambientWakeSegments })) return true
         val identity = nativeIdentity()
         val input = JSONObject().put("source", request.source.name).put("wakeId", request.wakeId)
             .put("recordId", request.recordId).put("sourceRevision", request.sourceRevision).put("backfill", request.backfill)
@@ -871,6 +882,68 @@ internal class BridgeService : Service() {
         wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
         if (translator.wakeActive) stopCaption()
         wakeResult = "한국어 호출 대기 꺼짐"; notifyUI()
+    }
+    private fun ambientWakeCurrent(recordId: String? = null): Boolean {
+        val active = conversations.state
+        return !destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+            active.running && !active.stopping && active.mode != ConversationMode.ENROLL &&
+            active.source == ConversationSource.ALWAYS_ON && (recordId == null || active.activeRecord?.id == recordId) &&
+            voiceTransport.source == ConversationSource.ALWAYS_ON && !voiceTransport.nativeActive &&
+            state.intent == DisplayIntent.Idle && !translator.active
+    }
+    fun resetAmbientWake() {
+        ambientWakeGeneration++
+        ambientWakeRequest?.let(agent.harness::cancelRequest); ambientWakeRequest = null
+        ambientWake.reset(); ambientWakeSegments.clear()
+        ambientWakeStatus = "호출 대기"
+    }
+    private fun handleAmbientWake(segment: SpeechSegment) {
+        val config = settings.read()
+        if (!config.optBoolean("ambientWakeEnabled") || !ambientWakeCurrent() || segment.processingMode != "live") return
+        val recordId = conversations.state.activeRecord?.id ?: return
+        if (!segment.id.startsWith("$recordId:")) return
+        val options = KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds"))
+        val speechAt = segment.timelineEndAt.takeIf { it > 0L } ?: segment.receivedAt
+        val speaker = segment.personId ?: segment.speaker.takeUnless { it == "未知" }.orEmpty()
+        val match = ambientWake.accept(recordId, segment.text, speaker, speechAt, System.currentTimeMillis(), segment.mixed, options) ?: return
+        ambientWakeSegments.add(segment.id)
+        if (ambientWakeSegments.size > 512) ambientWakeSegments.remove(ambientWakeSegments.first())
+        // An explicit question supersedes stale passive suggestions, not another app's work.
+        agent.harness.cancelPassiveHints()
+        val question = match.question
+        if (question == null) {
+            ambientWakeStatus = "호출어 감지 · 다음 질문을 기다립니다"
+            sendCompanionNotification("한국어 호출", "질문하세요", FocusPolicy.Output.DIRECT_ANSWER)
+            notifyUI(); return
+        }
+        val token = ++ambientWakeGeneration
+        ambientWakeRequest?.let(agent.harness::cancelRequest); ambientWakeRequest = null
+        fun answer(text: String) {
+            ambientWakeStatus = text
+            if (ambientWakeCurrent(recordId)) sendCompanionNotification("한국어 호출", text.take(100), FocusPolicy.Output.DIRECT_ANSWER)
+            notifyUI()
+        }
+        val normalized = KoreanLanguage.normalize(question).filterNot(Char::isWhitespace).trimEnd('?','!','.')
+        val local = when (normalized) {
+            "지금몇시야", "현재시간알려줘", "시간알려줘", "몇시야" ->
+                java.text.SimpleDateFormat("a h시 m분", java.util.Locale.KOREA).format(java.util.Date())
+            "오늘며칠이야", "오늘날짜알려줘", "날짜알려줘" ->
+                java.text.SimpleDateFormat("yyyy년 M월 d일 EEEE", java.util.Locale.KOREA).format(java.util.Date())
+            else -> null
+        }
+        if (local != null) { answer(local); return }
+        if (!agentServer.state.enabled) { answer("호출 인식 완료 · AI 연결 설정 필요"); return }
+        ambientWakeStatus = "호출 인식 · AI 응답 대기"
+        notifyUI()
+        ambientWakeRequest = agent.harness.submit(question,
+            KoreanLanguage.withAnswerPolicy("직접 호출 뒤의 질문입니다. 질문에만 간결하게 답하세요. 도구 사용, 기억 조회 및 업무 실행은 하지 마세요. 안경 표시를 위해 100자 이내로 답하세요.", config.optString("answerLanguage")),
+            kind = "hint", input = JSONObject().put("purpose", "korean_wake").put("question", question),
+            hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
+            if (token != ambientWakeGeneration || destroyed) return@submit
+            ambientWakeRequest = null
+            if (ambientWakeCurrent(recordId) && settings.read().optBoolean("ambientWakeEnabled"))
+                answer(result.getOrNull()?.takeIf { it.isNotBlank() } ?: "AI 응답 실패 또는 만료")
+        }
     }
     private fun handleKoreanWake(question: String, allowAI: Boolean) {
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle ||
@@ -1347,6 +1420,7 @@ internal class BridgeService : Service() {
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
+        resetAmbientWake()
         wakeGeneration++; wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
         migration.close(); speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)

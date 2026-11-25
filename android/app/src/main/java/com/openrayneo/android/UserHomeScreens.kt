@@ -59,6 +59,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 }
                 Note("음성 수신: " + s.glasses.audio.detail)
                 Note("음성 인식: " + if (c.modelReady) "준비됨" else "설정 또는 모델 준비 필요")
+                if (model.config.optBoolean("ambientWakeEnabled") && c.running && c.source == ConversationSource.ALWAYS_ON) Note("한국어 호출: " + s.ambientWakeStatus)
                 Note("AI: " + if (s.agentServer.enabled) "연결 기능 켜짐 · 실제 응답은 별도 확인" else "연결 설정 필요")
                 if (c.running || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
@@ -166,7 +167,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("길 안내", "Amap · 국내 지도 실험", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
-        item { FeatureTile("한국어 호출", "호출어 및 대기시간 설정 (실험)", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
+        item { FeatureTile("한국어 호출", "종일 호출 · 호출어 설정", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
         item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {

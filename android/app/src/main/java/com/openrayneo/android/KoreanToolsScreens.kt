@@ -27,9 +27,22 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
     val editable = !s.wakeActive && !s.wakePending
     var allowAI by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
+    var startContinuous by remember { mutableStateOf(false) }
+    val continuous = model.config.optBoolean("ambientWakeEnabled")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("한국어 호출 (실험)", style = MaterialTheme.typography.headlineSmall)
+            Text("종일 한국어 호출", style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(continuous, { enabled -> model.saveConfig(mapOf("ambientWakeEnabled" to enabled.toString())) })
+                Text("종일 기록 중 호출어 감지 및 AI 질문 허용")
+            }
+            Note("종일 기록이 실행 중일 때 별도 120초 제한 없이 기존 전사에서 호출어를 감지합니다. 질문 후 자동으로 다음 호출을 기다립니다. 전사 지연이 있을 수 있으며 화자 인증 및 작업 도구는 지원하지 않습니다. AI 질문은 연결한 모델에 전송됩니다.")
+            Note(if (continuous && s.conversation.running && s.conversation.source == ConversationSource.ALWAYS_ON) "최근 호출 상태: " + s.ambientWakeStatus else "종일 기록을 시작해야 호출을 감지합니다.")
+            if (!s.conversation.running) ToolButton(onClick = { startContinuous = true }, enabled = continuous && linked && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
+            else if (s.conversation.source == ConversationSource.ALWAYS_ON) ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text("종일 기록 중지") }
+        } }
+        item { ContentCard {
+            Text("한국어 호출 (1회 시험)", style = MaterialTheme.typography.headlineSmall)
             Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
             Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
             Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
@@ -76,6 +89,10 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
+    if (startContinuous) AlertDialog(onDismissRequest = { startContinuous = false }, title = { Text("종일 기록 및 호출을 시작할까요?") },
+        text = { Text("안경 마이크의 음성이 인식·기록되며 보존 설정에 따라 원본이 저장될 수 있습니다. 설정된 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요.") },
+        confirmButton = { TextButton(onClick = { startContinuous = false; model.attempt { model.service().startConversation(ConversationMode.DAILY, ConversationSource.ALWAYS_ON) } }, enabled = continuous && linked && !busy && !dirty) { Text("동의하고 시작") } },
+        dismissButton = { TextButton(onClick = { startContinuous = false }) { Text("취소") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("한국어 호출 대기를 시작할까요?") },
         text = { Text("주변 음성이 일시적으로 로컬에서 인식됩니다. 기록을 저장하지 않습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (allowAI) " 호출 후 질문 1개를 설정된 AI로 보냅니다." else " AI 요청은 하지 않습니다.") },
         confirmButton = { TextButton(enabled = linked && localReady && !busy && !dirty, onClick = {
