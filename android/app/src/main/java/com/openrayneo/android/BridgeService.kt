@@ -891,7 +891,7 @@ internal class BridgeService : Service() {
         }
         if (local != null) {
             wakeResult = local
-            sendCompanionNotification("한국어 호출", local, FocusPolicy.Output.DIRECT_ANSWER)
+            runCatching { sendCompanionNotification("한국어 호출", local, FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
         }
         if (!allowAI || !agentServer.state.enabled || agent.running || codex.running) {
@@ -907,7 +907,7 @@ internal class BridgeService : Service() {
                 wakeResult = result.getOrNull()?.takeIf { it.isNotBlank() } ?: "AI 응답 실패 또는 만료"
                 if (state.link.phase == LinkPhase.FULL && !state.disconnecting && state.intent == DisplayIntent.Idle &&
                     !conversations.state.running && !translator.active && !voiceTransport.nativeActive) {
-                    sendCompanionNotification("한국어 호출", wakeResult.take(100), FocusPolicy.Output.DIRECT_ANSWER)
+                    runCatching { sendCompanionNotification("한국어 호출", wakeResult.take(100), FocusPolicy.Output.DIRECT_ANSWER) }
                 }
                 notifyUI()
             }
@@ -933,7 +933,7 @@ internal class BridgeService : Service() {
         dispatch(GlassesEvent.StartTranslation)
     }
     fun speakKorean(text: String) {
-        check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow) { "녹음·음성 기능을 먼저 종료하세요" }
+        check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow && teleprompter.state.active == null && !teleprompter.state.busy) { "녹음·음성 기능을 먼저 종료하세요" }
         speechOutput.speak(text)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
@@ -1294,6 +1294,7 @@ internal class BridgeService : Service() {
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
+        wakeGeneration++; wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
         speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
