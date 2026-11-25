@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -190,6 +190,21 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("일반 2채널 동시 처리: 채널 1은 기본 본인, 채널 2는 별도 식별. 종일 기록과 기타 모노 오디오는 전체 화자 식별. 이 옵션은 직접 등록에만 쓰이며 기록 정책은 바뀌지 않습니다.")
         VoiceField(model, "audioChannel", "등록 진단 채널: 0/1 채널 1, 2 채널 2", "0")
         VoiceField(model, "speakerThreshold", "목소리 매칭 임계값 (내 목소리로 보정 필요)", "0.7")
+        SectionLabel("AI 기억 추천")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(drafts["memorySuggestOnSend"] == "true", { drafts["memorySuggestOnSend"] = it.toString() })
+            Text("AI 질문을 보낼 때 관련 기록 자동 추천")
+        }
+        Note("기본 꺼짐. 켜면 전송 전에 휴대폰 내부 검색을 실행합니다. 실제 AI 전송은 추천 기록을 직접 선택하고 동의한 경우에만 이루어집니다. 일반 PC 작업에는 적용하지 않습니다.")
+        Text("추천할 기록 기간")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AutomaticMemoryPolicy.days.forEach { n -> FilterChip(drafts["memorySuggestionDays"] == n.toString(), { drafts["memorySuggestionDays"] = n.toString() }, label = { Text("${n}일") }) }
+        }
+        Text("최대 추천 개수")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AutomaticMemoryPolicy.limits.forEach { n -> FilterChip(drafts["memorySuggestionLimit"] == n.toString(), { drafts["memorySuggestionLimit"] = n.toString() }, label = { Text("${n}개") }) }
+        }
+        TextButton(onClick = { drafts["memorySuggestOnSend"] = "false"; drafts["memorySuggestionDays"] = "30"; drafts["memorySuggestionLimit"] = "3" }) { Text("기억 추천 기본값 복원") }
         AboutYouSection()
         SectionLabel("기록 요약")
         VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
