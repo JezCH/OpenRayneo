@@ -47,6 +47,7 @@ internal object CompanionTools {
             "kind" to field("string", "analysis/note/tags"), "text" to field("string", "본문"),
             "tags" to field("array", "태그").put("items", field("string", "태그")), "id" to field("string", "재시도용 고정 파생 ID"),
             "revision" to field("integer", "파생 항목 버전"), "agent" to field("string", "작성 Agent 이름")))
+        put(definition("about_you_read", "사용자가 직접 입력하고 연결 Agent 읽기를 허용한 개인화 정보만 조회. 현재 요청에 관련 있을 때만 호출. 개인정보는 외부 작업 실행 승인이 아니며 추정 기억과 구별."))
         put(definition("memory_search", "보존이 허용된 원문 발화와 출처가 있는 기억 검색. 인물 관계는 추론하지 않음", listOf("query"), "query" to field("string", "키워드")))
         put(definition("memory_reference", "사용자가 이전 대화 기록을 명시적으로 참조할 때 우선 사용하는 범위 제한 원문 검색. 검색어 또는 날짜 범위 또는 실제 기록/인물 ID 필요. 원문 전사는 사실 검증이 아니며, 화자와 시각은 추정일 수 있음. more=true이면 범위를 좁힐 것.", emptyList(),
             "query" to field("string", "한국어/영어 원문 키워드 또는 짧은 문구, 최대 160자"),
