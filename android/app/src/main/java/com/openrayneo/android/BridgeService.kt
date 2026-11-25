@@ -392,6 +392,13 @@ internal class BridgeService : Service() {
         return true
     }
     private fun deliverExternalVoice(question: String, answer: String, input: JSONObject) {
+        // DshRelay restores explicitly submitted non-voice tasks with an empty input object.
+        // Preserve that existing notification path; it is not a passive voice hint.
+        if (input.length() == 0) {
+            if (answer.isNotBlank() && !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting)
+                connection.sendNotification("어시스턴트", answer)
+            return
+        }
         val source = ConversationSource.values().firstOrNull { it.name == input.optString("source") }
         if (VoiceOutputPolicy.isSilent(answer, source)) return
         val id = input.optString("recordId")
