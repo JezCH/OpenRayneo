@@ -205,6 +205,7 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
             ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) { Text(if (linked) "연결 관리" else "안경 연결") }
         } }
         item { FeatureTile("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings, Modifier.fillMaxWidth()) { open("device-settings") } }
+        item { FeatureTile("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone, Modifier.fillMaxWidth()) { open("phone-notifications") } }
         item { FeatureTile("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { FeatureTile("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
         item { FeatureTile("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune, Modifier.fillMaxWidth()) { open("diagnostics") } }
