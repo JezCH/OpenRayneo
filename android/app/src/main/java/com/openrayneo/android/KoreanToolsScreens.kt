@@ -17,14 +17,23 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
     val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
         s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.teleprompter.active != null ||
         s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
+    val options = KoreanWakeOptions.from(model.config.optString("wakePhrases"), model.config.optString("wakeSeconds"), model.config.optString("wakeFollowSeconds"))
+    var phrases by remember(model.config) { mutableStateOf(options.phrases.joinToString(", ")) }
+    var listen by remember(model.config) { mutableIntStateOf(options.listenSeconds) }
+    var followup by remember(model.config) { mutableIntStateOf(options.followupSeconds) }
+    val parsed = runCatching { KoreanWakeOptions.parse(phrases, listen, followup) }
+    val dirty = parsed.getOrNull() != options
+    val editable = !s.wakeActive && !s.wakePending
     var allowAI by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
             Text("한국어 호출 (실험)", style = MaterialTheme.typography.headlineSmall)
             Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
-            Note("안경의 기존 음성 수신과 로컬 한국어 인식을 사용합니다. 내장 깨우기 모델은 변경하지 않습니다. 한 번 시작하면 최대 2분간 듣고 한 명령 처리 후 종료합니다. 호출어 뒤 질문을 한 문장으로 말하거나 12초 이내에 다음 문장으로 말하세요.")
-            Note("예: 자비스, 지금 몇 시야 / 레이네오야, 안경 타이머 오 분 시작해줘 / 자비스, 안경 집중 모드 켜줘")
+            Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
+            Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
+            Note("예: " + options.phrases.first() + ", 지금 몇 시야")
+
             if (!s.wakeActive && !s.wakePending) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(allowAI, { allowAI = it })
@@ -33,8 +42,35 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
                 Note("기본은 로컬 명령만 실행합니다. AI를 허용하면 호출 후 인식한 한 문장이 DSH 모델로 전송되며 이용량/비용이 발생할 수 있습니다. 화자 인증은 하지 않습니다.")
                 if (!linked) Note("먼저 안경을 연결하세요.")
                 if (!localReady) ToolOutlinedButton(onClick = voiceSettings) { Text("로컬 음성 모델 설정") }
-                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy) { Text("호출 대기 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy && !dirty) { Text("호출 대기 시작") }
             } else ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("호출 중지") }
+        } }
+        item { ContentCard {
+            Text("호출어 및 대기 설정", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(phrases, { phrases = it.take(80) }, Modifier.fillMaxWidth(), enabled = editable,
+                label = { Text("나만의 호출어") }, singleLine = true, isError = parsed.isFailure,
+                supportingText = { Text(parsed.exceptionOrNull()?.message ?: "한글 2~12자, 최대 3개 · 쉼표로 구분") })
+            Text("호출 대기 시간")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KoreanWakeOptions.listenChoices.forEach { n ->
+                    FilterChip(selected = listen == n, onClick = { listen = n }, label = { Text(n.toString() + "초") }, enabled = editable)
+                }
+            }
+            Text("호출 후 질문 대기 시간")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KoreanWakeOptions.followupChoices.forEach { n ->
+                    FilterChip(selected = followup == n, onClick = { followup = n }, label = { Text(n.toString() + "초") }, enabled = editable)
+                }
+            }
+            if (dirty) Note("호출을 시작하기 전에 변경 내용을 저장하세요.")
+            if (!editable) Note("호출을 중지한 후 변경할 수 있습니다.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ToolButton(onClick = {
+                    val value = parsed.getOrNull() ?: return@ToolButton
+                    model.saveConfig(mapOf("wakePhrases" to value.phrases.joinToString(", "), "wakeSeconds" to listen.toString(), "wakeFollowSeconds" to followup.toString()))
+                }, enabled = editable && parsed.isSuccess && dirty) { Text("설정 저장") }
+                TextButton(onClick = { phrases = KoreanWakeOptions.DEFAULT_PHRASES; listen = 120; followup = 12 }, enabled = editable) { Text("기본값 복원") }
+            }
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
