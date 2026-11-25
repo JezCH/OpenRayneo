@@ -20,16 +20,17 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     var question = ""; private set
     var ephemeral = false; private set
     val harness = DshRelay(main, repository, restored) { message -> if (running) { status = message; changed() } }
-    fun submit(text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = true) {
+    fun submit(text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = true, references: JSONObject? = null) {
         check(!running) { "답변을 기다리거나 먼저 중지하세요" }
         // Restricted requests must not enter a durable tool-executing session.
         check(retainHistory || !allowTools) { "기록 없는 작업 실행은 지원하지 않습니다. 질문 전용을 사용하세요" }
+        check(references == null || (!allowTools && !retainHistory)) { "기억 첨부는 질문 전용 요청에서만 지원합니다" }
         val policy = KoreanLanguage.withAnswerPolicy(context, settings.read().optString("answerLanguage"))
         val session = ++generation
         question = text; answer = ""; running = true; ephemeral = !retainHistory
         status = "로컬 외부 Agent의 수신 대기 중…"; changed()
         val kind = if (allowTools) "task" else "hint"
-        val input = if (allowTools) null else JSONObject().put("purpose", "explicit_question").put("question", text)
+        val input = if (allowTools) null else JSONObject().put("purpose", "explicit_question").put("question", text).apply { if (references != null) put("references", references) }
         requestId = harness.submit(text, policy, kind = kind, input = input,
             hintLifetimeMs = if (allowTools) 0L else ProactiveHintPolicy.MAX_AGE_MS) { result ->
             if (session == generation) {
