@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -89,6 +89,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("기본 음성 깨우기에서 한국어 안경 배터리·밝기 명령은 기기에서 바로 처리합니다. 다른 질문은 설정한 로컬 Agent로 전달합니다.")
         Note("예: 안경 배터리 얼마야 / 안경 밝기 몇 단계야 / 안경 밝기 올려줘 / 안경 밝기 내려줘 / 안경 밝기 7단계로 설정해줘. 밝기는 한 단계씩 또는 1~17단계로 조절하며, 안경의 재조회 결과를 확인합니다.")
         Note("종일 기록의 현재 발화는 도구 없는 짧은 선제 힌트로만 처리합니다. 필요할 때만 표시하며 오래된 힌트는 폐기합니다. 기억 조회·실시간 검색·업무 실행이 필요하면 직접 음성 깨우기 또는 Agent에 요청하세요. 힌트 추론은 연결한 DSH Go 모델을 사용합니다.")
+        var fastRealtimeHints by remember(model.config) { mutableStateOf(model.config.optBoolean("fastRealtimeHints")) }
+        Row {
+            Checkbox(fastRealtimeHints, { fastRealtimeHints = it; drafts["fastRealtimeHints"] = it.toString() })
+            Text("실시간 힌트 화면: 빠른 스트리밍 (도구 없는 답변)")
+        }
+        Note("선택하면 실시간 듣기 화면을 유지한 채 작성 중인 짧은 힌트를 갱신합니다. 새 발화·화면 전환·만료 시 이전 갱신을 중단합니다. 기억 조회·실시간 검색·업무 실행에는 기존 일반 Agent 모드 또는 직접 깨우기를 사용하세요. DSH Go 플러그인 업데이트가 필요하며 미지원 시 최종 답변만 표시됩니다. 최종 힌트는 다음 발화 또는 화면 전환까지 유지됩니다.")
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 원본 저장 모드의 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
