@@ -109,7 +109,7 @@ internal class RecordMigration(private val main: Handler, private val repository
             } finally { activeCall = null }
         }
     }
-    fun transfer() {
+    fun transfer(includeAudio: Boolean) {
         check(!closed && !state.busy)
         val selected = checkNotNull(plan) { "먼저 이전 목록을 확인하세요" }
         plan = null; cancelled = false
@@ -134,7 +134,7 @@ internal class RecordMigration(private val main: Handler, private val repository
                     var newAudio: String? = null
                     var committed = false
                     try {
-                        if (!record.transcriptOnly && record.audioSamples > 0L) {
+                        if (includeAudio && !record.transcriptOnly && record.audioSamples > 0L) {
                             val id = UUID.randomUUID().toString()
                             request(selected.port, selected.token, "/v1/sync/audio?recordId=" + record.id).use { response ->
                                 val body = checkNotNull(response.body)
@@ -144,7 +144,8 @@ internal class RecordMigration(private val main: Handler, private val repository
                             newAudio = id
                         }
                         checkRunning()
-                        committed = repository.importCompleted(record.copy(audioId = newAudio))
+                        committed = repository.importCompleted(record.copy(audioId = newAudio,
+                            transcriptOnly = record.transcriptOnly || (!includeAudio && record.audioSamples > 0L)))
                         if (committed) importedRecords++ else skipped++
                     } catch (_: Exception) { if (!cancelled && !closed) failed++ }
                     finally { if (!committed) newAudio?.let { audio.discardUncommittedImport(it) }; activeCall = null }
