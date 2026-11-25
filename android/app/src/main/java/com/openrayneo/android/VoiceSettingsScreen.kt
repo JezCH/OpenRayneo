@@ -131,6 +131,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("일반 2채널 동시 처리: 채널 1은 기본 본인, 채널 2는 별도 식별. 종일 기록과 기타 모노 오디오는 전체 화자 식별. 이 옵션은 직접 등록에만 쓰이며 기록 정책은 바뀌지 않습니다.")
         VoiceField(model, "audioChannel", "등록 진단 채널: 0/1 채널 1, 2 채널 2", "0")
         VoiceField(model, "speakerThreshold", "목소리 매칭 임계값 (내 목소리로 보정 필요)", "0.7")
+        AboutYouSection()
         SectionLabel("기록 요약")
         VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
         VoiceField(model, "modelName", "요약 모델 이름")
