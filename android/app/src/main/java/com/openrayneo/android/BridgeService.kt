@@ -527,7 +527,8 @@ internal class BridgeService : Service() {
         return input.optBoolean("streamHint") && !destroyed && !state.disconnecting &&
             state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP &&
             state.intent == DisplayIntent.PromptStandby && conversationOwnsDisplay &&
-            active.running && !active.stopping && active.source == ConversationSource.REALTIME &&
+            state.session?.mode == PageMode.PROMPT && state.session?.phase != PagePhase.CLOSING &&
+            state.blockedRevision != state.revision && active.running && !active.stopping && active.source == ConversationSource.REALTIME &&
             active.activeRecord?.id == input.optString("recordId") &&
             input.optString("serviceInstance") == serviceInstance &&
             input.optString("contextKey") == settings.read().optString("nativeConversationKey") &&
