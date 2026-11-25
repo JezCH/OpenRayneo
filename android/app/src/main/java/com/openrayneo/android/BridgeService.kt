@@ -304,6 +304,7 @@ internal class BridgeService : Service() {
                     content.connected(); runCatching { deviceSettings.refresh() }
                     if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
                 }
+                if (currentEvent is GlassesEvent.ExternalPage && prompterLaunchPending) cancelPrompterLaunch()
                 if (currentEvent is GlassesEvent.ExternalPage && conversations.state.running && !conversations.state.stopping) {
                     // A firmware-owned prompter was actually observed. Stop our capture,
                     // but do not seize the external display or automatically restart recording.
@@ -480,7 +481,7 @@ internal class BridgeService : Service() {
         check(!migration.state.busy) { "기록 이전을 먼저 종료하세요" }
         requirePrompterFree()
         check(!translator.active) { "실시간 번역·자막을 먼저 종료하세요" }
-        check(voiceTransport.source == null && (source == ConversationSource.NATIVE || !voiceTransport.nativeActive)) {
+        check(voiceTransport.source == null && (source == ConversationSource.NATIVE) == voiceTransport.nativeActive) {
             "현재 안경 음성 세션을 먼저 종료하세요"
         }
         requireNativeCapturePageFree(source)
