@@ -262,6 +262,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveConfig(values: Map<String, String>) = attempt {
+        check(!state.migration.busy || !values.containsKey("memoryAutoSummary") || !SummaryDispatchPolicy.autoEnabled(values.getValue("memoryAutoSummary"))) { "기록 이전 중에는 자동 요약을 켤 수 없습니다" }
         val old = settings.read()
         val updated = JSONObject(old.toString())
         values.forEach { (key, value) -> updated.put(key, value.trim()) }
