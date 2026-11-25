@@ -30,6 +30,7 @@ internal class LiveTranslator(
 ) {
     @Volatile var active = false; private set
     @Volatile var status = OFF; private set
+    @Volatile var captionOnly = false; private set
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -57,18 +58,30 @@ internal class LiveTranslator(
         MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
     }
 
-    /** Must be called on the main thread. */
-    fun start(settings: JSONObject) {
-        validate(settings)
+    fun captionConfig(settings: JSONObject): JSONObject {
+        val speech = JSONObject().put("asrEngine", settings.optString("asrEngine"))
+            .put("asrLanguage", settings.optString("asrLanguage", "ko"))
+        require(SpeechRounds.model(speech) != null) { "자막은 기기 내장 음성 인식 모델만 지원합니다. 음성 설정에서 로컬 모델을 선택하세요." }
+        require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
+        return speech
+    }
+
+    /** Must be called on the main thread. No cloud fallback in caption mode. */
+    fun start(settings: JSONObject, captions: Boolean = false) {
+        val speech = if (captions) captionConfig(settings) else {
+            validate(settings)
+            JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
+        }
         stop()
         synchronized(this) {
-            config = JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
+            captionOnly = captions
+            config = speech
             generation++
             active = true
             resampler = ConversationAudio()
         }
         history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
-        status = LISTENING
+        status = listening()
         openASR()
         changed()
     }
@@ -84,7 +97,8 @@ internal class LiveTranslator(
         }
         restartTask?.let(main::removeCallbacks); restartTask = null
         call?.cancel()
-        if (wasActive || reason != null) { status = reason ?: OFF; changed() }
+        history.clear(); sourceLine = ""; targetLine = ""
+        if (wasActive || reason != null) { status = reason ?: if (captionOnly) "실시간 자막 꺼짐" else OFF; changed() }
     }
 
     /** Called on the audio worker with 48 kHz PCM from the glasses prompt page. */
@@ -130,7 +144,7 @@ internal class LiveTranslator(
         // A normal end (null) just reopens; errors back off and give up after repeated failures without speech.
         if (message != null) failures++
         if (failures >= MAX_FAILURES) {
-            stop("ASR 연결 실패로 번역을 멈췄습니다: $message")
+            stop("ASR 연결 실패로 ${if (captionOnly) "자막" else "번역"}을 멈췄습니다: $message")
             gaveUp()
             return
         }
@@ -142,10 +156,12 @@ internal class LiveTranslator(
     }
 
     private fun heard() {
-        if (failures != 0 || status != LISTENING) { failures = 0; status = LISTENING; changed() }
+        if (failures != 0 || status != listening()) { failures = 0; status = listening(); changed() }
     }
 
-    private fun render() = show(clip(sourceLine, SOURCE_LIMIT), targetLine)
+    private fun listening() = if (captionOnly) "듣는 중 · 로컬 자막" else LISTENING
+    private fun render() = if (captionOnly) show("실시간 자막", clip(sourceLine, TARGET_LIMIT))
+        else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
 
     private fun interim(token: Int, text: String) {
         if (token != generation || !active || misheard(text)) return
@@ -159,6 +175,7 @@ internal class LiveTranslator(
         heard()
         // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
         if (misheard(text)) return
+        if (captionOnly) { sourceLine = text; render(); return }
         val sequence = ++latestFinal
         val from = if (isKorean(text)) "Korean" else "English"
         val to = if (from == "Korean") "English" else "Korean"
