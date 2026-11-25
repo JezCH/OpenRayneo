@@ -67,6 +67,7 @@ internal class BridgeService : Service() {
     private var conversationOwnsDisplay = false
     private var resumeAlwaysOn: ConversationMode? = null
     private val voiceAlwaysOnStart = AlwaysOnVoicePolicy.PendingStart()
+    private val localClock = LocalClockPolicy.Clock()
     private val reconnectCapture = AlwaysOnReconnectPolicy()
     val alwaysOnResumePending: Boolean get() = reconnectCapture.pending
     private var notificationText = ""
@@ -91,6 +92,7 @@ internal class BridgeService : Service() {
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
             if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
             if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
+            pollLocalClock()
             main.postDelayed(this, 1_000)
         }
     }
@@ -176,6 +178,8 @@ internal class BridgeService : Service() {
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("bridge", "안경 연결 및 내비게이션", NotificationManager.IMPORTANCE_LOW))
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel("local-clock", "휴대폰 기반 타이머", NotificationManager.IMPORTANCE_LOW))
         initialized = true
         dispatch(GlassesEvent.NavigationChanged(navigationSnapshot()))
         NavigationNotifications.refresh(this)
@@ -189,6 +193,12 @@ internal class BridgeService : Service() {
             dispatch(GlassesEvent.StopNavigation)
             stopAfterDisconnect = true
             disconnect()
+        } else if (intent?.action == "CANCEL_LOCAL_TIMER") {
+            if (foreground) {
+                pollLocalClock()
+                localClock.execute(LocalClockPolicy.Command(LocalClockPolicy.Kind.TIMER_CANCEL), SystemClock.elapsedRealtime())
+                updateNotification(); notifyUI()
+            } else stopSelf()
         } else {
             startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 if (PhoneLocation.allowed(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
@@ -302,6 +312,7 @@ internal class BridgeService : Service() {
         }
     }
     fun disconnect() {
+        localClock.clear()
         supervisor.cancelRetries()
         stopConversation()
         dispatch(GlassesEvent.Disconnect)
@@ -468,6 +479,26 @@ internal class BridgeService : Service() {
             } else { voiceAudio.stop(); voiceTransport.stop() }
         }
     }
+    private fun pollLocalClock() {
+        if (destroyed || !localClock.poll(SystemClock.elapsedRealtime())) return
+        val title = "타이머 완료"
+        val body = "휴대폰에서 설정한 시간이 지났습니다."
+        runCatching {
+            val manager = getSystemService(NotificationManager::class.java)
+            if (manager.areNotificationsEnabled() && manager.getNotificationChannel("local-clock")?.importance != NotificationManager.IMPORTANCE_NONE) {
+                val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                manager.notify(7918, Notification.Builder(this, "local-clock")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title).setContentText(body)
+                    .setContentIntent(open).setAutoCancel(true).build())
+            } else onLog("타이머 완료: 휴대폰 알림이 차단되어 있습니다.")
+        }.onFailure { onLog("타이머 휴대폰 알림 전송 실패") }
+        if (state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+            runCatching { connection.sendNotification(title, body) }
+                .onFailure { onLog("타이머 안경 알림 전송 실패") }
+        }
+        onLog("휴대폰 타이머 완료")
+        updateNotification(); notifyUI()
+    }
     private fun submitVoiceRequest(request: VoiceRequest): Boolean? {
         val identity = nativeIdentity()
         val input = JSONObject().put("source", request.source.name).put("wakeId", request.wakeId)
@@ -480,6 +511,32 @@ internal class BridgeService : Service() {
             cancelRealtimeStream()
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
+        }
+        val clockCommand = LocalClockPolicy.parse(request.text, request.source, request.backfill)
+        if (clockCommand != null) {
+            val active = conversations.state
+            val wake = request.wakeId
+            val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
+            val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
+                segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
+            } == true
+            if (fresh && wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                active.source == ConversationSource.NATIVE && request.recordId != null &&
+                active.activeRecord?.id == request.recordId && !destroyed && foreground &&
+                state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                pollLocalClock()
+                val wasRunning = localClock.timerRunning
+                val answer = if (!unmixed) "겹친 발화 또는 불확실한 명령입니다. 다시 요청해 주세요."
+                    else localClock.execute(clockCommand, SystemClock.elapsedRealtime())
+                if (!wasRunning && localClock.timerRunning) {
+                    runCatching { getSystemService(NotificationManager::class.java).cancel(7918) }
+                }
+                updateNotification(); notifyUI()
+                input.put("derivedId", java.util.UUID.randomUUID().toString())
+                deliverExternalVoice(request.text, answer, input)
+            }
+            return true
         }
         val sessionCommand = AlwaysOnVoicePolicy.parse(request.text, request.source, request.backfill)
         if (sessionCommand != null) {
@@ -908,7 +965,7 @@ internal class BridgeService : Service() {
         if (!dispatching) notifyUI()
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    private fun summary() = state.displayDescription + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
+    private fun summary() = state.displayDescription + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
         AudioPhase.RECEIVING -> " · 음성 수신 중"
         AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
         AudioPhase.STALLED -> " · 오디오 중단됨"
@@ -918,9 +975,14 @@ internal class BridgeService : Service() {
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, BridgeService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+        val builder = Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("OpenRayneo").setContentText(summary()).setContentIntent(open).setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build()).build()
+            .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build())
+        if (localClock.timerRunning) {
+            val cancel = PendingIntent.getService(this, 7919, Intent(this, BridgeService::class.java).setAction("CANCEL_LOCAL_TIMER"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(Notification.Action.Builder(null, "타이머 취소", cancel).build())
+        }
+        return builder.build()
     }
     private fun updateNotification() {
         if (!initialized || !foreground || stopAfterDisconnect) return
@@ -928,7 +990,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
-        voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
+        localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
