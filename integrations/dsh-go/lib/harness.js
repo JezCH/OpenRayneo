@@ -3,6 +3,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import { createHintPreview } from './hint-preview.js'
+import { selectHintRoute } from './ambient-model.js'
 import { ApiError } from './api.js'
 import {nativeScope, nativeSession} from './native-sessions.js'
 import modePrompts from './voice-modes.json' with {type: 'json'}
@@ -129,8 +130,9 @@ export function startHarness(ctx, config, api, lifetime, opening) {
     try {
       signal.throwIfAborted()
       watching = monitor()
+      if (request.input?.backfill === true) throw new Error('과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다. 기록 화면에서 직접 요청하세요.')
       if (request.kind === 'route' || request.kind === 'hint') {
-        const route = ctx.agentDefaultModel.currentSelection()
+        const route = await selectHintRoute(ctx, config, request, signal)
         const assembler = new BlockAssembler()
         const preview = request.kind === 'hint' && request.input?.streamHint === true
           ? createHintPreview(answer => {
