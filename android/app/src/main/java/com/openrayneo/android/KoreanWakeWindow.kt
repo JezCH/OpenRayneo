@@ -8,6 +8,10 @@ internal data class KoreanWakeOptions(val phrases: List<String>, val listenSecon
         const val DEFAULT_PHRASES = "자비스, 레이네오야"
         val listenChoices = listOf(30, 60, 120)
         val followupChoices = listOf(5, 8, 12)
+        // Empty values from pre-feature configurations mean the defaults. Invalid nonempty values fail.
+        fun from(raw: String, listen: String, followup: String): KoreanWakeOptions = parse(
+            raw.ifBlank { DEFAULT_PHRASES }, listen.ifBlank { "120" }.toIntOrNull() ?: 0,
+            followup.ifBlank { "12" }.toIntOrNull() ?: 0)
         fun parse(raw: String = DEFAULT_PHRASES, listen: Int = 120, followup: Int = 12): KoreanWakeOptions {
             val phrases = raw.split(',').map { KoreanLanguage.normalize(it).trim().replace(Regex("\\s+"), " ") }
             require(phrases.size in 1..3 && phrases.distinct().size == phrases.size &&
