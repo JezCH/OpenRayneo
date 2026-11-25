@@ -187,7 +187,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             }, enabled = !s.speechPlaying && !s.conversation.running && !s.translationActive && !s.nativeWakeAvailable && !s.teleprompter.smartFollow) { Text("한국어로 듣기") }
                             if (s.speechPlaying) TextButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 중지") }
                         }
-                        Note(s.speechStatus + " · 휴대폰 미디어 출력 경로 사용. 이어폰 연결을 확인하세요.")
+                        Note(s.speechStatus + " · 기본은 이어폰 경로 확인 후 재생합니다. 무음이 필요한 장소에서는 HUD만 사용하세요.")
                         Row(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
