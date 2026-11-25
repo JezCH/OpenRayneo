@@ -159,7 +159,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("프롬프터", "원고 · 따라 읽기", Icons.Outlined.Description, Modifier.weight(1f)) { open("teleprompter") }
         } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FeatureTile("길 안내", "Amap 지원", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
+            FeatureTile("길 안내", "Amap · 국내 지도 실험", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
         item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
