@@ -374,13 +374,13 @@ internal class BridgeService : Service() {
         val identity = nativeIdentity()
         val input = JSONObject().put("source", request.source.name).put("wakeId", request.wakeId)
             .put("recordId", request.recordId).put("sourceRevision", request.sourceRevision).put("backfill", request.backfill)
-            .put("contextKey", identity.getString("conversationKey"))
+            .put("contextKey", identity.getString("conversationKey")).put("serviceInstance", serviceInstance)
         if (request.source == ConversationSource.NATIVE && !request.backfill) {
             input.put("phoneId", identity.getString("phoneId")).put("conversationKey", identity.getString("conversationKey"))
         }
         if (request.source == ConversationSource.REALTIME) {
             latestRealtimeRequest = ++nextAnswer
-            input.put("serviceInstance", serviceInstance).put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
+            input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
@@ -392,30 +392,41 @@ internal class BridgeService : Service() {
         return true
     }
     private fun deliverExternalVoice(question: String, answer: String, input: JSONObject) {
-        if (answer.isBlank()) return
+        val source = ConversationSource.values().firstOrNull { it.name == input.optString("source") }
+        if (VoiceOutputPolicy.isSilent(answer, source)) return
         val id = input.optString("recordId")
         if (id.isNotBlank()) {
             conversations.repository.applyDerived(RecordDerived(id = input.optString("derivedId").ifBlank { java.util.UUID.randomUUID().toString() }, recordId = id, sourceRevision = input.optInt("sourceRevision", 1),
                 kind = "analysis", text = answer, agent = "phone-local-agent"))
             conversations.refreshRecords()
         }
-        val source = ConversationSource.valueOf(input.optString("source", "ALWAYS_ON"))
-        val conversationKey = input.optString("conversationKey")
-        if (source == ConversationSource.NATIVE && conversationKey.isNotBlank() && conversationKey != nativeIdentity().getString("conversationKey")) return
-        if (input.optString("contextKey") == nativeIdentity().getString("conversationKey")) conversations.rememberReply(question, answer)
         val wake = input.optString("wakeId").takeUnless { it.isBlank() || it == "null" }
-        if (source == ConversationSource.NATIVE && wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive)
-            voiceTransport.reply(answer, question, wake)
-        else if (source == ConversationSource.REALTIME && input.optString("serviceInstance") == serviceInstance &&
-            input.optLong("realtimeRequest") == latestRealtimeRequest && input.optLong("displayRevision", -1) == state.revision &&
-            conversations.state.running && conversations.state.activeRecord?.id == id && conversationOwnsDisplay &&
-            state.ownership == DisplayOwnership.APP && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
-            val ref = AnswerRef(AnswerSource.MOBILE_AGENT, input.getLong("realtimeRequest"))
-            dispatch(GlassesEvent.AnswerRequested(ref))
-            val permit = checkNotNull(state.answerPermit)
-            autoClearFor = ref; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null
-            dispatch(GlassesEvent.AnswerCompleted(AnswerContent(ref, question, answer), permit))
-        } else if (state.link.phase == LinkPhase.FULL && !state.disconnecting) connection.sendNotification("어시스턴트", answer)
+        val active = conversations.state
+        val sameRecord = id.isNotBlank() && active.running && !active.stopping && active.activeRecord?.id == id
+        val route = VoiceOutputPolicy.route(source,
+            currentService = input.optString("serviceInstance") == serviceInstance,
+            currentContext = input.optString("contextKey") == nativeIdentity().getString("conversationKey"),
+            backfill = input.optBoolean("backfill"),
+            linkReady = !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting,
+            nativeWakeCurrent = wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive,
+            realtimeCurrent = input.optLong("realtimeRequest") == latestRealtimeRequest &&
+                input.optLong("displayRevision", -1) == state.revision && sameRecord &&
+                active.source == ConversationSource.REALTIME && conversationOwnsDisplay && state.ownership == DisplayOwnership.APP,
+            alwaysOnCurrent = sameRecord && active.source == ConversationSource.ALWAYS_ON)
+        if (route == VoiceOutputPolicy.Route.NONE) return
+        conversations.rememberReply(question, answer)
+        when (route) {
+            VoiceOutputPolicy.Route.NATIVE -> voiceTransport.reply(answer, question, checkNotNull(wake))
+            VoiceOutputPolicy.Route.REALTIME -> {
+                val ref = AnswerRef(AnswerSource.MOBILE_AGENT, input.getLong("realtimeRequest"))
+                dispatch(GlassesEvent.AnswerRequested(ref))
+                val permit = checkNotNull(state.answerPermit)
+                autoClearFor = ref; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null
+                dispatch(GlassesEvent.AnswerCompleted(AnswerContent(ref, question, answer), permit))
+            }
+            VoiceOutputPolicy.Route.NOTIFICATION -> connection.sendNotification("어시스턴트", answer)
+            VoiceOutputPolicy.Route.NONE -> Unit
+        }
     }
     fun pausePrompt() { conversations.stop(); dispatch(GlassesEvent.PauseDisplay) }
     fun startTranslation() {
