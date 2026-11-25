@@ -15,7 +15,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
         val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate()) {
-        val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe", "korean_wake")
+        val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe", "korean_wake", "explicit_question")
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
