@@ -319,6 +319,8 @@ private fun GlassesScreen(
                         ToolOutlinedButton(onClick = { configure("navigation") }) { Text("길 안내") }
                         ToolOutlinedButton(onClick = { navigate(0) }) { Text("홈으로") }
                     }
+                    if (model.state.wakeActive || model.state.wakePending)
+                        TextButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("한국어 호출 중지") }
                     if (model.state.captionActive)
                         TextButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("실시간 자막 종료") }
                     if (!model.state.translationActive)
@@ -327,7 +329,7 @@ private fun GlassesScreen(
                         ) {
                             Text("실시간 번역 (한국어 ↔ 영어)")
                         }
-                    if (model.state.translationActive && !model.state.captionActive) {
+                    if (model.state.translationActive && !model.state.captionActive && !model.state.wakeActive) {
                         Note("실시간 번역 (한국어 ↔ 영어): ${model.state.translationStatus}")
                         TextButton(onClick = { model.attempt { model.service().stopTranslation() } }) {
                             Text("번역 종료")
