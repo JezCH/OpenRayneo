@@ -18,6 +18,10 @@ import org.json.JSONObject
 
 internal object NavigationFeed {
     const val PACKAGE = "com.autonavi.minimap"
+    val koreanSources = linkedMapOf("com.nhn.android.nmap" to "네이버지도", "net.daum.android.map" to "카카오맵",
+        "com.locnall.KimGiSa" to "카카오내비", "com.skt.tmap.ku" to "티맵")
+    fun isNavigationSource(pkg: String) = pkg == PACKAGE || pkg in koreanSources
+    fun sourceLabel(pkg: String) = koreanSources[pkg] ?: "Amap"
 
     data class Entry(
         val key: String,
@@ -25,9 +29,16 @@ internal object NavigationFeed {
         val texts: List<String>,
         val updatedAt: Long,
         val channel: String,
+        val packageName: String = PACKAGE,
     ) {
         val instruction
-            get() = GaodeNotificationParser.parse(texts)
+            get() = if (packageName == PACKAGE) GaodeNotificationParser.parse(texts)
+            else KoreanNavigationText.parse(texts)?.let { GaodeNotificationParser.Instruction(it.direction, it.meters) }
+        val sourceName get() = sourceLabel(packageName)
+        val experimental get() = packageName != PACKAGE
+        // Domestic notifications have no confirmed cadence. Expire rather than displaying stale turns.
+        val fresh get() = !experimental || (System.currentTimeMillis() - updatedAt) in 0..15_000L
+        val safeInstruction get() = instruction?.takeIf { fresh }
     }
 
     val entries = linkedMapOf<String, Entry>()
@@ -55,20 +66,21 @@ internal object NavigationFeed {
         get() =
             when {
                 !connected -> listenerState.detail
-                !enabled -> "Amap에서 내비게이션을 시작한 뒤 따라갈 알림을 선택하세요"
-                selected == null -> "선택한 Amap 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
-                selected?.instruction == null -> "Amap 알림을 받았지만 인식 가능한 회전 방향과 거리가 없습니다. Amap을 확인하세요"
-                else -> selected!!.instruction!!.let { "Amap 추종: ${it.direction} · ${it.meters}m" }
+                !enabled -> "지도 앱에서 길 안내를 시작한 뒤 알림을 직접 선택하세요"
+                selected == null -> "선택한 길 안내 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
+                selected?.fresh == false -> "국내 지도 알림 갱신 대기 · 휴대폰 안내 확인"
+                selected?.safeInstruction == null -> "회전 방향과 거리를 인식하지 못했습니다. 휴대폰 안내를 확인하세요"
+                else -> selected!!.safeInstruction!!.let { "${selected!!.sourceName} 추종: ${it.direction} · ${it.meters}m" }
             }
 
     val frame: String?
         get() {
             if (!enabled) return null
             if (!connected) return NavigationFrame.status("알림 읽기 끊김", "휴대폰 확인")
-            val entry = selected ?: return NavigationFrame.status("Amap 알림 대기", "휴대폰 안내 기준")
-            return entry.instruction?.let {
-                NavigationFrame.render(it.direction, it.meters, entry.title)
-            } ?: NavigationFrame.status("안내 미인식", "Amap 확인")
+            val entry = selected ?: return NavigationFrame.status("길 안내 알림 대기", "휴대폰 안내 기준")
+            return entry.safeInstruction?.let {
+                NavigationFrame.render(it.direction, it.meters, if (entry.experimental) entry.sourceName else entry.title)
+            } ?: NavigationFrame.status("안내 갱신 대기", "휴대폰 확인")
         }
 
     fun initialize(context: Context) {
@@ -103,7 +115,8 @@ internal object NavigationFeed {
     }
 
     fun follow(key: String) {
-        check(entries.containsKey(key)) { "해당 알림이 사라졌습니다. Amap에서 내비게이션을 시작한 뒤 새로 고치세요" }
+        val entry = checkNotNull(entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
+        check(!entry.experimental || entry.safeInstruction != null) { "국내 지도 알림의 최신 방향·거리를 인식하지 못했습니다." }
         selectedKey = key
         enabled = true
         preferences
@@ -131,7 +144,7 @@ internal class NavigationNotifications : NotificationListenerService() {
         object : NavigationNotificationReader {
             override fun snapshot(): List<NavigationFeed.Entry> =
                 checkNotNull(activeNotifications) { "알림 스냅샷을 사용할 수 없음" }
-                    .filter { it.packageName == NavigationFeed.PACKAGE }
+                    .filter { NavigationFeed.isNavigationSource(it.packageName) }
                     .mapNotNull(::parseSafely)
 
             override fun unbind() = requestUnbind()
@@ -154,8 +167,13 @@ internal class NavigationNotifications : NotificationListenerService() {
 
     override fun onNotificationPosted(notification: StatusBarNotification) {
         if (recovery?.owns(reader) != true) return
-        if (notification.packageName != NavigationFeed.PACKAGE) {
+        if (!NavigationFeed.isNavigationSource(notification.packageName)) {
             PhoneNotificationForwarding.onPosted(this, notification)
+            return
+        }
+        if (notification.packageName != NavigationFeed.PACKAGE && notification.notification.category != Notification.CATEGORY_NAVIGATION) {
+            PhoneNotificationForwarding.onPosted(this, notification)
+            NavigationFeed.remove(notification.key)
             return
         }
         val entry = parseSafely(notification)
@@ -164,7 +182,10 @@ internal class NavigationNotifications : NotificationListenerService() {
 
     override fun onNotificationRemoved(notification: StatusBarNotification) {
         if (recovery?.owns(reader) != true) return
-        if (notification.packageName == NavigationFeed.PACKAGE) NavigationFeed.remove(notification.key)
+        if (NavigationFeed.isNavigationSource(notification.packageName)) {
+            NavigationFeed.remove(notification.key)
+            PhoneNotificationForwarding.removed(notification.key)
+        }
         else PhoneNotificationForwarding.removed(notification.key)
     }
 
@@ -172,15 +193,16 @@ internal class NavigationNotifications : NotificationListenerService() {
         try {
             parse(item)
         } catch (failure: Exception) {
-            Log.w("OpenRayneo", "Amap 알림 파싱 실패: ${failure.javaClass.simpleName}")
+            Log.w("OpenRayneo", "길 안내 알림 파싱 실패: ${failure.javaClass.simpleName}")
             null
         }
 
     private fun parse(item: StatusBarNotification): NavigationFeed.Entry? {
         val notification = item.notification
         if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return null
-        if (notification.channelId != "ROUTE_CHANNEL_ID" && notification.category != "navigation")
-            return null
+        if (item.packageName == NavigationFeed.PACKAGE) {
+            if (notification.channelId != "ROUTE_CHANNEL_ID" && notification.category != Notification.CATEGORY_NAVIGATION) return null
+        } else if (item.packageName !in NavigationFeed.koreanSources || notification.category != Notification.CATEGORY_NAVIGATION) return null
         val extras = notification.extras ?: Bundle.EMPTY
         val texts =
             buildList {
@@ -212,12 +234,14 @@ internal class NavigationNotifications : NotificationListenerService() {
                         }
                 }
                 .distinct()
+        if (item.packageName != NavigationFeed.PACKAGE && KoreanNavigationText.parse(texts) == null) return null
         return NavigationFeed.Entry(
             item.key,
             extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
             texts,
             item.postTime,
             notification.channelId.orEmpty(),
+            item.packageName,
         )
     }
 
@@ -311,7 +335,7 @@ internal object GaodeNotificationParser {
                     second.groupValues[2],
                 )
         }
-        return null
+        return KoreanNavigationText.parse(texts)?.let { Instruction(it.direction, it.meters) }
     }
 
     private fun instruction(action: String, value: String, unit: String): Instruction? {
