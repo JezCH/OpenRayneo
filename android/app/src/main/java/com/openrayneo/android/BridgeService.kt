@@ -91,6 +91,10 @@ internal class BridgeService : Service() {
     }
     private val audioRefresh = object : Runnable {
         override fun run() {
+            if (navigation.enabled && navigation.selected?.experimental == true) {
+                val snapshot = navigationSnapshot()
+                if (snapshot != state.navigation) dispatch(GlassesEvent.NavigationChanged(snapshot))
+            }
             audioOwner?.let { dispatch(GlassesEvent.AudioChanged(it, audio.state.coordinatorState())) }
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
             if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
@@ -341,14 +345,15 @@ internal class BridgeService : Service() {
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
-        val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. Amap에서 내비게이션을 시작한 뒤 새로 고치세요" }
-        val frame = entry.instruction?.let { NavigationFrame.render(it.direction, it.meters, entry.title) }
-            ?: NavigationFrame.status("안내 미인식", "Amap 확인")
+        val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
+        check(!entry.experimental || entry.safeInstruction != null) { "최신 한국어 길 안내의 방향과 거리를 확인하지 못했습니다." }
+        val frame = entry.safeInstruction?.let { NavigationFrame.render(it.direction, it.meters, if (entry.experimental) entry.sourceName else entry.title) }
+            ?: NavigationFrame.status("안내 미인식", "휴대폰 확인")
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
     }
     fun stopNavigation() = dispatch(GlassesEvent.StopNavigation)
     fun reopenNavigation() {
-        val key = navigation.selectedKey ?: error("먼저 따라갈 Amap 알림을 선택하세요")
+        val key = navigation.selectedKey ?: error("먼저 따라갈 길 안내 알림을 선택하세요")
         followNavigation(key)
     }
     fun clearDisplay() { autoClearFor = null; clearAnswerTask?.let(main::removeCallbacks); clearAnswerTask = null; dispatch(GlassesEvent.ClearDisplay) }
