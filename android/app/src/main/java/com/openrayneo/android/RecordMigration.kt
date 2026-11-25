@@ -120,7 +120,7 @@ internal class RecordMigration(private val main: Handler, private val repository
             fun update(status: String, busy: Boolean = true) {
                 val next = initial.copy(busy = busy, importedPeople = importedPeople, importedRecords = importedRecords,
                     failed = failed, skipped = skipped, status = status)
-                onMain { publish(next); refresh() }
+                onMain { publish(next); if (!busy) refresh() }
             }
             try {
                 for (person in selected.people) {
