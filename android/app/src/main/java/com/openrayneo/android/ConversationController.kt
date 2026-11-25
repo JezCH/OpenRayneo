@@ -53,6 +53,8 @@ internal class ConversationController(private val context: Context, private val 
     @Volatile private var closing = false
     @Volatile private var deferredProcessing = false
     @Volatile private var savingAudio = false
+    @Volatile private var transcriptOnly = false
+    @Volatile private var transcriptInterrupted = false
     @Volatile private var replaying = false
     @Volatile private var liveBackfill = false
     @Volatile private var samples = 0L // Frames per channel, never interleaved short count.
@@ -100,9 +102,11 @@ internal class ConversationController(private val context: Context, private val 
     private val maintenance = object : Runnable {
         override fun run() {
             if (state.running && !closing) {
-                val constraint = if (savingAudio || replaying) resourceConstraint() else null
+                val constraint = if (savingAudio || replaying || transcriptOnly) resourceConstraint() else null
                 if (constraint != null && replaying) { replayFailed = true; deferredProcessing = true; stop() }
-                else if (constraint != null) {
+                else if (constraint != null && transcriptOnly) {
+                    pauseLive(constraint)
+                } else if (constraint != null) {
                     if (!deferredProcessing || liveBackfill) pauseLive(constraint)
                     resourcePauseReason = constraint
                     publish(state.copy(status = "$constraint. 원본 오디오의 모든 채널은 계속 저장되며 복구 후 채널별로 보충합니다"))
@@ -119,7 +123,11 @@ internal class ConversationController(private val context: Context, private val 
     init { worker.post {
         try {
             engine(1)
-            repository.records.filter { it.audioPending }.forEach { interrupted ->
+            repository.records.filter { it.transcriptOnly && it.endedAt == null }.forEach { interrupted ->
+                repository.save(interrupted.copy(endedAt = interrupted.segments.maxOfOrNull { interrupted.endTimeOf(it) } ?: interrupted.createdAt,
+                    audioSamples = 0L, audioPending = false, processingPending = false, transcriptIncomplete = true))
+            }
+            repository.records.filter { it.audioPending && !it.transcriptOnly }.forEach { interrupted ->
                 val id = interrupted.audioId ?: interrupted.id
                 val count = recordings.recover(id)
                 val channels = if (count > 0) recordings.channelCount(id) else interrupted.audioChannels
@@ -133,14 +141,22 @@ internal class ConversationController(private val context: Context, private val 
     } }
     fun start(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null, wakeId: String? = null) {
         check(!state.running && !closing) { "먼저 현재 기록을 중지하세요" }; check(state.modelReady) { state.error ?: "음성 모델이 아직 준비되지 않음" }
-        val cfg = settings.read(); val token = ++generation
+        val cfg = settings.read()
+        val only = AudioRetentionPolicy.transcriptOnly(cfg.optString("audioRetention"), mode == ConversationMode.ENROLL)
+        if (only) {
+            check(SpeechRounds.model(cfg) != null) { "원본 음성 미보존 모드는 기기 내장 ASR을 선택해야 합니다" }
+            check(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
+            check(resourceConstraint() == null) { "절전·발열·배터리 상태를 확인한 후 시작하세요" }
+        }
+        transcriptOnly = only; transcriptInterrupted = false
+        val token = ++generation
         gating = source == ConversationSource.ALWAYS_ON && cfg.optString("glassesVoiceGate", "true") != "false"
         writer.post { gate.reset() }
         publish(state.copy(activeRecord = null, running = true, stopping = false, mode = mode, source = source, segments = emptyList(), error = null,
-            status = if (mode == ConversationMode.ENROLL) "등록은 지정 채널의 본인 목소리만 수집합니다" else if (source == ConversationSource.REALTIME) "2채널 유지: 채널 1은 기본 본인, 채널 2는 별도 식별" else "혼합/단일 채널 오디오는 전체 화자 식별",
+            status = if (mode == ConversationMode.ENROLL) "등록은 지정 채널의 본인 목소리만 수집합니다" else if (only) "기기 내장 전사 · 원본 음성 미보존" else if (source == ConversationSource.REALTIME) "2채널 유지: 채널 1은 기본 본인, 채널 2는 별도 식별" else "혼합/단일 채널 오디오는 전체 화자 식별",
             enrollmentSeconds = 0f, enrollmentReady = false, enrollmentCanConfirm = false, enrollmentTotalSeconds = 0f, decodedSeconds = 0.0))
         worker.post {
-            config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId; closing = false
+            config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId
             selfGate = selfGateFor(source, mode, cfg)
             liveBackfill = false; replaying = false; replayFailed = false; tail?.close(); tail = null; cancelASR()
             resourcePauseReason = if (mode == ConversationMode.ENROLL) null else resourceConstraint()
@@ -148,11 +164,13 @@ internal class ConversationController(private val context: Context, private val 
             pendingSentences.clear(); pendingAgent.clear(); dispatching = false; manualSpeakers.clear(); laneStarts.clear(); inputThrough.clear()
             resamplers = List(2) { ConversationAudio() }; enrollmentTarget = target
             record = ConversationRecord(mode = mode, source = source, audioAnchors = listOf(AudioAnchor(0, System.currentTimeMillis())),
-                channelPolicy = "pending_actual_channels", audioPending = mode != ConversationMode.ENROLL, processingPending = deferredProcessing)
-            savingAudio = mode != ConversationMode.ENROLL
-            if (savingAudio) record = repository.save(record!!)
-            main.post { if (token == generation && state.running) {
-                try { capture(source, true) } catch (error: Exception) { fail(error.message ?: "음성 수신 시작 실패", token) }
+                channelPolicy = "pending_actual_channels", audioPending = mode != ConversationMode.ENROLL && !only,
+                processingPending = AudioRetentionPolicy.backfillPending(only, deferredProcessing), transcriptOnly = only)
+            savingAudio = mode != ConversationMode.ENROLL && !only
+            if (mode != ConversationMode.ENROLL) record = repository.save(record!!)
+            main.post { if (token == generation && state.running && !closing) {
+                if (only && deferredProcessing) fail("기기 내장 전사를 시작할 수 없습니다", token)
+                else try { capture(source, true) } catch (error: Exception) { fail(error.message ?: "음성 수신 시작 실패", token) }
             } }
         }
     }
@@ -188,13 +206,19 @@ internal class ConversationController(private val context: Context, private val 
                 val live = if (gating) gate.apply(pcm) else pcm
                 samples += pcm.frames
                 val queued = queuedSamples.addAndGet(pcm.frames)
+                if (queued > 240_000 && transcriptOnly) {
+                    queuedSamples.addAndGet(-pcm.frames)
+                    deferredProcessing = true
+                    fail("전사 대기 오디오가 15초를 초과했습니다. 원본 음성이 없어 누락 구간을 복구할 수 없습니다", token)
+                    return@post
+                }
                 if (queued > 240_000 && savingAudio) deferredProcessing = true
                 if (deferredProcessing || liveBackfill) {
                     queuedSamples.addAndGet(-pcm.frames)
                     if (!liveBackfill && System.currentTimeMillis() - lastPublished > 1_000) worker.post { markPending("모든 채널의 원본 오디오를 저장했습니다. 나중에 채널별로 보충합니다") }
                 } else worker.post {
                     try { if (token == generation && !deferredProcessing) process(live, start) }
-                    catch (error: Exception) { if (savingAudio) pauseLive(error.message ?: "음성 처리 보충 대기") else fail(error.message ?: "등록 실패", token) }
+                    catch (error: Exception) { if (savingAudio) pauseLive(error.message ?: "음성 처리 보충 대기") else fail(error.message ?: if (transcriptOnly) "기기 내장 전사 실패" else "등록 실패", token) }
                     finally { queuedSamples.addAndGet(-pcm.frames) }
                 }
                 if (System.currentTimeMillis() - lastPublished > 1_000) { lastPublished = System.currentTimeMillis()
@@ -216,6 +240,7 @@ internal class ConversationController(private val context: Context, private val 
             if (first == data.size) return@forEachIndexed
             val begin = startFrame + first; val selected = if (first == 0) data else data.copyOfRange(first, data.size)
             if (activeASR[channel] == null) startASR(channel, begin)
+            if (transcriptOnly) check(activeASR[channel]?.canAcceptAudio() == true) { "기기 내장 ASR이 입력을 받지 못합니다" }
             activeASR[channel]?.append(selected)
             inputThrough[channel] = startFrame + data.size
             if (!fixedSelf(channel)) engine(channel).accept(selected)
@@ -363,6 +388,11 @@ internal class ConversationController(private val context: Context, private val 
         }
     }
     private fun pauseLive(message: String) {
+        if (transcriptOnly) {
+            transcriptInterrupted = true; deferredProcessing = true; cancelASR()
+            fail("$message. 원본 음성이 없어 누락 구간을 복구할 수 없습니다", generation)
+            return
+        }
         cancelASR(); liveBackfill = false; deferredProcessing = true; tail?.close(); tail = null
         nextBackfillAt = System.currentTimeMillis() + 60_000; markPending("$message. 모든 채널의 원본 오디오는 보존되며 나중에 채널별로 보충합니다")
     }
@@ -411,7 +441,7 @@ internal class ConversationController(private val context: Context, private val 
     private var stopAfter: (() -> Unit)? = null
     fun stop() {
         if (!state.running || closing) return
-        closing = true; publish(state.copy(stopping = true, status = "모든 채널을 저장하고 채널별 전사 마무리를 기다리는 중…"))
+        closing = true; publish(state.copy(stopping = true, status = if (transcriptOnly) "기기 내장 전사 마무리 중…" else "모든 채널을 저장하고 채널별 전사 마무리를 기다리는 중…"))
         if (!replaying) main.post { capture(state.source, false) }
         writer.post {
             val count = if (savingAudio && captureChannels > 0) recordings.finish() else if (replaying) record!!.audioSamples else samples
@@ -421,12 +451,14 @@ internal class ConversationController(private val context: Context, private val 
                     while (activeASR.values.all { it.canAcceptAudio() }) { val pcm = tail?.nextBlock() ?: break; val begin = tailSamples; tailSamples += pcm.frames; process(pcm, begin) }
                 }.onFailure { pauseLive(it.message ?: "마무리 후 보충 대기") }
                 val pending = if (liveBackfill) deferredProcessing || tailSamples < count else deferredProcessing || record?.processingPending == true
-                record = record?.copy(audioSamples = count, audioPending = false, endedAt = record?.endedAt ?: System.currentTimeMillis(), processingPending = pending)
+                record = record?.copy(audioSamples = AudioRetentionPolicy.storedFrames(transcriptOnly, count),
+                    audioPending = false, endedAt = record?.endedAt ?: System.currentTimeMillis(),
+                    processingPending = AudioRetentionPolicy.backfillPending(transcriptOnly, pending))
                 tail?.close(); tail = null; liveBackfill = false
                 engines.values.forEach { it.flush() }; drainSentences(); finishRounds()
                 if (rounds.isEmpty()) completeStop() else {
                     val token = generation
-                    drainTimeout = Runnable { if (token == generation && closing) { cancelASR(); replayFailed = replaying; deferredProcessing = true; record = record?.copy(processingPending = true); completeStop("미완료 채널은 나중에 원본 오디오에서 보충합니다") } }
+                    drainTimeout = Runnable { if (token == generation && closing) { cancelASR(); replayFailed = replaying; deferredProcessing = true; record = record?.copy(processingPending = AudioRetentionPolicy.backfillPending(transcriptOnly, true)); completeStop("미완료 채널은 나중에 원본 오디오에서 보충합니다") } }
                         .also { worker.postDelayed(it, 30_000) }
                 }
             }
@@ -437,8 +469,15 @@ internal class ConversationController(private val context: Context, private val 
         tail?.close(); tail = null; engines.values.forEach { it.flush() }; drainSentences()
         if (replaying && replayReadComplete && !replayFailed && !deferredProcessing) record = record?.copy(processingPending = false)
         else if (replaying) { record = record?.copy(processingPending = true); nextBackfillAt = System.currentTimeMillis() + 60_000 }
-        if (pendingSentences.isNotEmpty()) record = record?.copy(processingPending = true)
+        if (transcriptOnly) {
+            val incomplete = transcriptInterrupted || deferredProcessing || pendingSentences.isNotEmpty()
+            record = record?.copy(audioSamples = 0L, audioPending = false, processingPending = false, transcriptIncomplete = incomplete)
+        } else if (pendingSentences.isNotEmpty()) record = record?.copy(processingPending = true)
         saveRecord(); val finished = record
+        val finalMessage = if (transcriptOnly) {
+            if (finished?.transcriptIncomplete == true) "완료된 전사만 저장했습니다. 누락 구간은 원본 음성이 없어 복구할 수 없습니다"
+            else "완료된 전사를 저장했습니다. 원본 음성은 보존하지 않았습니다"
+        } else message
         if (pendingAgent.isNotEmpty()) {
             val input = pendingAgent.toList(); val source = state.source
             val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", finished?.id).put("recordRevision", finished?.revision)
@@ -448,7 +487,7 @@ internal class ConversationController(private val context: Context, private val 
             main.post { if (contextGeneration == agentContextGeneration) request(voice) }
         }
         replaying = false; pendingSentences.clear(); pendingAgent.clear(); dispatching = false; engines.values.forEach { it.reset() }; manualSpeakers.clear(); closing = false
-        publish(state.copy(running = false, stopping = false, segments = finished?.segments.orEmpty(), activeRecord = null, records = repository.records, status = message))
+        publish(state.copy(running = false, stopping = false, segments = finished?.segments.orEmpty(), activeRecord = null, records = repository.records, status = finalMessage))
         if (finished != null && finished.mode != ConversationMode.ENROLL && !finished.processingPending && finished.segments.isNotEmpty()) { enqueueSummary(finished.id, "record_end"); scheduleDaySummaries(finished.source == ConversationSource.ALWAYS_ON) }
         val continuation = stopAfter; stopAfter = null; main.post { if (continuation != null) continuation() else stopped() }
     }
@@ -584,8 +623,9 @@ internal class ConversationController(private val context: Context, private val 
         }
     fun retranscribe(recordId: String) {
         check(!state.running && !closing && state.modelReady) { "먼저 현재 기록을 중지하세요" }
-        val old = repository.records.first { it.id == recordId }; require(old.audioSamples > 0)
+        val old = repository.records.first { it.id == recordId }; require(!old.transcriptOnly && old.audioSamples > 0)
         val cfg = settings.read(); require(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
+        transcriptOnly = false; transcriptInterrupted = false
         ++generation
         publish(state.copy(running = true, stopping = false, mode = old.mode, source = old.source, status = "채널별 완료 커서에 따라 각각 보충하며 원문과 수동 수정은 유지됩니다",
             error = null, activeRecord = old, segments = old.segments, decodedSeconds = 0.0))
@@ -599,6 +639,7 @@ internal class ConversationController(private val context: Context, private val 
     }
     private fun fail(message: String, token: Int) {
         if (token != generation || !state.running) return
+        if (transcriptOnly) transcriptInterrupted = true
         publish(state.copy(error = message)); stop()
     }
     private fun publish(next: ConversationState) { state = next; main.post(changed) }
