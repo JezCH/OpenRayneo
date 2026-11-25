@@ -26,6 +26,7 @@
 | Mac分析 | 离线连续PCM整段SDK聚类，保持SDK成员关系；实时仍用原8秒VAD批次。最新原生会话流式WAV＋latest索引，导出含只读`matchingDiagnostics`标量，无原始向量。 |
 | 当前产物 | Mac `.build/speaker-match-diagnostics/OpenRayneoBridge.app`（同签名Debug）；Android CI构建versionCode=1000+GITHUB_RUN_NUMBER（本地37）、BuildConfig.GIT_COMMIT显示于设置、versionName=1.(run-23).0逐次递增并用于Nextcloud文件名（本地1.2.0-beta.4），DSH0.1.8。上一Mac自动保存候选、Android36 release作回退，路径见[运行指南](../docs/runbook.md)。 |
 | 验证范围 | 构建／签名、存储／API／同步及定点生产类检查完成，独立审查已闭环。声音模型、真实持续吞吐、功耗及各固件硬件行为按实际输入继续验收。 |
+| Fork Android 安装路径（2026-11-25） | main 分支 Android APK #43 已完成APK／DSH plugin／manifest 验证与分发；无固定签名 secret，main #41 和 #43 的签名SHA-256不同，原包不可直接覆盖升级。PR #20 已合入 main：新增 applicationId=com.openrayneo.android.validation 的独立 validation 变体，原 applicationId=com.openrayneo.android 保持不变。构建时校验变体身份、版本、证书及摘要并与DSH插件同包。validation 与旧安装可共存，但用户数据／设置隔离、BLE／本地端口需互斥，真实手机／眼镜／AI调用仍须验收。临时签名不保证 validation 后续原位升级。 |
 
 **当前主问题：真人声纹漏认与单人误分组。** 已保存真实59.64秒native输入，用户确认仅本人讲话，结果5段／3组、最高匹配0.624（其余0.602／0.399），当前门槛0.70。6份登记参考留一互验有2份仅0.659／0.674；同一native录音A／B互cos0.641。短句特征不稳与登记／匹配标准不协调已有实证，登记ch1与native mono收音差异的独立贡献待验证；当前模型／门槛／档案未因此调整。
 
