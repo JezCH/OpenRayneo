@@ -38,7 +38,7 @@ internal object MemoryReferenceSearch {
             .flatMap { row -> row.segments.asSequence().map { segment ->
                 MemoryReferencePolicy.Source(row.id, row.revision, segment.id, row.timeOf(segment), row.endTimeOf(segment),
                     segment.text, segment.personId, segment.stable, segment.mixed, segment.identityBasis, segment.timeBasis, row.transcriptIncomplete)
-            } }.toList()
+            } }
         return AutomaticMemoryPolicy.search(question, options, now, sources)
     }
     fun current(result: MemoryReferencePolicy.Result, records: List<ConversationRecord>): Boolean =
