@@ -20,8 +20,18 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
         val active: Boolean = false, val channels: Int = 2, val packets: Long = 0, val samples: Long = 0,
         val left: Double = 0.0, val right: Double = 0.0, val lastAudio: Long = 0,
         val receivedPackets: Long = 0,
-        val dropped: Int = 0, val error: String? = null
+        val dropped: Int = 0, val error: String? = null,
+        // Monotonic phone-side observations only; not physical speech timestamps.
+        val startedAt: Long = 0L, val firstPacketAt: Long = 0L, val firstPcmAt: Long = 0L,
+        val lastPacketAt: Long = 0L, val maxPacketGapMs: Long = 0L,
     ) {
+        fun timingSummary(): String {
+            if (startedAt == 0L) return "현재 디코더 측정 없음"
+            val receive = if (firstPacketAt >= startedAt) "${firstPacketAt - startedAt}ms" else "대기"
+            val decode = if (firstPacketAt > 0L && firstPcmAt >= firstPacketAt) "${firstPcmAt - firstPacketAt}ms" else "대기"
+            val gap = if (receivedPackets > 1) "${maxPacketGapMs}ms" else "측정 전"
+            return "디코더 시작→첫 패킷: $receive · 첫 패킷→첫 PCM: $decode · 최대 수신 간격: $gap"
+        }
         fun summary(): String {
             if (!active) return "안경 음성 수신이 중지됨"
             if (error != null) return "안경 오디오: $error"
@@ -61,7 +71,7 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
 
     @Synchronized fun start(channels: Int = 2) {
         val current = ++generation
-        state = State(active = true, channels = channels)
+        state = State(active = true, channels = channels, startedAt = SystemClock.elapsedRealtime())
         dropped.set(0)
         worker.post {
             release()
@@ -91,7 +101,11 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
     @Synchronized fun accept(packet: ByteArray) {
         if (!state.active || packet.isEmpty()) return
         val current = generation
-        state = state.copy(receivedPackets = state.receivedPackets + 1)
+        val now = SystemClock.elapsedRealtime()
+        state = state.copy(receivedPackets = state.receivedPackets + 1,
+            firstPacketAt = if (state.firstPacketAt == 0L) now else state.firstPacketAt,
+            lastPacketAt = now, maxPacketGapMs = if (state.lastPacketAt == 0L) 0L else
+                maxOf(state.maxPacketGapMs, now - state.lastPacketAt))
         if (queued.incrementAndGet() > 256) { queued.decrementAndGet(); dropped.incrementAndGet(); return }
         worker.post {
             try {
@@ -144,9 +158,11 @@ internal class PromptAudio(private val consume: (ShortArray, ShortArray) -> Unit
                     }
                     if (current != generation || count == 0) continue
                     publish(current) {
+                        val now = SystemClock.elapsedRealtime()
                         consume(left, right)
                         it.copy(channels = actualChannels, samples = it.samples + count, left = sqrt(leftPower / count) / 32768,
-                            right = sqrt(rightPower / count) / 32768, lastAudio = SystemClock.elapsedRealtime(),
+                            right = sqrt(rightPower / count) / 32768, lastAudio = now,
+                            firstPcmAt = if (it.firstPcmAt == 0L) now else it.firstPcmAt,
                             dropped = dropped.get(), error = null)
                     }
                 } finally { decoder.releaseOutputBuffer(index, false) }
