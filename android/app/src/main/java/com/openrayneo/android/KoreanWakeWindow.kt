@@ -114,7 +114,7 @@ internal class AmbientWakeDialogue {
     data class Turn(val question: String, val answer: String)
     private var scope: String? = null
     private var lastAt = 0L
-    private val turns = ArrayDeque<Turn>()
+    private val turns = java.util.ArrayDeque<Turn>()
     fun clear() { scope = null; lastAt = 0L; turns.clear() }
     fun history(key: String?, now: Long): List<Turn> {
         if (key == null || scope != key || now - lastAt !in 0L..120_000L) {
