@@ -4,7 +4,7 @@ export function isAmbientHint(request) {
   const input = request.input
   return request.kind === 'hint' && input?.backfill !== true &&
     input?.voiceContext != null && Number.isFinite(input?.hintDeadline) &&
-    (input.source === 'ALWAYS_ON' || (input.source === 'REALTIME' && input.streamHint === true))
+    (input.source === 'ALWAYS_ON' || (input.source === 'REALTIME' && (input.streamHint === true || input.realtimeHint === true)))
 }
 
 export function ambientOverride(config) {
@@ -20,8 +20,20 @@ export function ambientOverride(config) {
   return {provider, model, ...(reasoningEffort ? {reasoningEffort} : {})}
 }
 
+function usesAmbientRoute(request) {
+  return isAmbientHint(request) || (request.kind === 'hint' && request.input?.purpose === 'agent_probe' &&
+    request.input?.probeRoute === 'ambient' && request.input?.backfill !== true)
+}
+
+export function modelRouteMetadata(route, config, request) {
+  const valid = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value)
+  if (!valid(route?.provider) || !valid(route?.model)) return undefined
+  return {provider: route.provider, model: route.model, selection: usesAmbientRoute(request)
+    ? (ambientOverride(config) ? 'ambient_override' : 'ambient_default') : 'default'}
+}
+
 export async function selectHintRoute(ctx, config, request, signal) {
-  if (!isAmbientHint(request)) return ctx.agentDefaultModel.currentSelection()
+  if (!usesAmbientRoute(request)) return ctx.agentDefaultModel.currentSelection()
   const selected = ambientOverride(config)
   if (!selected) return ctx.agentDefaultModel.currentSelection()
   signal?.throwIfAborted()

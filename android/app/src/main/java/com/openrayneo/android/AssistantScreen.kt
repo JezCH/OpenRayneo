@@ -310,12 +310,17 @@ private fun AgentProbeCard(model: AppModel) {
     val p = s.agentProbe
     var expanded by rememberSaveable { mutableStateOf(false) }
     var consent by remember { mutableStateOf(false) }
+    var target by remember { mutableStateOf(AgentProbePolicy.Target.DEFAULT) }
     ContentCard {
         TextButton(onClick = { expanded = !expanded }) {
             Text(if (expanded) "AI 연결 진단 접기" else "AI 연결 및 안경 표시 진단")
         }
         if (expanded) {
-            Note("기본 DSH 모델에 무작위 코드만 보내 응답을 확인합니다. 원문·개인화 정보·업무 자료를 첨부하거나 도구를 실행하지 않습니다. 모델 이용량 또는 요금이 발생할 수 있습니다. 이 시험은 실제 일반 Agent 업무 실행이나 제조사 AI 이용권을 검증하지 않습니다.")
+            Note("선택한 DSH 모델 경로에 무작위 코드만 보내 응답을 확인합니다. 원문·개인화 정보·업무 자료·도구를 사용하지 않습니다. 이용량 또는 요금이 발생할 수 있습니다. 일반 Agent 업무 실행이나 제조사 AI 이용권을 검증하지 않습니다.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = target == AgentProbePolicy.Target.DEFAULT, onClick = { target = AgentProbePolicy.Target.DEFAULT }, label = { Text("기본 질문 모델") }, enabled = p.phase != AgentProbePolicy.Phase.WAITING)
+                FilterChip(selected = target == AgentProbePolicy.Target.AMBIENT, onClick = { target = AgentProbePolicy.Target.AMBIENT }, label = { Text("상시 힌트 모델") }, enabled = p.phase != AgentProbePolicy.Phase.WAITING)
+            }
             Note(when (p.phase) {
                 AgentProbePolicy.Phase.IDLE -> "실행 전"
                 AgentProbePolicy.Phase.WAITING -> "응답 대기 (최대 60초, 대기열 포함)"
@@ -324,6 +329,16 @@ private fun AgentProbeCard(model: AppModel) {
                 AgentProbePolicy.Phase.FAILED -> "응답 실패 또는 만료 · DSH 연결과 모델 설정 확인"
                 AgentProbePolicy.Phase.CANCELLED -> "취소됨"
             })
+            if (p.phase != AgentProbePolicy.Phase.IDLE) {
+                Note("이번 진단 대상: " + if (p.target == AgentProbePolicy.Target.AMBIENT) "상시 힌트 모델" else "기본 질문 모델")
+                val route = p.modelRoute
+                if (route != null) {
+                    Note("DSH 보고 경로: ${route.provider} / ${route.model}")
+                    Note(when (route.selection) { "ambient_override" -> "상시 전용 모델"; "ambient_default" -> "상시 모델 미설정 · 기본 모델 사용"; else -> "기본 모델" })
+                    if (!route.matches(p.target)) Note("요청한 경로와 보고 경로가 다릅니다. 플러그인 설정을 확인하세요.")
+                } else if (p.phase != AgentProbePolicy.Phase.WAITING) Note("모델 경로 미보고 · DSH 플러그인 버전/연결 확인")
+                Note("모델 표시는 DSH가 보고한 호출 경로이며 공급자 내부 실제 모델·계정·과금까지 증명하지 않습니다.")
+            }
             if (p.elapsedMs != null) Note("전체 대기·응답 시간: ${p.elapsedMs}ms")
             if (p.code.isNotBlank()) Note("테스트 코드: ${p.code}")
             if (p.phase == AgentProbePolicy.Phase.WAITING) {
@@ -349,8 +364,8 @@ private fun AgentProbeCard(model: AppModel) {
     }
     if (consent) AlertDialog(onDismissRequest = { consent = false },
         title = { Text("AI 모델에 진단 요청을 보낼까요?") },
-        text = { Text("설정된 기본 DSH 모델에 테스트 코드 한 건을 보냅니다. 이용량 또는 비용이 발생할 수 있습니다.") },
-        confirmButton = { TextButton(onClick = { consent = false; model.attempt { model.service().startAgentProbe() } }) { Text("진단 실행") } },
+        text = { Text("선택한 DSH 모델 경로에 테스트 코드 한 건을 보냅니다. 이용량 또는 비용이 발생할 수 있습니다.") },
+        confirmButton = { TextButton(onClick = { consent = false; model.attempt { model.service().startAgentProbe(target) } }) { Text("진단 실행") } },
         dismissButton = { TextButton(onClick = { consent = false }) { Text("취소") } })
 }
 
