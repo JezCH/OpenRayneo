@@ -929,7 +929,8 @@ internal class BridgeService : Service() {
         if (!passiveHint && VoiceOutputPolicy.isSilent(answer, source)) return
         val id = input.optString("recordId")
         if (passiveHint) {
-            if (!focusPolicy.acceptsHint(input.optLong("focusGeneration", -1L))) return
+            if (!focusPolicy.acceptsHint(input.optLong("focusGeneration", -1L)) || agent.running || codex.running ||
+                prompterReserved || translator.active || ambientWakeBusy()) return
             val active = conversations.state
             if (source != ConversationSource.ALWAYS_ON || !active.running || active.stopping || active.activeRecord?.id != id ||
                 active.source != ConversationSource.ALWAYS_ON || destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||

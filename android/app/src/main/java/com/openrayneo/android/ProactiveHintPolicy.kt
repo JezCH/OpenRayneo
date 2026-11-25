@@ -25,7 +25,7 @@ internal object ProactiveHintPolicy {
             val key = "$source:$record"
             if (key != scope) { clear(); scope = key }
             val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
-                .trim().lowercase(java.util.Locale.ROOT).trimEnd('.', '!', '?', '。', '！', '？')
+                .trim().lowercase(java.util.Locale.ROOT).replace('？', '?').trimEnd('.', '!', '。', '！')
                 .trim().replace(Regex("\\s+"), " ")
             if (normalized.isBlank() || normalized in fillers) return false
             seen.entries.removeAll { now - it.value !in 0L until DUPLICATE_MS }
