@@ -382,6 +382,19 @@ internal class BridgeService : Service() {
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
+        // Only an explicit current native wake can trigger this read-only local shortcut.
+        // Do not send a recognized device query to a remote Agent, even if the wake has expired.
+        if (LocalDeviceQuery.isBatteryQuery(request.text, request.source, request.backfill)) {
+            val wake = request.wakeId
+            if (wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                input.put("derivedId", java.util.UUID.randomUUID().toString())
+                requests.perform({ deviceSettings.readBatteryForVoice() }) { result ->
+                    if (!destroyed) deliverExternalVoice(request.text, LocalDeviceQuery.batteryAnswer(result.getOrNull()), input)
+                }
+            }
+            return true
+        }
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
         val limit = if (maxChars > 0) "\n[안경 표시] 답변은 ${maxChars}자 이내. 더 필요하면 요약하고, 자세히 요청받을 때만 이어서 말한다." else ""
