@@ -81,6 +81,16 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/openrayneo-badging.txt"
 
+      # Fork continuity pin: only the public certificate fingerprint, never the private key.
+      - name: Verify distribution signer continuity
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'JezCH/OpenRayneo'
+        run: |
+          signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
+          if [ "$signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
+            echo "::error::APK signer differs from installed #84 lineage. Distribution blocked; recover the original key rather than uninstalling."
+            exit 1
+          fi
+
       - name: Build side-by-side validation APK
         working-directory: android
         run: ./gradlew :app:assembleValidation --console=plain

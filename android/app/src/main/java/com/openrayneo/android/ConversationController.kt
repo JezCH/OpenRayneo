@@ -15,7 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 internal data class VoiceRequest(val text: String, val context: String, val source: ConversationSource,
     val wakeId: String? = null, val forceDsh: Boolean = true, val recordId: String? = null, val sourceRevision: Int = 1, val backfill: Boolean = false,
-    val hintContext: JSONObject? = null, val lastSpeechAt: Long = 0L, val segmentIds: List<String> = emptyList())
+    val hintContext: JSONObject? = null, val lastSpeechAt: Long = 0L, val segmentIds: List<String> = emptyList()) {
+    // Main-thread request disposition, read by the worker after the posted callback returns.
+    var retainInAgentContext = true
+}
 
 /** Original channels share one frame clock; each analysis lane owns its ASR and committed cursor. */
 internal class ConversationController(private val context: Context, private val settings: AppSettings,
@@ -386,7 +389,10 @@ internal class ConversationController(private val context: Context, private val 
             worker.post {
                 if (token != generation || contextGeneration != agentContextGeneration) return@post
                 dispatching = false
-                if (accepted == true) { previous = input.map { it.text }; publish(state.copy(status = "소스 채널별로 로컬 Agent에 전달함")); drainAgent() }
+                if (accepted == true) {
+                    if (voice.retainInAgentContext) { previous = input.map { it.text }; publish(state.copy(status = "소스 채널별로 로컬 Agent에 전달함")) }
+                    drainAgent()
+                }
                 else if (accepted == false) { pendingAgent.addAll(0, input); worker.postDelayed({ drainAgent() }, 1_000) }
             }
         }

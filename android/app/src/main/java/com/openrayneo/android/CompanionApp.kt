@@ -170,7 +170,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
                 "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") })
-                "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") })
+                "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") }, { openRoute("device-settings", "korean-wake") })
                 "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "record-migration" -> RecordMigrationScreen(model)

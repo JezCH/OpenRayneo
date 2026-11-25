@@ -75,6 +75,12 @@ internal class AmbientKoreanWake {
     private var speaker = ""
     private var armedAt: Long? = null
     private var lastSpeech = 0L
+    val awaitingQuestion: Boolean get() = armedAt != null
+    fun expire(now: Long, followupSeconds: Int): Boolean {
+        val armed = armedAt ?: return false
+        if (now - armed <= ProactiveHintPolicy.MAX_AGE_MS + followupSeconds * 1000L) return false
+        armedAt = null; return true
+    }
     fun reset() { record = ""; speaker = ""; armedAt = null; lastSpeech = 0L }
     fun accept(recordId: String, text: String, speakerId: String, speechAt: Long, now: Long,
                mixed: Boolean, options: KoreanWakeOptions): Match? {

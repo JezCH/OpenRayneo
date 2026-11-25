@@ -43,10 +43,10 @@ internal class GlassesVoiceTransport(
     private var answerText = ""
     fun start(next: ConversationSource) {
         check(source == null || source == next) { "먼저 기존 오디오 기능을 종료하세요" }
+        if (next == ConversationSource.NATIVE) check(nativeActive && nativeCode in 1..6) { "먼저 깨우기 명령어(Hey RayNeo 등)로 안경을 깨우고 자동 응답을 켜세요" }
         source = next
         when (next) {
             ConversationSource.NATIVE -> {
-                check(nativeActive && nativeCode in 1..6) { "먼저 깨우기 명령어(Hey RayNeo 등)로 안경을 깨우고 자동 응답을 켜세요" }
                 send(0x0d, 2, JSONObject().put("rc", 1))
                 if (!answering) send(0x0d, 9, JSONObject().put("rc", 1))
             }
@@ -76,9 +76,11 @@ internal class GlassesVoiceTransport(
         val body = message.json?.let(::JSONObject) ?: JSONObject()
         when (message.type) {
             1 -> {
-                nativeActive = true; nativeCode = body.optInt("rc"); wakeId = UUID.randomUUID().toString()
+                val code = body.optInt("rc")
+                if (code !in 1..6) { trace("지원되지 않는 안경 깨우기 이벤트 rc=$code"); return }
+                nativeActive = true; nativeCode = code; wakeId = UUID.randomUUID().toString()
                 lastReply = null; advancedReply = null; answering = false
-                if (nativeCode in 1..6) wake()
+                wake()
             }
             3 -> if (source == ConversationSource.NATIVE) message.audio?.let(audio)
             8 -> { nativeActive = false; answering = false; if (source == ConversationSource.NATIVE) endRound(true) }
