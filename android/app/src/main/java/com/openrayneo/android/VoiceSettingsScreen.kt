@@ -104,8 +104,9 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             "주변이 시끄러워 잡음에도 무음 처리되면 올리고(예: -40), 작게 말할 때 걸러지지 않으면 내리세요.")
         GateSlider(drafts, "selfVoiceHoldMs", "말이 끝난 뒤 유지 시간", 300f, 0f..1000f, 9, { "${it.toInt()} ms" },
             "본인 말 끝부분이 채널 2에 남으면 늘리고, 바로 이어지는 상대 말이 잘리면 줄이세요.")
-        var autoMemory by remember(model.config) { mutableStateOf(model.config.optString("memoryAutoSummary", "true") != "false") }
+        var autoMemory by remember(model.config) { mutableStateOf(SummaryDispatchPolicy.autoEnabled(model.config.optString("memoryAutoSummary"))) }
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
+        Note("끄고 음성 설정을 저장하면 새 자동 요약 요청을 보내지 않습니다. 수동 요약은 가능하며 이미 전송된 요청은 취소되지 않을 수 있습니다. ASR·Agent 전송 설정과는 별개입니다.")
         Note("종일 기록과 개별 기록은 원본 오디오를 자동 저장하고, 목소리 등록은 음성 특징만 저장합니다. 전사가 지연되면 오디오를 먼저 저장하고 복구 후 전사와 화자 분석을 보충합니다.")
         VoiceField(model, "answerClearSeconds", "실시간 힌트 답변 후 화면 지우기까지 초 (0이면 유지)", "0")
         VoiceField(model, "answerMaxChars", "안경 답변 최대 글자 수 (0이면 제한 없음)", DEFAULT_ANSWER_MAX_CHARS.toString())

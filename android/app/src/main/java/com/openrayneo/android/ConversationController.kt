@@ -107,7 +107,7 @@ internal class ConversationController(private val context: Context, private val 
                     resourcePauseReason = constraint
                     publish(state.copy(status = "$constraint. 원본 오디오의 모든 채널은 계속 저장되며 복구 후 채널별로 보충합니다"))
                 } else if (resourcePauseReason != null) { resourcePauseReason = null; nextBackfillAt = 0 }
-                if (System.currentTimeMillis() - lastSummaryAt > 60_000 && config.optString("memoryAutoSummary", "true") != "false") {
+                if (System.currentTimeMillis() - lastSummaryAt > 60_000 && SummaryDispatchPolicy.autoEnabled(settings.read().optString("memoryAutoSummary"))) {
                     record?.takeIf { it.segments.isNotEmpty() && !it.processingPending }?.let { lastSummaryAt = System.currentTimeMillis(); enqueueSummary(it.id, "rolling") }
                 }
                 if (constraint == null && deferredProcessing && !liveBackfill && savingAudio && captureChannels > 0 && queuedSamples.get() == 0 && System.currentTimeMillis() >= nextBackfillAt && SpeechRounds.ready(context, settings.read())) resumeLive()
@@ -505,10 +505,11 @@ internal class ConversationController(private val context: Context, private val 
     } }
     fun removeVoice(id: String) { worker.post { repository.removeVoice(id); publish(state.copy(people = repository.people)) } }
     private fun day(time: Long) = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate().toString()
-    private fun summaryConfigured() = settings.read().let { MobileModelEndpoint.isConfigured(it.optString("modelUrl"), it.optString("modelName"), it.optString("modelKey")) }
+    private fun summaryConfigured(config: JSONObject) = MobileModelEndpoint.isConfigured(config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey"))
     fun summarize(recordId: String) { worker.post { enqueueSummary(recordId, "manual") } }
     private fun scheduleDaySummaries(includeToday: Boolean) {
-        if (!summaryConfigured()) return
+        val cfg = settings.read()
+        if (!SummaryDispatchPolicy.allows("day_end", cfg.optString("memoryAutoSummary")) || !summaryConfigured(cfg)) return
         val today = LocalDate.now().toString()
         val days = repository.records.filter { it.source == ConversationSource.ALWAYS_ON && !it.processingPending }
             .flatMap { row -> row.segments.map { day(row.timeOf(it)) } }.distinct().filter { includeToday || it < today }
@@ -520,22 +521,34 @@ internal class ConversationController(private val context: Context, private val 
         }
     }
     private fun enqueueSummary(id: String, kind: String, date: String = "") {
-        if (!summaryConfigured() || activeSummary == Triple(id, kind, date) || summaryJobs.any { it.first == id && it.second == kind && it.third == date }) return
+        val cfg = settings.read()
+        if (!SummaryDispatchPolicy.allows(kind, cfg.optString("memoryAutoSummary")) || !summaryConfigured(cfg) ||
+            activeSummary == Triple(id, kind, date) || summaryJobs.any { it.first == id && it.second == kind && it.third == date }) return
         summaryJobs += Triple(id, kind, date); drainSummaries()
     }
     private fun drainSummaries() {
         if (state.summarizing || summaryJobs.isEmpty()) return
+        val cfg = settings.read()
+        // Preferences can change while summaries wait behind an active request.
+        summaryJobs.removeAll { !SummaryDispatchPolicy.allows(it.second, cfg.optString("memoryAutoSummary")) }
+        if (summaryJobs.isEmpty()) return
         val (id, kind, date) = summaryJobs.removeFirst()
         val target = repository.records.firstOrNull { it.id == id } ?: return drainSummaries()
         val sources = if (kind == "day_end") repository.records.filter { row -> row.source == ConversationSource.ALWAYS_ON && row.segments.any { day(row.timeOf(it)) == date } } else listOf(target)
         val input = if (kind == "day_end") target.copy(segments = sources.flatMap { row -> row.segments.filter { day(row.timeOf(it)) == date } }) else target
         if (input.segments.isEmpty()) return drainSummaries()
         val versions = sources.associate { it.id to it.segments.map { segment -> segment.json().toString() } }
-        val cfg = settings.read(); activeSummary = Triple(id, kind, date); publish(state.copy(summarizing = true))
+        activeSummary = Triple(id, kind, date); publish(state.copy(summarizing = true))
         inference.execute {
-            val result = runCatching { summarizer.summarize(input, repository.people, cfg) }
+            val result = runCatching {
+                // Recheck immediately before starting the external model call.
+                val currentConfig = settings.read()
+                if (SummaryDispatchPolicy.allows(kind, currentConfig.optString("memoryAutoSummary")) && summaryConfigured(currentConfig))
+                    summarizer.summarize(input, repository.people, currentConfig) else null
+            }
             worker.post {
                 result.fold({ summarized ->
+                    if (summarized == null) return@fold
                     val currentSources = if (kind == "day_end") repository.records.filter { row -> row.source == ConversationSource.ALWAYS_ON && row.segments.any { day(row.timeOf(it)) == date } }
                         else repository.records.filter { it.id == id }
                     val valid = currentSources.map { it.id }.toSet() == versions.keys && versions.all { (recordId, segments) ->
