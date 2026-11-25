@@ -13,6 +13,8 @@ Install this directory once:
 dsh plugin --profile web add /absolute/path/openrayneo-dsh
 ```
 
+For builds with the installation-bundle workflow, download the `openrayneo-android-<commit>` artifact from a successful main-branch Android APK run. It contains `app-release.apk`, the matching `openrayneo-dsh-*.tgz` and `install-manifest.json` with package, version, SHA-256 hashes and verified certificate fingerprints. Compare the certificate with the installed APK before updating. A fixed CI signing key does not guarantee a match with an older install; do not uninstall to bypass a mismatch. PR builds validate the bundle but do not publish an installation artifact.
+
 For a packaged update, replace the installed plugin directory with `openrayneo-dsh-0.1.10.tgz` contents.
 The npm archive has a top-level `package/`; use `--strip-components=1` when extracting into that directory.
 Update the companion APK and restart the DSH engine after replacing plugin code.
