@@ -15,7 +15,7 @@ internal class KoreanSpeechOutput(private val context: Context, private val main
     private var engine: TextToSpeech? = null
     private var generation = 0
     private var closed = false
-    fun speak(text: String) {
+    fun speak(text: String, rate: Float = 1f, pitch: Float = 1f) {
         check(!closed && text.isNotBlank())
         stop()
         val token = ++generation
@@ -30,6 +30,10 @@ internal class KoreanSpeechOutput(private val context: Context, private val main
                 .sortedWith(compareByDescending<android.speech.tts.Voice> { it.locale.country == "KR" }.thenByDescending { it.quality }).firstOrNull() }.getOrNull()
             if (voice == null || tts.setVoice(voice) != TextToSpeech.SUCCESS) {
                 fail("설치된 오프라인 한국어 음성이 없습니다. 휴대폰 TTS 설정에서 한국어 음성을 설치하세요."); return@post
+            }
+            if (tts.setSpeechRate(rate.coerceIn(0.75f, 1.5f)) != TextToSpeech.SUCCESS ||
+                tts.setPitch(pitch.coerceIn(0.75f, 1.25f)) != TextToSpeech.SUCCESS) {
+                fail("음성 속도 또는 높이를 적용하지 못했습니다"); return@post
             }
             tts.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
