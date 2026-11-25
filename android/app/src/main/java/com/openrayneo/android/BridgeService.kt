@@ -60,6 +60,7 @@ internal class BridgeService : Service() {
     private var realtimePreviewRequest = 0L
     private var realtimePreviewRevision = -1L
     private val proactiveHintGate = ProactiveHintPolicy.DisplayGate()
+    private val memoryReferenceWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val pendingAnswers = mutableMapOf<AnswerSource, AnswerPermit>()
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
     private var voiceReply: VoiceDelivery? = null
@@ -798,6 +799,22 @@ internal class BridgeService : Service() {
                 check(conversations.repository.applyDerived(item)) { "기록이 없습니다" }; conversations.refreshRecords()
                 completion(Result.success(JSONObject().put("item", item.json()).put("persisted", true)))
             }
+            "memory_reference" -> {
+                val scope = MemoryReferenceSearch.scope(args)
+                val allowed = requests.permission()
+                check(!destroyed && allowed()) { "기록 검색 요청이 취소됨" }
+                val repository = conversations.repository
+                val snapshot = repository.referenceSnapshot()
+                memoryReferenceWorker.execute {
+                    val result = runCatching { MemoryReferenceSearch.search(scope, snapshot) }
+                    main.post {
+                        if (!destroyed && allowed()) completion(result.mapCatching { found ->
+                            check(MemoryReferenceSearch.current(found, repository.referenceSnapshot())) { "검색 중 원본 기록이 변경되었습니다. 다시 검색하세요" }
+                            MemoryReferenceSearch.json(found)
+                        })
+                    }
+                }
+            }
             "memory_search" -> {
                 val query = args.getString("query")
                 val rows = conversations.repository.records.mapNotNull { record ->
@@ -843,7 +860,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
-        reconnectCapture.cancel(); destroyed = true; observers.clear(); main.removeCallbacksAndMessages(null)
+        reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
