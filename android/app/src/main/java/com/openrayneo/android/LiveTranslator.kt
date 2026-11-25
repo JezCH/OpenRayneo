@@ -31,6 +31,8 @@ internal class LiveTranslator(
     @Volatile var active = false; private set
     @Volatile var status = OFF; private set
     @Volatile var captionOnly = false; private set
+    var offlineMode = false; private set
+    val offline = OfflineTranslation(main, changed)
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -49,13 +51,22 @@ internal class LiveTranslator(
     private var restartTask: Runnable? = null
 
     /** Throws with a user-facing message when ASR or the translation model is not configured. */
-    fun validate(settings: JSONObject) {
-        val speech = SpeechRounds.bilingual(context, settings)
+    fun validate(settings: JSONObject, local: Boolean = false) {
+        val speech = if (local) offlineSpeech(settings) else SpeechRounds.bilingual(context, settings)
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
+        if (local) { require(offline.ready) { "먼저 오프라인 번역 모델을 준비하세요" }; return }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
         }
         MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+    }
+
+    private fun offlineSpeech(settings: JSONObject): JSONObject {
+        val copy = JSONObject().put("asrEngine", SpeechRounds.engine(settings)).put("asrLanguage", "ko,en")
+        if (SpeechRounds.engine(copy) !in setOf("local", "nemotron")) {
+            copy.put("asrEngine", if (LocalModels.nemotron.installed(context)) "nemotron" else "local")
+        }
+        return copy
     }
 
     fun captionConfig(settings: JSONObject): JSONObject {
@@ -67,14 +78,15 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread. No cloud fallback in caption mode. */
-    fun start(settings: JSONObject, captions: Boolean = false) {
+    fun start(settings: JSONObject, captions: Boolean = false, local: Boolean = false) {
         val speech = if (captions) captionConfig(settings) else {
-            validate(settings)
-            JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
+            validate(settings, local)
+            if (local) offlineSpeech(settings) else JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
         }
         stop()
         synchronized(this) {
             captionOnly = captions
+            offlineMode = local && !captions
             config = speech
             generation++
             active = true
@@ -117,7 +129,7 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread (service onDestroy). */
-    fun close() { stop(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
+    fun close() { stop(); offline.close(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
 
     private fun openASR() {
         val token: Int
@@ -159,7 +171,7 @@ internal class LiveTranslator(
         if (failures != 0 || status != listening()) { failures = 0; status = listening(); changed() }
     }
 
-    private fun listening() = if (captionOnly) "듣는 중 · 로컬 자막" else LISTENING
+    private fun listening() = if (captionOnly) "듣는 중 · 로컬 자막" else if (offlineMode) "듣는 중 · 오프라인 한영 번역" else LISTENING
     private fun render() = if (captionOnly) show("실시간 자막", clip(sourceLine, TARGET_LIMIT))
         else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
 
@@ -181,6 +193,14 @@ internal class LiveTranslator(
         val to = if (from == "Korean") "English" else "Korean"
         sourceLine = text; targetLine = "…"
         render()
+        if (offlineMode) {
+            offline.translate(text, from == "Korean") { result ->
+                if (token != generation || !active || sequence != latestFinal) return@translate
+                result.fold({ translated -> targetLine = clip(translated, TARGET_LIMIT); render() },
+                    { targetLine = "(로컬 번역 실패)"; render(); status = "오프라인 번역 실패 · 모델 준비 확인"; changed() })
+            }
+            return
+        }
         val context = history.toList()
         val snapshot = config
         translations.execute {
