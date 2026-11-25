@@ -443,15 +443,30 @@ internal class BridgeService : Service() {
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
-        // Only an explicit current native wake can trigger this read-only local shortcut.
-        // Do not send a recognized device query to a remote Agent, even if the wake has expired.
-        if (LocalDeviceQuery.isBatteryQuery(request.text, request.source, request.backfill)) {
+        // Exact local commands are consumed even if their native wake has expired.
+        // Check permission again when the serialized operation actually sends each wire command.
+        val localCommand = LocalDeviceQuery.parse(request.text, request.source, request.backfill)
+        if (localCommand != null) {
             val wake = request.wakeId
-            if (wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
-                !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+            val contextKey = identity.getString("conversationKey")
+            val inheritedPermission = requests.permission()
+            val allowed = {
+                !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                    wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                    runCatching { inheritedPermission() && settings.read().optString("nativeConversationKey") == contextKey }.getOrDefault(false)
+            }
+            if (allowed()) {
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
-                requests.perform({ deviceSettings.readBatteryForVoice() }) { result ->
-                    if (!destroyed) deliverExternalVoice(request.text, LocalDeviceQuery.batteryAnswer(result.getOrNull()), input)
+                requests.withPermission(allowed) {
+                    requests.perform({ deviceSettings.executeVoiceCommand(localCommand) }) { result ->
+                        if (allowed()) {
+                            val answer = result.getOrElse {
+                                if (localCommand.kind == LocalDeviceQuery.Kind.BATTERY) LocalDeviceQuery.batteryAnswer(null)
+                                else "안경 밝기 처리 결과를 확인하지 못했습니다."
+                            }
+                            deliverExternalVoice(request.text, answer, input)
+                        }
+                    }
                 }
             }
             return true
