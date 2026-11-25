@@ -341,12 +341,12 @@ internal class BridgeService : Service() {
     fun followNavigation(key: String) {
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
-        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
-        conversationOwnsDisplay = false
-        if (conversations.state.running) conversations.stop()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
         val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
         check(!entry.experimental || entry.safeInstruction != null) { "최신 한국어 길 안내의 방향과 거리를 확인하지 못했습니다." }
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        conversationOwnsDisplay = false
+        if (conversations.state.running) conversations.stop()
         val frame = entry.safeInstruction?.let { NavigationFrame.render(it.direction, it.meters, if (entry.experimental) entry.sourceName else entry.title) }
             ?: NavigationFrame.status("안내 미인식", "휴대폰 확인")
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
