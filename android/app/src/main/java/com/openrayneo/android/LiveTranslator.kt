@@ -57,7 +57,7 @@ internal class LiveTranslator(
     fun validate(settings: JSONObject, local: Boolean = false) {
         val speech = if (local) offlineSpeech(settings) else SpeechRounds.bilingual(context, settings)
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
-        if (local) { require(offline.ready) { "먼저 오프라인 번역 모델을 준비하세요" }; return }
+        if (local) { require(offline.readyFor(settings)) { "먼저 휴대폰 로컬 번역 모델 연결을 시험하세요" }; return }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
         }
@@ -125,6 +125,7 @@ internal class LiveTranslator(
         }
         restartTask?.let(main::removeCallbacks); restartTask = null
         call?.cancel()
+        offline.cancel()
         wakeWindow = null; wakeAction = null
         history.clear(); sourceLine = ""; targetLine = ""
         if (wasActive || reason != null) { status = reason ?: if (captionOnly) "실시간 자막 꺼짐" else OFF; changed() }
@@ -221,10 +222,10 @@ internal class LiveTranslator(
         sourceLine = text; targetLine = "…"
         render()
         if (offlineMode) {
-            offline.translate(text, from == "Korean") { result ->
+            offline.translate(text, to) { result ->
                 if (token != generation || !active || sequence != latestFinal) return@translate
                 result.fold({ translated -> targetLine = clip(translated, TARGET_LIMIT); render() },
-                    { targetLine = "(로컬 번역 실패)"; render(); status = "오프라인 번역 실패 · 모델 준비 확인"; changed() })
+                    { targetLine = "(로컬 번역 실패)"; render(); status = "로컬 번역 실패 · 모델 서버 확인"; changed() })
             }
             return
         }
