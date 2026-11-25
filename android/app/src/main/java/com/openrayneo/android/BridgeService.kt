@@ -799,6 +799,10 @@ internal class BridgeService : Service() {
                 check(conversations.repository.applyDerived(item)) { "기록이 없습니다" }; conversations.refreshRecords()
                 completion(Result.success(JSONObject().put("item", item.json()).put("persisted", true)))
             }
+            "about_you_read" -> {
+                check(!destroyed && requests.permission()()) { "개인화 정보 조회가 취소됨" }
+                completion(Result.success(AboutYouStore(this).agentView()))
+            }
             "memory_reference" -> {
                 val scope = MemoryReferenceSearch.scope(args)
                 val allowed = requests.permission()
