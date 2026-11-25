@@ -110,7 +110,10 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
         files.execute {
-            val result = runCatching { context.contentResolver.openOutputStream(uri)!!.use { s.conversations.recordings.exportWav(record.audioId ?: id, record.audioSamples, it) } }
+            val result = runCatching {
+                require(!record.transcriptOnly && !record.audioPending && record.audioSamples > 0L) { "내보낼 원본 음성이 없습니다" }
+                context.contentResolver.openOutputStream(uri)!!.use { s.conversations.recordings.exportWav(record.audioId ?: id, record.audioSamples, it) }
+            }
             main.post { result.fold({ notice = "회의 오디오를 선택한 위치로 내보냈습니다" }, { error = it.message ?: "내보내기 실패" }) }
         }
     }
@@ -246,6 +249,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         updated.remove("amapKey")
         updated.remove("amapConsent")
         settings.save(updated)
+        if (listOf("audioRetention", "asrEngine").any { old.optString(it) != updated.optString(it) }) bridge?.cancelAlwaysOnRecovery()
         if (mobileChanged) {
             bridge?.clearAgent()
             phoneHistory = emptyList()
@@ -274,7 +278,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
             "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "audioChannel",
-            "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+            "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
     fun send(source: AnswerSource) = attempt {
