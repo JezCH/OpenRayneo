@@ -249,6 +249,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         updated.remove("amapKey")
         updated.remove("amapConsent")
         settings.save(updated)
+        if (listOf("voiceAlwaysOnStart", "nativeAutoAnswer", "audioRetention", "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.cancelVoiceAlwaysOnStart()
         if (old.optString("fastRealtimeHints") != updated.optString("fastRealtimeHints")) bridge?.cancelRealtimeStream()
         if (listOf("audioRetention", "asrEngine").any { old.optString(it) != updated.optString(it) }) bridge?.cancelAlwaysOnRecovery()
         if (mobileChanged) {
@@ -278,7 +279,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
