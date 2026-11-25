@@ -35,12 +35,12 @@ internal fun OnboardingScreen(
     val step = model.onboardingStep
     val scroll = rememberScrollState()
     LaunchedEffect(step) { scroll.scrollTo(0) }
-    val titles = listOf("OpenRayneo 시작하기", "안경 연결", "내비게이션 추종 켜기", "어시스턴트 설정", "설정 확인")
+    val titles = listOf("OpenRayneo 시작하기", "안경 연결", "음성 인식 준비", "AI 연결 설정", "준비 상태 확인")
     val subtitles =
         listOf(
             "OpenRayneo에 오신 것을 환영합니다. 몇 단계로 설정을 마치거나 나중에 계속할 수 있습니다.",
             "휴대폰으로 RayNeo iO에 직접 연결하면 내비게이션과 답변이 눈앞에 표시됩니다.",
-            "경로는 Amap이 계획하고, OpenRayneo가 알림을 읽어 방향, 거리, 도로명을 안경에 보여 줍니다.",
+            "한국어 음성 인식 모델을 준비합니다. 기록은 별도로 시작할 때만 실행됩니다.",
             "휴대폰은 로컬 Agent로 작업을 처리하고 독립적으로 기록·요약합니다. 컴퓨터가 온라인이면 작업을 다음에도 맡길 수 있습니다: Codex.",
             "아래는 현재 준비 상태입니다. 완료하지 않은 항목은 언제든 설정에서 계속할 수 있습니다.",
         )
@@ -74,8 +74,8 @@ internal fun OnboardingScreen(
                         Modifier.fillMaxWidth().height(90.dp),
                         MaterialTheme.colorScheme.primary,
                     )
-                    SetupRow(Icons.Outlined.NearMe, "눈을 들어 내비게이션 보기", "휴대폰 Amap의 실제 내비게이션 알림을 따라감")
-                    SetupRow(Icons.Outlined.AutoAwesome, "언제든 어시스턴트에게 질문", "휴대폰 로컬 Agent와 컴퓨터 연결: Codex")
+                    SetupRow(Icons.Outlined.GraphicEq, "일상과 회의 기록", "안경 음성을 인식하고 필요한 정보를 찾아보기")
+                    SetupRow(Icons.Outlined.AutoAwesome, "언제든 AI에게 질문", "연결한 AI 서비스 또는 컴퓨터에 작업 요청")
                     SetupRow(Icons.Outlined.Tune, "직접 제어", "표시와 음성 수신은 언제든 일시정지 가능")
                 }
                 1 -> {
@@ -101,35 +101,11 @@ internal fun OnboardingScreen(
                 }
                 2 -> {
                     ContentCard {
-                        Text(
-                            if (model.notificationAllowed) "알림 접근 허용됨" else "Amap 내비게이션 알림 읽기 허용",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        if (model.notificationAllowed) Note(model.state.notificationReadStatus)
-                        Note("시스템이 알림 접근 권한을 부여하며, 앱은 Amap 내비게이션 알림만 처리합니다. 알림 본문은 모델로 전송되지 않습니다.")
-                        ToolOutlinedButton(
-                            onClick = actions.notificationAccess,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(if (model.notificationAllowed) "알림 권한 보기" else "알림 접근 허용하러 가기")
-                        }
+                        Text(if (model.state.conversation.modelReady) "음성 인식 준비됨" else "음성 인식 설정 필요", style = MaterialTheme.typography.titleMedium)
+                        Note("한국어 중심이라면 기기 내장 한국어 모델을 먼저 준비하세요. 한영 혼합에는 다국어 모델을 선택할 수 있습니다. 모델을 저장했다고 실제 마이크 인식이 검증된 것은 아닙니다.")
+                        ToolButton(onClick = { configure("voice-settings") }, modifier = Modifier.fillMaxWidth()) { Text("음성 인식 설정") }
+                        Note("원본 음성 보존 및 AI 전송 범위도 설정에서 확인하세요.")
                     }
-                    var example by rememberSaveable { mutableIntStateOf(0) }
-                    val samples =
-                        listOf(
-                            Triple("직진", 300, "세종대로 따라"),
-                            Triple("우회전", 80, "을지로 진입"),
-                            Triple("좌회전", 20, "강변북로 따라"),
-                        )
-                    val sample = samples[example]
-                    GridPreview(
-                        NavigationFrame.render(sample.first, sample.second, sample.third),
-                        "데모 · 안경과 같은 내비게이션 그리드",
-                    )
-                    TextButton(onClick = { example = (example + 1) % samples.size }) {
-                        Text("데모 안내 전환")
-                    }
-                    Note("위 화면은 데모이며 안경으로 전송되거나 내비게이션을 시작하지 않습니다. 실제 내비게이션은 Amap 앱에서 시작하세요.")
                 }
                 3 -> {
                     SetupOption(
@@ -158,11 +134,11 @@ internal fun OnboardingScreen(
                             "연결됨",
                             "나중에 연결",
                         )
-                        CompletionRow("내비게이션 알림 권한", model.notificationAllowed, "허용됨", "나중에 허용")
+                        CompletionRow("음성 인식", model.state.conversation.modelReady, "모델 준비됨", "나중에 준비")
                         CompletionRow(
                             "로컬 Agent",
                             model.state.agentServer.enabled,
-                            "엔드포인트 켜짐",
+                            "연결 기능 켜짐 · 응답 미검증",
                             "선택 사항, 나중에 설정",
                         )
                         CompletionRow(
@@ -171,6 +147,11 @@ internal fun OnboardingScreen(
                             "설정 저장됨",
                             "선택 사항, 나중에 설정",
                         )
+                    }
+                    ContentCard {
+                        Text("안경 표시 확인", style = MaterialTheme.typography.titleMedium)
+                        Note("기기 진단의 테스트 알림을 안경에서 직접 확인하세요. AI 응답 진단은 AI 화면에서 별도로 실행합니다.")
+                        ToolOutlinedButton(onClick = { configure("diagnostics") }) { Text("안경 출력 테스트") }
                     }
                     if (!model.backgroundNotifications)
                         ContentCard {
