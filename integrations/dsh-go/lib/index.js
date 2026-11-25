@@ -14,6 +14,9 @@ export const Config = z.object({
   tokenEnv: z.string().role('credential-ref').default('OPENRAYNEO_TOKEN').volatile().description('OpenRayneo access token / 로컬 액세스 토큰 자격 증명 이름'),
   receiveVoiceTasks: z.boolean().default(true).description('Receive voice tasks / 안경 음성 작업 수신'),
   agentPreset: z.string().default('').description('Optional DSH agent preset / 선택 사항: DSH 프리셋'),
+  ambientProvider: z.string().default('').description('Optional registered provider for automatic hints only / 종일·빠른 실시간 힌트 전용 공급자'),
+  ambientModel: z.string().default('').description('Optional model ID for automatic hints only / 자동 힌트 전용 모델 ID'),
+  ambientReasoningEffort: z.string().default('').description('Optional provider-supported reasoning effort for automatic hints / 자동 힌트 추론 강도 (미지정 시 공급자 기본값)'),
 })
 
 function clip(text, length) { return Array.from(text).slice(0, length).join('') }

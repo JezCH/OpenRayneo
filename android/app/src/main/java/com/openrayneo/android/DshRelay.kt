@@ -15,6 +15,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
         val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate()) {
+        val userReview: Boolean get() = kind == "hint" && input?.optString("purpose") == "record_followup"
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
@@ -22,16 +23,21 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private val requests = linkedMapOf<String, Request>()
     init {
         val saved = repository.readAgentOutbox()
+        var historicalCancelled = false
         repeat(saved.length()) { index ->
             val row = saved.getJSONObject(index); val input = row.optJSONObject("input")
             val text = row.getString("text")
             val request = Request(row.getString("id"), text, row.getString("context"), { result ->
                 result.onSuccess { restored(text, it, input ?: JSONObject()) }
             }, row.optString("kind", "task"), input, row.optString("state", "queued"), row.optString("sessionId"), row.optLong("claimedAt"), row.optString("answer").takeUnless { it == "null" }, row.optBoolean("delivered"), row.optLong("createdAt", row.optLong("claimedAt")))
+            if (input?.optBoolean("backfill") == true && request.state in setOf("queued", "running")) {
+                request.state = "cancelled"; historicalCancelled = true
+            }
             requests[request.id] = request
             if (request.state == "running") scheduleTimeout(request)
             if (request.state == "completed" && !request.delivered && request.answer != null) deliver(request)
         }
+        if (historicalCancelled) persist()
     }
     private fun persist() {
         val finished = requests.values.filter { it.state !in setOf("queued", "running") }
@@ -42,6 +48,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
                hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null, complete: (Result<String>) -> Unit): String {
+        require(input?.optBoolean("backfill") != true) { "과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다" }
         require(hintLifetimeMs in 0L..ProactiveHintPolicy.MAX_AGE_MS && (hintLifetimeMs == 0L || kind == "hint"))
         require(preview == null || (hintLifetimeMs > 0L && input?.optBoolean("streamHint") == true))
         val id = UUID.randomUUID().toString()
@@ -50,9 +57,9 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview)
         synchronized(lock) {
             expireHints()
-            if (request.hintDeadline > 0L) {
-                // Keep at most one pending passive hint; do not cancel an in-flight useful result just for newer speech.
-                requests.values.filter { it.hintDeadline > 0L && it.state == "queued" }.forEach { cancelHint(it) }
+            if (request.hintDeadline > 0L && !request.userReview) {
+                // Ambient updates may coalesce, but must never replace an explicit record review.
+                requests.values.filter { it.hintDeadline > 0L && !it.userReview && it.state == "queued" }.forEach { cancelHint(it) }
             }
             requests[request.id] = request; persist(); lock.notifyAll()
         }
@@ -101,6 +108,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             expireHints()
             // Explicit/durable tasks take precedence over suggestions.
             val request = requests.values.firstOrNull { it.state == "queued" && it.hintDeadline == 0L }
+                ?: requests.values.firstOrNull { it.state == "queued" && it.userReview }
                 ?: requests.values.firstOrNull { it.state == "queued" }
                 ?: return JSONObject().put("request", JSONObject.NULL)
             val hintRemaining = if (request.hintDeadline > 0L)
