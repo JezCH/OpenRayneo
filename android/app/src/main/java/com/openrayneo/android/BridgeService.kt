@@ -209,7 +209,10 @@ internal class BridgeService : Service() {
         if (settings.read().optBoolean("localAgentEnabled")) agentServer.start()
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("bridge", "안경 연결 및 내비게이션", NotificationManager.IMPORTANCE_LOW))
+            NotificationChannel("bridge", "백그라운드 서비스", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "서비스 유지용. 안경 연결 상태는 앱에서 확인합니다."
+                setSound(null, null); enableVibration(false); enableLights(false); setShowBadge(false)
+            })
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("local-clock", "휴대폰 기반 타이머", NotificationManager.IMPORTANCE_LOW))
         initialized = true
@@ -238,6 +241,7 @@ internal class BridgeService : Service() {
                 updateNotification(); notifyUI()
             } else stopSelf()
         } else {
+            notificationText = summary()
             startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 if (PhoneLocation.allowed(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
             foreground = true
@@ -1424,18 +1428,14 @@ internal class BridgeService : Service() {
         migration.transfer(includeAudio)
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    private fun summary() = state.displayDescription + (if (focusMode) " · 앱 집중 모드" else "") + (if (!appNotificationsEnabled) " · 앱 안경 알림 꺼짐" else "") + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
-        AudioPhase.RECEIVING -> " · 음성 수신 중"
-        AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
-        AudioPhase.STALLED -> " · 오디오 중단됨"
-        AudioPhase.FAILED -> " · 오디오 오류"
-        AudioPhase.STOPPED -> ""
-    }
+    // Connection and retry transitions are in-app status, never repeated phone alerts.
+    private fun summary() = if (localClock.timerRunning) "백그라운드 서비스 실행 중 · 타이머 실행 중" else "백그라운드 서비스 실행 중"
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, BridgeService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
         val builder = Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("OpenRayneo").setContentText(summary()).setContentIntent(open).setOngoing(true)
+            .setOnlyAlertOnce(true).setShowWhen(false).setCategory(Notification.CATEGORY_SERVICE)
             .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build())
         if (localClock.timerRunning) {
             val cancel = PendingIntent.getService(this, 7919, Intent(this, BridgeService::class.java).setAction("CANCEL_LOCAL_TIMER"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

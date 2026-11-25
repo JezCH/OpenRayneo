@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -39,6 +40,8 @@ internal class RayneoConnection(private val context: Context, private val listen
     @Volatile private var socket: BluetoothSocket? = null
     private var activeScan: ScanCallback? = null
     private var scanTimeout: Runnable? = null
+    private var presenceScan: ScanCallback? = null
+    private var automaticConnection = false
     private var ready = false
     private var expectedAddress: String? = null
     val resolvedClassicAddress: String? get() = expectedAddress
@@ -94,6 +97,52 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
     }
 
+    /** A filtered, low-power presence watch for a previously authenticated device.
+     * No connection attempt, bonding, scan timeout or public scan-state events while absent.
+     * The service must remain running; a stopped scan cannot deliver a valid match.
+     */
+    fun watchPresence(device: Device, found: (Device) -> Unit, failed: (String) -> Unit) {
+        check(adapter.isEnabled) { "블루투스 꺼짐" }
+        check(gatt == null && socket == null) { "기존 연결 정리 대기" }
+        stopScan()
+        val scanner = checkNotNull(adapter.bluetoothLeScanner)
+        val classic = checkNotNull(device.classicAddress)
+        val addressBytes = classic.split(':').map { it.toInt(16).toByte() }.toByteArray()
+        check(addressBytes.size == 6)
+        val filters = listOf(
+            ScanFilter.Builder().setDeviceAddress(device.bluetooth.address).build(),
+            ScanFilter.Builder().setManufacturerData(0x5716, byteArrayOf(6) + addressBytes).build()
+        )
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                main.post {
+                    if (presenceScan !== this || activeScan !== this || !result.isConnectable) return@post
+                    val data = result.scanRecord?.getManufacturerSpecificData(0x5716)
+                    val advertised = data?.takeIf { it.size >= 7 && it[0] == 6.toByte() }?.copyOfRange(1, 7)?.let(::addressString)
+                    if (advertised != null && !advertised.equals(classic, true)) return@post
+                    if (!result.device.address.equals(device.bluetooth.address, true) && !classic.equals(advertised, true)) return@post
+                    // Automatic recovery must never recreate a removed system bond.
+                    val bonded = runCatching { adapter.getRemoteDevice(classic).bondState == BluetoothDevice.BOND_BONDED }.getOrDefault(false)
+                    if (!bonded) { stopScan(); failed("기존 페어링을 확인해야 합니다"); return@post }
+                    stopScan()
+                    found(Device(device.name, result.device, classic))
+                }
+            }
+            override fun onScanFailed(errorCode: Int) {
+                main.post {
+                    if (presenceScan !== this) return@post
+                    stopScan(); failed("자동 감지 일시 중단: $errorCode")
+                }
+            }
+        }
+        activeScan = callback; presenceScan = callback
+        try {
+            scanner.startScan(filters, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+                .setReportDelay(0L).build(), callback)
+        } catch (error: Exception) { stopScan(); throw error }
+    }
+    fun stopPresenceWatch() { if (presenceScan != null) stopScan() }
+
     // A stopped scan can still have callbacks queued on Android's main thread.
     private fun newScanCallback() = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -119,8 +168,9 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
     }
 
-    fun connect(device: Device, bleOnly: Boolean = false) {
+    fun connect(device: Device, bleOnly: Boolean = false, automatic: Boolean = false) {
         disconnect()
+        automaticConnection = automatic
         this.bleOnly = bleOnly
         expectedAddress = device.classicAddress
         pairingSequence = 0
@@ -149,6 +199,7 @@ internal class RayneoConnection(private val context: Context, private val listen
             continuation()
             return
         }
+        check(!automaticConnection) { "기존 페어링이 없어 자동 연결하지 않음" }
         state("휴대폰에서 시스템 블루투스 페어링을 완료하세요…", busy = true)
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -468,7 +519,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         scanTimeout?.let(main::removeCallbacks)
         scanTimeout = null
         val callback = activeScan ?: return
-        activeScan = null
+        activeScan = null; presenceScan = null
         // Invalidate the callback even if Bluetooth was turned off or permission revoked.
         runCatching { adapter.bluetoothLeScanner?.stopScan(callback) }
             .onFailure { log("BLE 스캔 정리 실패: ${it.message ?: it.javaClass.simpleName}") }
