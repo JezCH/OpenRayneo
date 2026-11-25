@@ -60,7 +60,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             .distinctUntilChanged()
             .collect { (scrolling, forward) -> if (scrolling) followLatest = !forward }
     }
-    LaunchedEffect(source, answer, question, s.approvals.size) {
+    LaunchedEffect(source, answer, question, s.approvals.size, s.agentReviews.size) {
         withFrameNanos {}
         if (followLatest && list.layoutInfo.totalItemsCount > 0)
             list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
@@ -173,6 +173,12 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Note(if (mobile) "이렇게 물어보세요: 지금 안경의 내비게이션 추종 상태는 어때?" else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
                     }
                 }
+            s.agentReviews.forEach { review ->
+                item(key = "agent-review:${review.id}") { AgentWriteReviewCard(model, review) }
+            }
+            if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
+                AgentReceiptCard(model, s.agentReceipts)
+            }
             if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
             if (configured) item(key = "hud-remote") { HudRemoteCard(model, source) }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
@@ -454,6 +460,39 @@ private fun ConversationTurn(question: String, answer: String) {
                     }
                 }
             }
+    }
+}
+
+@Composable
+private fun AgentReceiptCard(model: AppModel, receipts: List<LocalAgentServer.Receipt>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    ContentCard {
+        TextButton(onClick = { expanded = !expanded }) { Text("최근 외부 작업 결과 (${receipts.size})") }
+        if (expanded) {
+            Note("현재 로컬 Agent 세션의 최근 상태입니다. 도구 응답과 실제 안경 상태를 구별합니다. 영구 작업 기록은 아닙니다.")
+            receipts.forEach { receipt ->
+                Text(receipt.name + " · " + receipt.status, fontWeight = FontWeight.Medium)
+                if (receipt.detail.isNotBlank()) Note(receipt.detail)
+                if (receipt.status == "실행 중") TextButton(onClick = {
+                    model.attempt { model.service().agentServer.cancelReviewExecution(receipt.id) }
+                }) { Text("남은 실행 취소") }
+            }
+        } else Note(receipts.first().name + " · " + receipts.first().status)
+    }
+}
+
+@Composable
+private fun AgentWriteReviewCard(model: AppModel, review: LocalAgentServer.Review) {
+    ContentCard {
+        Text("외부 Agent 작업 승인", style = MaterialTheme.typography.titleLarge)
+        Note("요청 내용을 확인하세요. 휴대폰에서 승인해야 실행합니다. 거절하거나 40초 이내 승인하지 않으면 실행하지 않습니다.")
+        Text(review.name, fontWeight = FontWeight.Medium)
+        SelectionContainer { Text(review.arguments, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+        Note("승인 기한: " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date(review.expiresAt)))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ToolButton(onClick = { model.attempt { model.service().agentServer.review(review.id, true) } }) { Text("이 작업만 승인") }
+            ToolOutlinedButton(onClick = { model.attempt { model.service().agentServer.review(review.id, false) } }) { Text("거절") }
+        }
     }
 }
 

@@ -29,6 +29,11 @@ function boundedResult(value) {
   if (total <= 8192) return value
   const chars = Array.from(json)
   const result = {truncated: true, total_bytes: total, preview: '', hint: '결과가 잘렸습니다. 조회 범위를 줄이세요. 표시되지 않은 내용을 이것으로 확정하지 마세요'}
+  // Preserve actual confirmation fields even when a returned list is large.
+  for (const key of ['readBack', 'queued', 'persisted', 'duplicate', 'visible', 'eventID']) {
+    if (['boolean', 'number'].includes(typeof value?.[key]) ||
+        (typeof value?.[key] === 'string' && value[key].length <= 128)) result[key] = value[key]
+  }
   let low = 0, high = Math.min(chars.length, 8192)
   while (low < high) {
     const middle = Math.ceil((low + high) / 2)
@@ -85,7 +90,7 @@ export async function apply(ctx, config) {
           await delay(500 * failures, undefined, {signal})
         }
       }
-      if (task.state !== 'completed') throw new Error(task.error || `OpenRayneo task ${task.state}`)
+      if (task.state !== 'completed') throw new Error(task.error || `OpenRayneo task ${task.state} (${task.phase ?? 'unknown'})`)
       return task.result
     } catch (error) {
       if (task.id && task.state === 'running') {
@@ -110,7 +115,7 @@ export async function apply(ctx, config) {
   }))
   ctx.tools.register(defineTool({
     name: 'rayneo_call',
-    description: 'Call a tool returned by rayneo_tools. Todo/calendar writes require a stable request_id. Never replay an uncertain write; read back first. Results are capped at 8 KiB; truncated=true means narrow the query. Only modify explicitly requested content. Queued results need device confirmation.',
+    description: 'Call a tool returned by rayneo_tools. Todo/calendar writes require a stable request_id. Never replay an uncertain write; read back first. Results are capped at 8 KiB; truncated=true means narrow the query. Phone-side writes wait for explicit local approval (40 seconds); tell the user to open OpenRayneo AI screen. Denial or expiry is not permission to retry. Only modify explicitly requested content. Queued results need device confirmation.',
     parameters: {
       name: {type: 'string', required: true, description: 'Exact tool name from rayneo_tools'},
       arguments: {type: 'object', required: true, additionalProperties: true, description: 'Arguments conforming to the selected tool schema'},

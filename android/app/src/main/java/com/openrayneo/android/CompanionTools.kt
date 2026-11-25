@@ -58,5 +58,9 @@ internal object CompanionTools {
             "title" to field("string", "원고 이름"), "text" to field("string", "전문"), "speed" to field("integer", "스크롤 속도 1~10, 기본값 2")))
         put(definition("teleprompter_control", "이 앱이 시작한 프롬프터 제어", listOf("action"), "action" to field("string", "pause、resume、stop")))
     }
+    // Explicit allowlist: unknown future tools fail closed into local review.
+    fun requiresReview(name: String) = name !in setOf("navigation_status", "device_read", "todo_read", "schedule_read",
+        "location_current", "weather_current", "weather_search_cities", "dashboard_read",
+        "record_query", "about_you_read", "memory_search", "memory_reference")
     fun mutates(name: String) = name in setOf("todo_add", "todo_update", "todo_delete", "schedule_add", "schedule_update", "schedule_delete")
 }

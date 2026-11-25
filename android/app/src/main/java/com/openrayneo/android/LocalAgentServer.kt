@@ -4,6 +4,7 @@ package com.openrayneo.android
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,9 +25,112 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private val execute: (String, JSONObject, () -> Boolean, (Result<JSONObject>) -> Unit) -> Unit,
     private val harness: () -> DshRelay,
     private val recordAPI: (String, String, JSONObject) -> JSONObject?) {
-    private data class Task(val id: String = UUID.randomUUID().toString(), val createdAt: Long = System.currentTimeMillis(),
-        @Volatile var cancelled: Boolean = false, var state: String = "running", var result: JSONObject? = null, var error: String? = null)
+    data class Review(val id: String, val name: String, val arguments: String, val expiresAt: Long)
+    data class Receipt(val id: String, val name: String, val status: String, val detail: String, val createdAt: Long)
+    private data class Task(val name: String, val args: JSONObject, val approval: Boolean,
+        val id: String = UUID.randomUUID().toString(), val createdAt: Long = System.currentTimeMillis(),
+        val startedAt: Long = SystemClock.elapsedRealtime(),
+        @Volatile var cancelled: Boolean = false, var state: String = "running",
+        var phase: String = if (approval) "awaiting_approval" else "executing",
+        var result: JSONObject? = null, var error: String? = null)
     private val tasks = linkedMapOf<String, Task>() // Main-thread owned.
+    private val reviewMs = 40_000L
+    private val taskMs = 120_000L
+    val reviews: List<Review> get() = tasks.values.filter { it.state == "running" && it.phase == "awaiting_approval" &&
+        SystemClock.elapsedRealtime() - it.startedAt < reviewMs }.map {
+        Review(it.id, it.name, it.args.toString(2), it.createdAt + reviewMs)
+    }
+    // Recent receipts contain only the operation name and status, not private arguments/results.
+    val receipts: List<Receipt> get() = tasks.values.filter { it.approval && it.phase != "awaiting_approval" }
+        .takeLast(8).asReversed().map { task ->
+            val result = task.result
+            val status = when {
+                task.phase == "executing" -> "실행 중"
+                task.phase == "not_executed" -> "미실행"
+                task.phase == "outcome_unknown" -> "결과 미확인"
+                result?.optBoolean("duplicate") == true -> "중복 요청 · 재조회 필요"
+                result?.optBoolean("readBack") == true -> "기기 재조회 확인"
+                result?.optBoolean("persisted") == true -> "로컬 저장 확인"
+                result?.has("readBack") == true -> "기기 결과 미확인"
+                result?.has("queued") == true -> if (result.optBoolean("queued")) "전송 대기열 등록 · 표시 미확인" else "전송 안 됨"
+                else -> "도구 응답 반환 · 결과 별도 확인"
+            }
+            Receipt(task.id, task.name, status, if (task.phase == "outcome_unknown") "이미 실행된 변경이 있을 수 있습니다. 재조회하세요." else "", task.createdAt)
+        }
+    private fun end(task: Task, reason: String) {
+        if (task.state != "running") return
+        val executing = task.phase == "executing"
+        task.cancelled = true; task.state = "cancelled"
+        task.phase = if (executing) "outcome_unknown" else "not_executed"
+        task.error = reason + if (executing) " · 이미 실행된 변경은 취소되지 않을 수 있습니다. 재조회하세요." else " · 실행하지 않았습니다."
+        changed()
+    }
+    fun cancelReviewExecution(id: String) {
+        val task = checkNotNull(tasks[id]) { "요청이 없거나 만료되었습니다" }
+        check(task.approval) { "외부 승인 작업이 아닙니다" }
+        end(task, "사용자가 남은 실행을 취소함")
+    }
+    fun cancelOutstanding(reason: String) {
+        tasks.values.toList().forEach { end(it, reason) }
+    }
+    private fun expire(task: Task) {
+        if (task.state != "running") return
+        val age = SystemClock.elapsedRealtime() - task.startedAt
+        if (age >= taskMs || (task.phase == "awaiting_approval" && age >= reviewMs)) end(task, "요청 시간 만료")
+    }
+    fun review(id: String, approve: Boolean) {
+        val task = checkNotNull(tasks[id]) { "요청이 없거나 만료되었습니다" }
+        expire(task)
+        check(task.state == "running" && task.phase == "awaiting_approval") { "이미 처리되었거나 만료된 요청입니다" }
+        if (!approve) { end(task, "사용자가 거절함"); return }
+        task.phase = "executing"; changed()
+        executeTask(task)
+    }
+    private fun executeTask(task: Task) {
+        val allowed = { !task.cancelled && SystemClock.elapsedRealtime() - task.startedAt < taskMs }
+        fun finish(result: Result<JSONObject>) {
+            if (task.state != "running") return
+            if (!allowed()) { end(task, "요청 시간 만료 또는 취소"); return }
+            task.state = if (result.isSuccess) "completed" else "failed"
+            task.result = result.getOrNull(); task.error = result.exceptionOrNull()?.message
+            task.phase = if (result.isFailure && task.approval) "outcome_unknown" else if (result.isFailure) "failed" else "returned"
+            changed()
+        }
+        try { execute(task.name, JSONObject(task.args.toString()), allowed, ::finish) }
+        catch (error: Exception) { finish(Result.failure(error)) }
+    }
+    // Canonicalize object key order without altering arrays or values.
+    private fun canonical(value: Any?): String = when (value) {
+        is JSONObject -> value.keys().asSequence().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonical(value.get(it)) }
+        is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonical(value.get(it)) }
+        is String -> JSONObject.quote(value)
+        else -> value.toString()
+    }
+    private fun submitTool(name: String, args: JSONObject): JSONObject {
+        val approval = CompanionTools.requiresReview(name)
+        val requestId = args.optString("request_id")
+        if (CompanionTools.mutates(name)) require(requestId.isNotBlank()) { "쓰기 작업에는 고정 request_id가 필요합니다" }
+        if (requestId.isNotBlank()) {
+            require(requestId.length <= 256)
+            val prior = tasks.values.firstOrNull { it.args.optString("request_id") == requestId }
+            if (prior != null) {
+                check(prior.name == name && canonical(prior.args) == canonical(args)) { "같은 request_id에 다른 작업을 제출할 수 없습니다" }
+                expire(prior)
+                return taskJSON(prior)
+            }
+        }
+        check(tasks.size < 32) { "대기 중인 작업이 너무 많습니다. 잠시 후 다시 시도하세요" }
+        if (approval) {
+            require(args.toString().length <= 16_384) { "휴대폰에서 검토 가능한 요청 길이를 초과했습니다" }
+            check(tasks.values.count { it.state == "running" && it.phase == "awaiting_approval" } < 4) { "승인 대기 요청이 너무 많습니다" }
+        }
+        val task = Task(name, JSONObject(args.toString()), approval)
+        tasks[task.id] = task
+        main.postDelayed({ expire(task) }, reviewMs)
+        main.postDelayed({ expire(task) }, taskMs)
+        if (approval) changed() else executeTask(task)
+        return taskJSON(task)
+    }
     private val network = Executors.newFixedThreadPool(3)
     private val slots = java.util.concurrent.Semaphore(8)
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
@@ -57,7 +161,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         if (persistSetting) { val config = settings.read(); config.put("localAgentEnabled", false); settings.save(config) }
         socket?.close(); socket = null; token = ""
         clients.forEach { it.close() }; clients.clear()
-        tasks.values.forEach { it.cancelled = true }; tasks.clear()
+        cancelOutstanding("Agent 연결 종료 또는 토큰 변경"); tasks.clear()
         state = AgentServerState(); changed()
     }
     fun rotate() { stop(); val config = settings.read(); config.remove("localAgentToken"); settings.save(config); start() }
@@ -87,7 +191,8 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                     harness().next { socket != null && authorized == "Bearer $token" }
                 } else mainResult {
                     check(socket != null && authorized == "Bearer $token") { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
-                    tasks.entries.removeAll { System.currentTimeMillis() - it.value.createdAt > 120_000 }
+                    tasks.values.toList().forEach(::expire)
+                    tasks.entries.removeAll { it.value.state != "running" && SystemClock.elapsedRealtime() - it.value.startedAt > taskMs }
                     val path = request[1]
                     when {
                         path.substringBefore('?').startsWith("/v1/records") || path.startsWith("/v1/conversations/") || path.startsWith("/v1/conversations?") ->
@@ -101,19 +206,14 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                         request[0] == "POST" && path.startsWith("/v1/harness/requests/") -> harness().update(path.substringAfterLast('/'), body)
                         request[0] == "GET" && path.startsWith("/v1/tasks/") -> taskJSON(checkNotNull(tasks[path.substringAfterLast('/')]) { "작업이 없거나 만료됨" })
                         request[0] == "POST" && path.startsWith("/v1/tasks/") && path.endsWith("/cancel") -> {
-                            val task = checkNotNull(tasks[path.removeSuffix("/cancel").substringAfterLast('/')]); task.cancelled = true; task.state = "cancelled"
-                            taskJSON(task).put("message", "이후 기기 쓰기는 취소되었으며 이미 실행된 작업은 유지됨")
+                            val task = checkNotNull(tasks[path.removeSuffix("/cancel").substringAfterLast('/')])
+                            end(task, "요청 취소")
+                            taskJSON(task)
                         }
                         request[0] == "POST" && path == "/v1/tools/call" -> {
-                            check(tasks.size < 32) { "대기 중인 작업이 너무 많습니다. 기다리거나 취소하세요" }
                             val name = body.getString("name"); val args = body.optJSONObject("arguments") ?: JSONObject()
                             require((0 until CompanionTools.definitions().length()).any { CompanionTools.definitions().getJSONObject(it).getJSONObject("function").getString("name") == name }) { "알 수 없는 도구" }
-                            if (CompanionTools.mutates(name)) require(args.optString("request_id").isNotBlank()) { "쓰기 작업에는 재시도 중복 방지를 위한 고정 request_id가 필요함" }
-                            val task = Task(); tasks[task.id] = task
-                            try { execute(name, args, { !task.cancelled && System.currentTimeMillis() - task.createdAt < 120_000 }) { result ->
-                                if (!task.cancelled) { task.state = if (result.isSuccess) "completed" else "failed"; task.result = result.getOrNull(); task.error = result.exceptionOrNull()?.message }
-                            } } catch (error: Exception) { task.state = "failed"; task.error = error.message }
-                            taskJSON(task)
+                            submitTool(name, args)
                         }
                         else -> { code = 404; JSONObject().put("error", "해당 API 엔드포인트가 없음") }
                     }
@@ -127,9 +227,17 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     }
     private fun mainResult(action: () -> JSONObject): JSONObject {
         val latch = CountDownLatch(1); var result: Result<JSONObject>? = null
-        main.post { result = runCatching(action); latch.countDown() }
-        check(latch.await(5, TimeUnit.SECONDS)) { "메인 서비스가 응답하지 않음" }; return checkNotNull(result).getOrThrow()
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        main.post {
+            result = runCatching {
+                check(SystemClock.elapsedRealtime() < deadline) { "HTTP 요청 대기 시간 만료 · 실행하지 않음" }
+                action()
+            }; latch.countDown()
+        }
+        check(latch.await(5, TimeUnit.SECONDS)) { "메인 서비스 응답 시간 초과 · 실행 결과 미확인" }; return checkNotNull(result).getOrThrow()
     }
-    private fun taskJSON(task: Task) = JSONObject().put("id", task.id).put("state", task.state).put("result", task.result).put("error", task.error)
+    private fun taskJSON(task: Task) = JSONObject().put("id", task.id).put("state", task.state)
+        .put("phase", task.phase).put("result", task.result).put("error", task.error)
+        .apply { if (task.phase == "awaiting_approval") put("approvalRequired", true).put("approvalExpiresAt", task.createdAt + reviewMs) }
     fun close() { stop(false); network.shutdownNow() }
 }
