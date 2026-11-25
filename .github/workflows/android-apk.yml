@@ -80,6 +80,16 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/openrayneo-badging.txt"
 
+      - name: Build side-by-side validation APK
+        working-directory: android
+        run: ./gradlew :app:assembleValidation --console=plain
+
+      - name: Verify validation APK signature and identity
+        run: |
+          set -o pipefail
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/validation/app-validation.apk | tee "$RUNNER_TEMP/openrayneo-validation-certs.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/validation/app-validation.apk > "$RUNNER_TEMP/openrayneo-validation-badging.txt"
+
       - name: Check DSH plugin policies
         working-directory: integrations/dsh-go
         run: node --test tests/ambient-model.test.mjs tests/hint-preview.test.mjs
@@ -95,6 +105,9 @@ jobs:
             --plugin "$RUNNER_TEMP"/openrayneo-dsh-*.tgz \
             --cert-report "$RUNNER_TEMP/openrayneo-certs.txt" \
             --badging "$RUNNER_TEMP/openrayneo-badging.txt" \
+            --validation-apk android/app/build/outputs/apk/validation/app-validation.apk \
+            --validation-cert-report "$RUNNER_TEMP/openrayneo-validation-certs.txt" \
+            --validation-badging "$RUNNER_TEMP/openrayneo-validation-badging.txt" \
             --commit "$GITHUB_SHA" --run "$GITHUB_RUN_NUMBER" \
             --fixed-signing-key "${OPENRAYNEO_FIXED_SIGNING:-false}" \
             --out "$RUNNER_TEMP/openrayneo-install"
@@ -124,4 +137,5 @@ jobs:
             echo "Uploaded $2"
           }
           upload android/app/build/outputs/apk/release/app-release.apk "openrayneo-$version-$short.apk"
+          upload android/app/build/outputs/apk/validation/app-validation.apk "openrayneo-$version-$short-validation.apk"
           upload "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "openrayneo-dsh-$short.tgz"
