@@ -136,12 +136,12 @@ internal class RecordMigration(private val main: Handler, private val repository
                     try {
                         if (!record.transcriptOnly && record.audioSamples > 0L) {
                             val id = UUID.randomUUID().toString()
-                            newAudio = id
                             request(selected.port, selected.token, "/v1/sync/audio?recordId=" + record.id).use { response ->
                                 val body = checkNotNull(response.body)
                                 require(body.contentLength() == 44L + record.audioSamples * 2 * record.audioChannels)
                                 body.byteStream().use { audio.importWav(id, it, record.audioSamples, record.audioChannels) { cancelled || closed } }
                             }
+                            newAudio = id
                         }
                         checkRunning()
                         committed = repository.importCompleted(record.copy(audioId = newAudio))
