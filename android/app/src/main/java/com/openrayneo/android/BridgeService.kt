@@ -283,7 +283,8 @@ internal class BridgeService : Service() {
         dispatching = true
         try {
             while (events.isNotEmpty()) {
-                val transition = GlassesCoordinator.reduce(state, events.removeFirst())
+                val currentEvent = events.removeFirst()
+                val transition = GlassesCoordinator.reduce(state, currentEvent)
                 val previous = state
                 state = transition.state
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
@@ -302,6 +303,13 @@ internal class BridgeService : Service() {
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
                     content.connected(); runCatching { deviceSettings.refresh() }
                     if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
+                }
+                if (currentEvent is GlassesEvent.ExternalPage && conversations.state.running && !conversations.state.stopping) {
+                    // A firmware-owned prompter was actually observed. Stop our capture,
+                    // but do not seize the external display or automatically restart recording.
+                    cancelAlwaysOnRecovery(); cancelVoiceAlwaysOnStart(); resumeAlwaysOn = null
+                    resetAmbientWake(); cancelRealtimeStream()
+                    conversationOwnsDisplay = false; conversations.stop()
                 }
                 if (previous.session != null && state.session == null && previous.session.mode == PageMode.PROMPT && conversations.state.running && conversations.state.source == ConversationSource.REALTIME && conversationOwnsDisplay &&
                     (state.ownership != DisplayOwnership.APP || state.intent == DisplayIntent.Idle || state.intent == DisplayIntent.Navigation || state.error != null)) {
@@ -424,6 +432,7 @@ internal class BridgeService : Service() {
             val cfg = settings.read()
             TeleprompterFollow.validate(this, cfg, text)
             check(foreground && state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
+                !conversations.state.stopping && voiceTransport.source == null && audioOwner == null &&
                 !translator.active && !voiceTransport.nativeActive && !agent.running && !codex.running && teleprompter.state.active == null && !teleprompter.state.busy) {
                 "다른 표시·음성 기능 및 현재 작업을 먼저 종료하세요"
             }
@@ -935,6 +944,7 @@ internal class BridgeService : Service() {
     private fun startCaptionMode(wake: Boolean, allowAI: Boolean) {
         check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
+            voiceTransport.source == null && audioOwner == null &&
             !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
             !voiceTransport.nativeActive && !translator.active && !prompterReserved &&
             !agent.running && !codex.running) { "진행 중인 기록·화면·AI 작업을 먼저 종료하세요" }
