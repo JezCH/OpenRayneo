@@ -166,7 +166,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("길 안내", "Amap · 국내 지도 실험", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
-        item { FeatureTile("한국어 호출", "자비스 · 레이네오야 (실험)", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
+        item { FeatureTile("한국어 호출", "호출어 및 대기시간 설정 (실험)", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
         item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {
