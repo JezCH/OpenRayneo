@@ -4,7 +4,12 @@ package com.openrayneo.android
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -169,6 +174,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     }
                 }
             if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
+            if (configured) item(key = "hud-remote") { HudRemoteCard(model, source) }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
             if (question.isNotBlank())
                 item {
@@ -301,6 +307,41 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HudRemoteCard(model: AppModel, source: AnswerSource) {
+    val requester = remember(source) { FocusRequester() }
+    var armed by remember(source) { mutableStateOf(false) }
+    var focused by remember(source) { mutableStateOf(false) }
+    ContentCard {
+        Text("무음 HUD 키 조작", style = MaterialTheme.typography.titleMedium)
+        Note("이 화면의 조작 영역에 포커스가 있는 동안만 외부 키보드·HID 입력을 받습니다. Enter/가운데 버튼: 최근 답변 표시, Esc/왼쪽 버튼: 현재 답변 닫기. 질문 전송·마이크 시작·업무 승인 기능은 없습니다.")
+        Column(Modifier.fillMaxWidth()
+            .focusRequester(requester)
+            .onFocusChanged { focused = it.isFocused; if (!focused) armed = false }
+            .onPreviewKeyEvent { event ->
+                val key = event.nativeKeyEvent
+                val device = key.device
+                val reveal = key.keyCode in setOf(android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_BUTTON_A)
+                val dismiss = key.keyCode in setOf(android.view.KeyEvent.KEYCODE_ESCAPE, android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_BUTTON_B)
+                if (!armed || !focused || device == null || device.isVirtual ||
+                    !key.hasNoModifiers() || (!reveal && !dismiss)) false
+                else {
+                    if (key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0)
+                        model.attempt { model.service().hudKey(source, reveal) }
+                    true
+                }
+            }.focusable().padding(vertical = 8.dp)) {
+            Text(if (armed && focused) "키 입력 대기 중" else "키 입력 비활성", style = MaterialTheme.typography.bodyMedium)
+        }
+        ToolOutlinedButton(onClick = {
+            if (armed) armed = false else { requester.requestFocus(); armed = focused }
+        }, enabled = model.state.glasses.link.phase == LinkPhase.FULL) {
+            Text(if (armed && focused) "키 조작 해제" else "키 조작 활성화")
+        }
+        Note("포커스가 다른 화면이나 입력창으로 이동하면 해제됩니다. 실제 컨트롤러 키 매핑과 안경 다이얼은 별도 기기 확인이 필요합니다.")
     }
 }
 

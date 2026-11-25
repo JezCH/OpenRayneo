@@ -52,7 +52,12 @@ internal object GlassesCoordinator {
                 val lost = state.link.phase == LinkPhase.FULL && event.state.phase != LinkPhase.FULL
                 if (lost) {
                     resetSession()
-                    state = state.copy(revision = state.revision + 1, answerPermit = null, blockedRevision = null, error = null)
+                    // Navigation is an explicitly selected ongoing feed. A stale answer,
+                    // capture page or blank prompt must not reopen on automatic reconnect.
+                    val resumeNavigation = state.intent == DisplayIntent.Navigation && state.navigation.enabled
+                    state = state.copy(intent = if (resumeNavigation) DisplayIntent.Navigation else DisplayIntent.Idle,
+                        captionMode = false, translation = TranslationView(), standby = TranslationView(),
+                        revision = state.revision + 1, answerPermit = null, blockedRevision = null, error = null)
                 }
                 state = state.copy(link = event.state)
                 if (state.disconnecting && event.state.phase == LinkPhase.DISCONNECTED) state = state.copy(disconnecting = false)
