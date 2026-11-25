@@ -67,6 +67,13 @@ internal class BridgeService : Service() {
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
     private var voiceReply: VoiceDelivery? = null
     private var conversationOwnsDisplay = false
+    private var captureStartedAt = 0L
+    private var captureTimingSource: ConversationSource? = null
+    private var firstLiveFinalMs: Long? = null
+    val captureTimingStatus: String get() {
+        val source = captureTimingSource ?: return "기록 시작 후 측정"
+        return "${source.title} · 기록 시작→첫 최종 전사: " + (firstLiveFinalMs?.let { "${it}ms" } ?: "아직 전사 없음")
+    }
     private var prompterLaunchPending = false
     private var prompterLaunchGeneration = 0L
     private val prompterReserved: Boolean get() = prompterLaunchPending || teleprompter.state.active != null ||
@@ -179,6 +186,11 @@ internal class BridgeService : Service() {
         }
         conversations = ConversationController(this, settings, ::notifyUI, ::conversationCapture, ::submitVoiceRequest,
             { segment, source ->
+                if (captureStartedAt > 0L && captureTimingSource == source && firstLiveFinalMs == null &&
+                    segment.processingMode == "live" && conversations.state.running && !conversations.state.stopping) {
+                    firstLiveFinalMs = (SystemClock.elapsedRealtime() - captureStartedAt).coerceAtLeast(0L)
+                    notifyUI()
+                }
                 if (source == ConversationSource.NATIVE) segment.roundId?.let { voiceTransport.asr(segment.text, it) }
                 val handled = source != ConversationSource.NATIVE && handleAmbientWake(segment, source)
                 // Do not overwrite an explicit wake prompt or answer with an ordinary transcript.
@@ -598,6 +610,8 @@ internal class BridgeService : Service() {
             check(!destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting && !conversations.state.stopping) {
                 "음성 수신 시작 전에 안경 연결 또는 기록 세션이 종료됨"
             }
+            captureStartedAt = SystemClock.elapsedRealtime()
+            captureTimingSource = source; firstLiveFinalMs = null
             when (source) {
                 ConversationSource.REALTIME -> { conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby) }
                 ConversationSource.NATIVE, ConversationSource.ALWAYS_ON -> {
