@@ -87,6 +87,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
         Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
         Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
+        Note("종일 기록의 현재 발화는 도구 없는 짧은 선제 힌트로만 처리합니다. 필요할 때만 표시하며 오래된 힌트는 폐기합니다. 기억 조회·실시간 검색·업무 실행이 필요하면 직접 음성 깨우기 또는 Agent에 요청하세요. 힌트 추론은 연결한 DSH Go 모델을 사용합니다.")
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 원본 저장 모드의 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
