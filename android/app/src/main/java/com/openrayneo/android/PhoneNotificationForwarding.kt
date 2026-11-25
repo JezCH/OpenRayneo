@@ -14,6 +14,8 @@ internal object PhoneNotificationForwarding {
     private fun prefs(context: Context) = context.getSharedPreferences("phone_notification_forwarding", Context.MODE_PRIVATE)
     fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
     fun allowed(context: Context): Set<String> = prefs(context).getStringSet("packages", emptySet()).orEmpty().toSet()
+    fun lockedMetadata(context: Context) = prefs(context).getBoolean("lockedMetadata", false)
+    fun setLockedMetadata(context: Context, value: Boolean) { prefs(context).edit().putBoolean("lockedMetadata", value).apply(); reset() }
     fun previews(context: Context): Set<String> = prefs(context).getStringSet("previews", emptySet()).orEmpty().toSet()
     fun setEnabled(context: Context, value: Boolean) { prefs(context).edit().putBoolean("enabled", value).apply(); reset() }
     fun setAllowed(context: Context, packages: Set<String>) {
@@ -47,20 +49,21 @@ internal object PhoneNotificationForwarding {
             notification.visibility == Notification.VISIBILITY_SECRET ||
             notification.category == Notification.CATEGORY_NAVIGATION ||
             (notification.flags and Notification.FLAG_ONGOING_EVENT != 0 && notification.category != Notification.CATEGORY_CALL)) return
-        if (context.getSystemService(KeyguardManager::class.java).isKeyguardLocked ||
-            !context.getSystemService(PowerManager::class.java).isInteractive) return
+        val unlocked = !context.getSystemService(KeyguardManager::class.java).isKeyguardLocked &&
+            context.getSystemService(PowerManager::class.java).isInteractive
+        if (!unlocked && !lockedMetadata(context)) return
         val now = SystemClock.elapsedRealtime()
         val previousSend = lastSent
         if (previousSend != null && now - previousSend < MIN_INTERVAL) return
         val appName = runCatching { context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
-        val extras = notification.extras
-        val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val body = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        // Explicit preview opt-in; still never show obvious authentication/secret alerts.
-        val canPreview = pkg in previews(context) && notification.category != Notification.CATEGORY_CALL &&
-            !sensitive.containsMatchIn(title + " " + body)
-        val message = if (canPreview) listOf(title, body).filter { it.isNotBlank() }.distinct().joinToString(" · ").ifBlank { "새 알림" } else "새 알림"
-        val fingerprint = (title + "\\n" + body).hashCode()
+        val message = if (unlocked && pkg in previews(context) && notification.category != Notification.CATEGORY_CALL) {
+            val extras = notification.extras
+            val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            val body = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+            if (sensitive.containsMatchIn(title + " " + body)) "새 알림"
+            else listOf(title, body).filter { it.isNotBlank() }.distinct().joinToString(" · ").ifBlank { "새 알림" }
+        } else "새 알림"
+        val fingerprint = if (message == "새 알림") item.postTime.hashCode() else message.hashCode()
         val prior = recent[item.key]
         if (prior != null && prior.first == fingerprint && now - prior.second < REPEAT_WINDOW) return
         // Bound metadata and payload; do not retain notification text, even on failure.
