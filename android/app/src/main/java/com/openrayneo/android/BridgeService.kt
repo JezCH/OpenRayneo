@@ -58,6 +58,7 @@ internal class BridgeService : Service() {
     private var latestRealtimeRequest = 0L
     private var realtimeStreamId: String? = null
     private var realtimePreviewRequest = 0L
+    private var realtimePreviewRevision = -1L
     private val proactiveHintGate = ProactiveHintPolicy.DisplayGate()
     private val pendingAnswers = mutableMapOf<AnswerSource, AnswerPermit>()
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
@@ -492,6 +493,7 @@ internal class BridgeService : Service() {
                 kind = "hint", input = input, hintLifetimeMs = lifetime, preview = { text ->
                     if (isRealtimeStreamCurrent(input)) {
                         realtimePreviewRequest = input.optLong("realtimeRequest")
+                        realtimePreviewRevision = state.revision
                         dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트 · 작성 중", text)))
                     }
                 }) { result -> finishRealtimeStream(input, result) }
@@ -536,10 +538,11 @@ internal class BridgeService : Service() {
     fun cancelRealtimeStream() {
         val id = realtimeStreamId
         val preview = realtimePreviewRequest != 0L
-        realtimeStreamId = null; realtimePreviewRequest = 0L
+        val ownsPreview = preview && realtimePreviewRevision == state.revision
+        realtimeStreamId = null; realtimePreviewRequest = 0L; realtimePreviewRevision = -1L
         if (id != null || preview) latestRealtimeRequest = ++nextAnswer
         if (id != null) agent.harness.cancelRequest(id)
-        if (preview && !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+        if (ownsPreview && !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
             state.intent == DisplayIntent.PromptStandby && state.ownership == DisplayOwnership.APP && conversationOwnsDisplay)
             dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", "듣는 중")))
     }
@@ -561,7 +564,7 @@ internal class BridgeService : Service() {
         } else if (realtimePreviewRequest == sequence) {
             dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", if (result.isFailure) "응답 미완료" else "듣는 중")))
         }
-        realtimePreviewRequest = 0L
+        realtimePreviewRequest = 0L; realtimePreviewRevision = -1L
     }
     private fun deliverExternalVoice(question: String, answer: String, input: JSONObject) {
         // DshRelay restores explicitly submitted non-voice tasks with an empty input object.
