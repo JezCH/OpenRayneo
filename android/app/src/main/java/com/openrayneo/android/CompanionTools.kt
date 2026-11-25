@@ -14,7 +14,7 @@ internal object CompanionTools {
     fun definitions(): JSONArray = JSONArray().apply {
         put(definition("navigation_status", "Amap 알림 추종 상태 읽기. 경로는 추론하지 않음"))
         put(definition("stop_navigation_mirroring", "안경 추종 중지. Amap 내비게이션은 계속됨"))
-        put(definition("show_notification", "안경에 짧은 알림 전송. 대기열 등록 성공이 표시를 보장하지 않음", listOf("title", "body"),
+        put(definition("show_notification", "안경에 짧은 알림 전송. 집중 모드/알림 설정/연결 상태에 따라 queued=false 반환. 대기열 등록 성공이 표시를 보장하지 않음", listOf("title", "body"),
             "title" to field("string", "제목"), "body" to field("string", "본문")))
         put(definition("display_clear", "실시간 힌트의 답변을 지우고 진행 중인 음성 수신은 유지"))
         put(definition("device_read", "안경 상태와 설정을 직접 읽기"))

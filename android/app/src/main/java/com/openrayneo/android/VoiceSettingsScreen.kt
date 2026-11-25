@@ -92,6 +92,21 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("예: 안경 자동 밝기 상태 알려줘 / 안경 화면 높이를 5단계로 설정해줘 / 안경 화면 거리 3단계로 맞춰줘 / 안경 자동 절전 시간을 60초로 설정해줘. 높이 1~6, 거리 1~3, 절전 5·10·15·25·40·60·120초. 자동 화면 밝기는 조회만 지원합니다.")
         Note("예: 안경 배터리 얼마야 / 안경 밝기 몇 단계야 / 안경 밝기 올려줘 / 안경 밝기 내려줘 / 안경 밝기 7단계로 설정해줘. 밝기는 한 단계씩 또는 1~17단계로 조절하며, 안경의 재조회 결과를 확인합니다.")
         Note("종일 기록의 현재 발화는 도구 없는 짧은 선제 힌트로만 처리합니다. 필요할 때만 표시하며 오래된 힌트는 폐기합니다. 기억 조회·실시간 검색·업무 실행이 필요하면 직접 음성 깨우기 또는 Agent에 요청하세요. 힌트 추론은 연결한 DSH Go 모델을 사용합니다.")
+        SectionLabel("앱 집중 모드 · 알림")
+        val controlsReady = model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
+        Row {
+            Checkbox(model.state.focusMode, { enabled ->
+                model.attempt { model.service().applyFocusCommand(if (enabled) FocusPolicy.Command.FOCUS_ON else FocusPolicy.Command.FOCUS_OFF) }
+            }, enabled = controlsReady)
+            Text("집중 모드")
+        }
+        Row {
+            Checkbox(model.state.appNotificationsEnabled, { enabled ->
+                model.attempt { model.service().applyFocusCommand(if (enabled) FocusPolicy.Command.NOTIFICATIONS_ON else FocusPolicy.Command.NOTIFICATIONS_OFF) }
+            }, enabled = controlsReady)
+            Text("OpenRayneo 안경 알림 전송")
+        }
+        Note("안경 집중 모드 켜줘 / 안경 집중 모드 꺼줘 / 안경 집중 모드 상태 알려줘 / 안경 알림 꺼줘 / 안경 알림 켜줘 / 안경 알림 상태 알려줘. 변경은 즉시 적용됩니다. 집중 모드는 새 종일 AI 힌트와 일반 앱 알림을 막고, 이미 대기 중인 선제 힌트를 취소합니다. 안경 알림 전송을 끄면 타이머 안경 알림도 끄지만 휴대폰 타이머 알림은 유지합니다. 직접 요청한 답변, 녹음·전사·요약, 실시간 화면, 내비게이션은 그대로입니다. 이미 전송한 알림과 다른 앱·기기 자체 알림·명시적 테스트 알림은 제어하지 않습니다. 제조사 방해 금지 설정이 아닙니다. 수동 연결 해제·새 기기 선택·서비스 종료 시 기본값으로 돌아갑니다.")
         var voiceAlwaysOnStart by remember(model.config) { mutableStateOf(model.config.optBoolean("voiceAlwaysOnStart")) }
         Row {
             Checkbox(voiceAlwaysOnStart, { voiceAlwaysOnStart = it; drafts["voiceAlwaysOnStart"] = it.toString() })
