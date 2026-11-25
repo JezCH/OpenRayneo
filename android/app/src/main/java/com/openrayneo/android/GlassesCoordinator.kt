@@ -14,7 +14,8 @@ internal object GlassesCoordinator {
         fun setIntent(intent: DisplayIntent) {
             cancelRestore()
             state = state.copy(intent = intent, revision = state.revision + 1,
-                ownership = DisplayOwnership.APP, answerPermit = null, blockedRevision = null, error = null)
+                ownership = DisplayOwnership.APP, answerPermit = null, blockedRevision = null, error = null,
+                captionMode = false, translation = TranslationView())
         }
         fun resetSession() {
             cancelRestore()
@@ -85,7 +86,10 @@ internal object GlassesCoordinator {
             is GlassesEvent.StandbyText -> state = state.copy(standby = event.view)
             GlassesEvent.StartTranslation -> {
                 setIntent(DisplayIntent.Translation)
-                state = state.copy(translation = TranslationView())
+            }
+            GlassesEvent.StartCaption -> {
+                setIntent(DisplayIntent.Translation)
+                state = state.copy(captionMode = true)
             }
             is GlassesEvent.TranslationText -> if (state.intent == DisplayIntent.Translation) state = state.copy(translation = event.view)
             GlassesEvent.ClearDisplay -> if (state.session?.mode == PageMode.PROMPT && state.ownership == DisplayOwnership.APP) {
@@ -208,7 +212,10 @@ internal object GlassesCoordinator {
             DisplayIntent.BlankPrompt -> PageMode.PROMPT to PageContent("blank", "　", "　")
             DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby",
                 state.standby.source.ifBlank { "OpenRayneo" }, state.standby.target.ifBlank { "실시간 힌트 준비됨" })
-            DisplayIntent.Translation -> PageMode.PROMPT to PageContent("translation",
+            DisplayIntent.Translation -> if (state.captionMode)
+                PageMode.PROMPT to PageContent("caption", state.translation.source.ifBlank { "실시간 자막" },
+                    state.translation.target.ifBlank { "말하면 자막이 표시됩니다" })
+            else PageMode.PROMPT to PageContent("translation",
                 state.translation.source.ifBlank { "실시간 번역 · 한국어 ↔ 영어" }, state.translation.target.ifBlank { "말하면 번역됩니다" })
             DisplayIntent.Navigation -> state.navigation.frame?.takeIf { state.navigation.enabled }?.let {
                 PageMode.NAVIGATION to PageContent("navigation", it)
