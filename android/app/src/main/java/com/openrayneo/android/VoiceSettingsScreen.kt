@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -89,7 +89,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
-        Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 저장되는 원본 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
+        Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 원본 저장 모드의 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
         SectionLabel("Hey RayNeo: 답변 중 말로 끊기 감도")
         Note("안경 설정의 \"대화 끊기\"가 켜져 있을 때, 답변 중 마이크 소리가 기준보다 큰 상태가 정해진 시간 이상 이어지면 바로 끊습니다(글자 인식을 기다리지 않음). 앱 로그의 \"대화 끊기 진단: 답변 중 마이크 최대 N dBFS\"로 답변 소리 크기를 보고 맞추세요.")
         GateSlider(drafts, "bargeInLevelDb", "감지 기준 소리 크기", -30f, -60f..-10f, 49, { "${it.toInt()} dBFS" },
@@ -107,7 +107,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         var autoMemory by remember(model.config) { mutableStateOf(SummaryDispatchPolicy.autoEnabled(model.config.optString("memoryAutoSummary"))) }
         Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
         Note("끄고 음성 설정을 저장하면 새 자동 요약 요청을 보내지 않습니다. 수동 요약은 가능하며 이미 전송된 요청은 취소되지 않을 수 있습니다. ASR·Agent 전송 설정과는 별개입니다.")
-        Note("종일 기록과 개별 기록은 원본 오디오를 자동 저장하고, 목소리 등록은 음성 특징만 저장합니다. 전사가 지연되면 오디오를 먼저 저장하고 복구 후 전사와 화자 분석을 보충합니다.")
+        var transcriptOnly by remember(model.config) { mutableStateOf(AudioRetentionPolicy.transcriptOnly(model.config.optString("audioRetention"))) }
+        Row {
+            Checkbox(transcriptOnly, { transcriptOnly = it; drafts["audioRetention"] = if (it) "transcript_only" else "raw_audio" })
+            Text("새 대화 기록: 원본 음성을 저장하지 않고 전사만 보존")
+        }
+        Note("미보존 모드는 기기 내장 ASR이 준비된 경우에만 시작합니다. 완료된 전사와 화자 특징·기억은 기존처럼 보존되며 설정한 Agent·요약 서비스에 텍스트가 전달될 수 있습니다. 처리 오류·절전·발열 등으로 누락된 음성은 복구할 수 없습니다. 기존 저장 음성 및 진행 중 기록은 변경하지 않습니다. 번역·목소리 등록에는 별도 처리 경로가 적용됩니다.")
         VoiceField(model, "answerClearSeconds", "실시간 힌트 답변 후 화면 지우기까지 초 (0이면 유지)", "0")
         VoiceField(model, "answerMaxChars", "안경 답변 최대 글자 수 (0이면 제한 없음)", DEFAULT_ANSWER_MAX_CHARS.toString())
         Note("답변이 안경 화면 아래로 잘리면 숫자를 줄이세요. Agent에게 이 길이 안에서 답하도록 요청합니다.")

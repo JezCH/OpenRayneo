@@ -81,6 +81,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                     }
                 } else {
                     Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
+                    if (state.activeRecord?.transcriptOnly == true) Note("기기 내장 전사 · 원본 음성 미보존")
                     if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
                     ToolButton(onClick = { model.service().stopConversation() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
                 }
@@ -152,7 +153,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(row.title, style = MaterialTheme.typography.titleMedium)
                             Note("${row.source.title} · ${recordTime(row)} · 당일 ${daySegments.size}개 원문")
-                            if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
+                            if (row.transcriptOnly) Note(if (row.transcriptIncomplete) "전사만 보존 · 누락 구간 복구 불가" else "전사만 보존 · 원본 음성 없음")
+                            else if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
                             if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
                                 Note("${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(row.timeOf(segment)))} · ${segment.text}")
                             } else if (row.summary.isNotBlank()) Text(row.summary.take(160))
@@ -201,11 +203,12 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             Text(record.title, style = MaterialTheme.typography.headlineSmall)
             Note("${record.source.title} · ${recordTime(record)}")
             Note(if (record.source == ConversationSource.ALWAYS_ON) "종일 기록 타임라인과 요약. 원문을 탭하면 인물을 수정할 수 있습니다." else "${record.mode.title} · 원문을 탭하면 화자를, 기억을 탭하면 서술 대상을 수정할 수 있습니다.")
-            if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
+            if (record.transcriptOnly) Note(if (record.transcriptIncomplete) "완료된 전사만 보존했습니다. 원본 음성이 없어 누락 구간을 복구할 수 없습니다." else "원본 음성을 저장하지 않은 기록입니다. WAV 내보내기와 보충 전사를 사용할 수 없습니다.")
+            else if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
             ToolButton(onClick = { model.service().conversations.summarize(record.id) }, enabled = !state.summarizing && record.segments.isNotEmpty()) {
                 Text(if (state.summarizing) "정리 중…" else "요약 및 기억 정리")
             }
-            if (record.audioSamples > 0) {
+            if (!record.transcriptOnly && record.audioSamples > 0) {
                 Note("${record.audioChannels}채널 원본 오디오 ${record.audioSamples / 16000}초 저장됨. 휴대폰에 암호화 저장되며 컴퓨터는 필요할 때 가져옵니다.")
                 Row {
                     TextButton(onClick = { actions.exportRecording(record.id) }) { Text("내보내기: WAV") }
