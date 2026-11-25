@@ -62,6 +62,9 @@ jobs:
       - name: Set version
         run: echo "OPENRAYNEO_VERSION_NAME=1.2.0-wearable.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
+      - name: Test installation bundle safety rules
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
       - name: Build release APK
         working-directory: android
         run: |
