@@ -25,6 +25,7 @@ internal class BridgeService : Service() {
     lateinit var teleprompter: TeleprompterLibrary; private set
     lateinit var agentServer: LocalAgentServer; private set
     lateinit var recordSync: RecordSyncServer; private set
+    lateinit var migration: RecordMigration; private set
     lateinit var content: CompanionContent; private set
     private lateinit var supervisor: ConnectionSupervisor
     val connection get() = supervisor.transport
@@ -155,6 +156,7 @@ internal class BridgeService : Service() {
             }, ::onConversationStopped)
         conversations.partial = { text, wake -> main.post { voiceTransport.partial(text, wake) } }
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
+        migration = RecordMigration(main, conversations.repository, conversations.recordings, ::notifyUI, conversations::refreshRecords)
         if (settings.read().optBoolean("recordSyncEnabled")) recordSync.start()
         voiceAudio = PromptAudio { left, right ->
             if (bargeMeter.feed(left)) main.post { voiceTransport.voiceDuringAnswer() }
@@ -407,6 +409,7 @@ internal class BridgeService : Service() {
     }
     fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null,
                           resumeOnReconnect: Boolean = false) {
+        check(!migration.state.busy) { "기록 이전을 먼저 종료하세요" }
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -1267,6 +1270,17 @@ internal class BridgeService : Service() {
         while (logs.size > 300) logs.removeFirst()
         if (!dispatching) notifyUI()
     }
+    fun previewMigration(port: Int, token: String) {
+        check(!recordSync.state.enabled) { "새 앱의 기록 동기화를 먼저 끄세요" }
+        check(!conversations.state.running && !conversations.state.stopping && !conversations.state.summarizing) { "기록 및 요약 작업을 먼저 종료하세요" }
+        migration.preview(port, token)
+    }
+    fun transferMigration(includeAudio: Boolean) {
+        check(!recordSync.state.enabled && !conversations.state.running && !conversations.state.stopping &&
+            !conversations.state.summarizing && !translator.active && !voiceTransport.nativeActive) { "새 앱의 동기화·기록·음성 작업을 먼저 종료하세요" }
+        check(!SummaryDispatchPolicy.autoEnabled(settings.read().optString("memoryAutoSummary"))) { "기록 이전 전에 자동 요약을 끄세요" }
+        migration.transfer(includeAudio)
+    }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
     private fun summary() = state.displayDescription + (if (focusMode) " · 앱 집중 모드" else "") + (if (!appNotificationsEnabled) " · 앱 안경 알림 꺼짐" else "") + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
         AudioPhase.RECEIVING -> " · 음성 수신 중"
@@ -1299,7 +1313,7 @@ internal class BridgeService : Service() {
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
         wakeGeneration++; wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
-        speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
+        migration.close(); speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }

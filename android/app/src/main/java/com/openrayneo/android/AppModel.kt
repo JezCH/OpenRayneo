@@ -29,6 +29,7 @@ internal data class CompanionState(
     val agentServer: AgentServerState = AgentServerState(),
     val agentProbe: AgentProbePolicy.State = AgentProbePolicy.State(),
     val recordSync: AgentServerState = AgentServerState(notice = "근거리 동기화가 꺼져 있음"),
+    val migration: MigrationState = MigrationState(),
     val phoneEphemeral: Boolean = false,
     val nativeWakeAvailable: Boolean = false,
     val devices: List<RayneoConnection.Device> = emptyList(),
@@ -191,6 +192,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 agentServer = s.agentServer.state,
                 agentProbe = s.agentProbeState,
                 recordSync = s.recordSync.state,
+                migration = s.migration.state,
                 phoneEphemeral = s.agent.ephemeral,
                 nativeWakeAvailable = s.voiceTransport.nativeActive,
                 devices = s.devices.values.toList(),
@@ -260,6 +262,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveConfig(values: Map<String, String>) = attempt {
+        check(!state.migration.busy || !values.containsKey("memoryAutoSummary") || !SummaryDispatchPolicy.autoEnabled(values.getValue("memoryAutoSummary"))) { "기록 이전 중에는 자동 요약을 켤 수 없습니다" }
         val old = settings.read()
         val updated = JSONObject(old.toString())
         values.forEach { (key, value) -> updated.put(key, value.trim()) }
