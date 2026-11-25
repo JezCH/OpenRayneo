@@ -180,7 +180,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                             if (row.transcriptOnly) Note(if (row.transcriptIncomplete) "전사만 보존 · 누락 구간 복구 불가" else "전사만 보존 · 원본 음성 없음")
                             else if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
                             if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
-                                Note("${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(row.timeOf(segment)))} · ${segment.text}")
+                                Note("${SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(row.timeOf(segment)))} · ${segment.text}")
                             } else if (row.summary.isNotBlank()) Text(row.summary.take(160))
                             if (row.summaryStale) Note("귀속이 수정되어 요약 재정리 대기")
                             if (row.derived.any { it.stale }) Note("연결된 Agent 결과를 새로 고쳐야 함")
@@ -196,10 +196,10 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
 private fun SpeechRow(segment: SpeechSegment, people: List<VoicePerson>, record: ConversationRecord? = null, action: (() -> Unit)? = null) {
     OutlinedCard(Modifier.fillMaxWidth().then(if (action != null) Modifier.clickable(onClick = action) else Modifier)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val name = people.firstOrNull { it.id == segment.personId }?.name ?: if (segment.speaker == "未知") "알 수 없는 화자" else "화자 ${segment.speaker}"
+            val name = people.firstOrNull { it.id == segment.personId }?.name ?: if (segment.speaker == "未知") "알 수 없는 화자" else "화자 ${KoreanLanguage.speakerLabel(segment.speaker)}"
             val start = record?.timeOf(segment) ?: segment.timelineAt.takeIf { it > 0 }
             val end = record?.endTimeOf(segment) ?: segment.timelineEndAt.takeIf { it > 0 }
-            val clock = SimpleDateFormat("HH:mm:ss", Locale.CHINA)
+            val clock = SimpleDateFormat("HH:mm:ss", Locale.KOREA)
             val time = start?.let { clock.format(Date(it)) + (end?.let { until -> "–${clock.format(Date(until))}" } ?: "") } ?: formatOffset(segment.beginMS)
             Note((if (segment.timeBasis == "legacy-estimate") "과거 시각 추정" else "휴대폰 수신 시각") + if (segment.processingMode == "backfill") " · 과거 오디오 보충" else "")
             Note("채널 ${segment.sourceChannel} · " + (when (segment.identityBasis) { "channel1_default_self" -> "채널 1 기본 본인"; "voiceprint" -> "음성 지문 일치"; "manual" -> "수동 수정"; "mixed" -> "혼합 식별"; else -> "신원 식별 대기" }))
@@ -209,7 +209,7 @@ private fun SpeechRow(segment: SpeechSegment, people: List<VoicePerson>, record:
                     "${people.firstOrNull { it.id == match.personId }?.name ?: "삭제된 인물"} ${"%.2f".format(match.score)}"
                 })
             } else segment.matchScore?.let { Note("목소리 유사도 ${"%.2f".format(it)}") }
-            if (segment.matchReason.isNotBlank()) Note(segment.matchReason)
+            if (segment.matchReason.isNotBlank()) Note(KoreanLanguage.matchReason(segment.matchReason))
             Text(segment.text)
         }
     }
@@ -266,7 +266,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                 val segment = record.segments.firstOrNull { it.speaker == label }
                     ?: SpeechSegment("voice:$label", 0, 0, "이번 세션에서 자동 추출: ${samples.size}개 음성 특징", speaker = label, personId = record.speakerPeople[label])
                 TextButton(onClick = { speakerEdit = segment }) {
-                    Text("화자 $label · ${state.people.firstOrNull { it.id == segment.personId }?.name ?: "라벨 대기"} · ${samples.size}개 샘플")
+                    Text("화자 ${KoreanLanguage.speakerLabel(label)} · ${state.people.firstOrNull { it.id == segment.personId }?.name ?: "라벨 대기"} · ${samples.size}개 샘플")
                 }
             }
         }
@@ -274,7 +274,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
         items(record.memories, key = { it.id }) { memory ->
             OutlinedCard(Modifier.fillMaxWidth().clickable { memoryEdit = memory }) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${memory.subject} · ${memory.kind}", style = MaterialTheme.typography.titleSmall)
+                    Text("${memory.subject} · ${KoreanLanguage.memoryKind(memory.kind)}", style = MaterialTheme.typography.titleSmall)
                     Text(memory.text)
                     memory.sourceIds.forEach { id -> record.segments.firstOrNull { it.id == id }?.let { source -> Note("원문: ${source.text}") } }
                 }
@@ -285,7 +285,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(filter == null, { filter = null }, label = { Text("전체") })
                 record.segments.map { it.speaker }.distinct().take(6).forEach { name ->
-                    FilterChip(filter == name, { filter = name }, label = { Text(name) })
+                    FilterChip(filter == name, { filter = name }, label = { Text(KoreanLanguage.speakerLabel(name)) })
                 }
             }
         }
@@ -326,7 +326,7 @@ private fun SpeakerBindingDialog(model: AppModel, record: ConversationRecord, se
     var rememberVoice by remember { mutableStateOf(record.speakerSamples[segment.speaker]?.isNotEmpty() == true) }
     val picked = model.selectedContact
     LaunchedEffect(picked) { if (picked != null) { name = picked.name; personId = null } }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("화자 ${segment.speaker}") }, text = {
+    AlertDialog(onDismissRequest = dismiss, title = { Text("화자 ${KoreanLanguage.speakerLabel(segment.speaker)}") }, text = {
         Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Note(segment.text)
             TextButton(onClick = { history = true }) { Text("과거 발화를 선택해 일괄 수정") }
@@ -373,7 +373,7 @@ private fun timePeriod(time: Long): String = when (Instant.ofEpochMilli(time).at
     else -> "저녁 18:00–24:00"
 }
 private fun recordTime(record: ConversationRecord): String {
-    val format = SimpleDateFormat("M월 d일 HH:mm", Locale.CHINA)
+    val format = SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA)
     return format.format(Date(record.createdAt)) + " → " + (record.endedAt?.let { format.format(Date(it)) } ?: "종료 시각 미기록")
 }
 
