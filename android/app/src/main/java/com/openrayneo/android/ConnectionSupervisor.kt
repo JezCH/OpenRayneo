@@ -3,11 +3,14 @@
 package com.openrayneo.android
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Handler
 
 /** A previously authenticated pair waits silently for a connectable advertisement.
@@ -70,12 +73,15 @@ internal class ConnectionSupervisor(
         runCatching { context.unregisterReceiver(adapterChanges) }
         transport.close()
     }
+    fun recoveryPermissions(): Boolean = context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+    private fun adapterEnabled(): Boolean = recoveryPermissions() && context.getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
     private fun scheduleWatch(delay: Long) {
         if (closed || target?.classicAddress == null) return
         waiting = true; automatic = false
         publish(LinkState(LinkPhase.DISCONNECTED, "안경 대기 중 · 다시 가까워지면 자동 연결"))
         main.removeCallbacks(retry)
-        main.postDelayed(retry, delay)
+        if (adapterEnabled()) main.postDelayed(retry, delay)
     }
     private fun retryWatch(reason: String) {
         if (closed || target == null) return
@@ -85,7 +91,7 @@ internal class ConnectionSupervisor(
     }
     private fun startWatch() {
         val expected = target ?: return
-        if (closed || !waiting || automatic) return
+        if (closed || !waiting || automatic || !adapterEnabled()) return
         runCatching {
             transport.watchPresence(expected, { device ->
                 if (!closed && waiting && target === expected && !automatic) {

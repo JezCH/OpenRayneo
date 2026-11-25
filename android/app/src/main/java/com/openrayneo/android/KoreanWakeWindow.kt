@@ -107,3 +107,27 @@ internal class AmbientKoreanWake {
         return Match(clean)
     }
 }
+
+// Optional short-lived history of explicitly invoked questions. Never learns from
+// passive audio, crosses a record/speaker boundary, or persists to the Agent outbox.
+internal class AmbientWakeDialogue {
+    data class Turn(val question: String, val answer: String)
+    private var scope: String? = null
+    private var lastAt = 0L
+    private val turns = ArrayDeque<Turn>()
+    fun clear() { scope = null; lastAt = 0L; turns.clear() }
+    fun history(key: String?, now: Long): List<Turn> {
+        if (key == null || scope != key || now - lastAt !in 0L..120_000L) {
+            clear()
+            scope = key
+        }
+        return turns.toList()
+    }
+    fun remember(key: String?, question: String, answer: String, now: Long) {
+        if (key == null || answer.isBlank() || answer == "[PASS]") return
+        history(key, now)
+        turns.addLast(Turn(question.take(240), answer.take(600)))
+        while (turns.size > 3) turns.removeFirst()
+        lastAt = now
+    }
+}

@@ -56,9 +56,17 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
                 Checkbox(continuous, { enabled -> model.saveConfig(mapOf("ambientWakeEnabled" to enabled.toString())) })
                 Text("기록 중 호출어 감지 및 AI 질문 허용")
             }
+            if (continuous) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(model.config.optBoolean("ambientWakeContext"), { enabled -> model.saveConfig(mapOf("ambientWakeContext" to enabled.toString())) })
+                    Text("명시 호출 질문의 짧은 대화 맥락 사용")
+                }
+                Note("같은 기록·식별된 화자(또는 실시간 본인 채널)의 최근 질문/답변 최대 3개를 2분 동안 다음 명시 호출에 함께 보냅니다. 화자 미확인 시 맥락을 보내지 않습니다. 작업 도구 없음. 호출을 다시 말해야 합니다.")
+            }
             Note("종일 기록은 안경의 오디오 전송 및 전사 지연에 의존합니다. 빠른 실시간 힌트는 화면을 유지하는 듀얼 마이크 경로를 사용합니다. 두 경로 모두 전사가 끝난 후 호출을 검사하며 별도 120초 제한은 없습니다. 화자 인증 및 작업 도구는 지원하지 않습니다.")
             val capturing = s.conversation.running && (s.conversation.source == ConversationSource.ALWAYS_ON || (s.conversation.source == ConversationSource.REALTIME && fast))
             Note(if (continuous && capturing) "최근 호출 상태: " + s.ambientWakeStatus else "종일 또는 빠른 실시간 기록을 시작해야 호출을 감지합니다.")
+            if (continuous && capturing) TextButton(onClick = { model.attempt { model.service().resetAmbientWake() } }) { Text("AI 질문 취소·대화 맥락 초기화") }
             if (s.alwaysOnResumePending) {
                 Note("같은 안경의 자동 재연결 및 이전 기록 저장을 기다리는 중입니다.")
                 ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
