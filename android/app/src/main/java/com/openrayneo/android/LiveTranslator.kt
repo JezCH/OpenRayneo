@@ -104,10 +104,11 @@ internal class LiveTranslator(
     fun startWake(settings: JSONObject, action: (String) -> Unit) {
         val korean = JSONObject(settings.toString()).put("asrLanguage", "ko")
         start(korean, captions = true)
-        wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime())
+        val options = KoreanWakeOptions.from(settings.optString("wakePhrases"), settings.optString("wakeSeconds"), settings.optString("wakeFollowSeconds"))
+        wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime(), options)
         wakeAction = action
-        status = "한국어 호출 대기 · 자비스 또는 레이네오야"
-        show("한국어 호출 대기", "자비스, 질문하세요")
+        status = "한국어 호출 대기 · " + options.phrases.joinToString(" / ")
+        show("한국어 호출 대기", options.phrases.first() + ", 질문하세요")
         changed()
     }
     fun pollWake(now: Long) {
