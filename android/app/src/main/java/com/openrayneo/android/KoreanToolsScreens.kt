@@ -17,12 +17,13 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
     val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
         s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.teleprompter.active != null ||
         s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
-    val options = KoreanWakeOptions.from(model.config.optString("wakePhrases"), model.config.optString("wakeSeconds"), model.config.optString("wakeFollowSeconds"))
+    val savedOptions = runCatching { KoreanWakeOptions.from(model.config.optString("wakePhrases"), model.config.optString("wakeSeconds"), model.config.optString("wakeFollowSeconds")) }
+    val options = savedOptions.getOrElse { KoreanWakeOptions.parse() }
     var phrases by remember(model.config) { mutableStateOf(options.phrases.joinToString(", ")) }
     var listen by remember(model.config) { mutableIntStateOf(options.listenSeconds) }
     var followup by remember(model.config) { mutableIntStateOf(options.followupSeconds) }
     val parsed = runCatching { KoreanWakeOptions.parse(phrases, listen, followup) }
-    val dirty = parsed.getOrNull() != options
+    val dirty = savedOptions.isFailure || parsed.getOrNull() != options
     val editable = !s.wakeActive && !s.wakePending
     var allowAI by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
@@ -62,6 +63,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
                     FilterChip(selected = followup == n, onClick = { followup = n }, label = { Text(n.toString() + "초") }, enabled = editable)
                 }
             }
+            if (savedOptions.isFailure) Note("기존 호출 설정을 읽을 수 없습니다. 올바른 설정을 다시 저장하세요.")
             if (dirty) Note("호출을 시작하기 전에 변경 내용을 저장하세요.")
             if (!editable) Note("호출을 중지한 후 변경할 수 있습니다.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -76,7 +78,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("한국어 호출 대기를 시작할까요?") },
         text = { Text("주변 음성이 일시적으로 로컬에서 인식됩니다. 기록을 저장하지 않습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (allowAI) " 호출 후 질문 1개를 설정된 AI로 보냅니다." else " AI 요청은 하지 않습니다.") },
-        confirmButton = { TextButton(enabled = linked && localReady && !busy, onClick = {
+        confirmButton = { TextButton(enabled = linked && localReady && !busy && !dirty, onClick = {
             confirm = false; model.attempt { model.service().startKoreanWake(allowAI) }
         }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
