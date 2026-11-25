@@ -30,6 +30,10 @@ import kotlinx.coroutines.delay
 internal fun CompanionApp(model: AppModel, actions: UiActions) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var route by rememberSaveable { mutableStateOf("") }
+    var routeParent by rememberSaveable { mutableStateOf("") }
+    fun openRoute(target: String, parent: String = "") { routeParent = parent; route = target }
+    fun backRoute() { route = routeParent; routeParent = "" }
+    var pendingNavigation by remember { mutableStateOf<String?>(null) }
     var devices by rememberSaveable { mutableStateOf(false) }
     var sources by rememberSaveable { mutableStateOf(false) }
     val snackbars = remember { SnackbarHostState() }
@@ -43,10 +47,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 (route.isNotEmpty() || model.onboarding && model.onboardingStep > 0 || tab != 0)
     ) {
         if (route.isNotEmpty())
-            route =
-                if (route in listOf("model", "computer", "diagnostics", "voice-settings", "voice-profiles", "device-settings", "content", "teleprompter", "agent-api") && !model.onboarding)
-                    "settings"
-                else ""
+            backRoute()
         else if (model.onboarding) model.step(model.onboardingStep - 1) else tab = 0
     }
     LaunchedEffect(model.notice) {
@@ -72,7 +73,10 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "content" -> "홈 화면 및 콘텐츠"
                                 "teleprompter" -> "프롬프터 자료"
                                 "agent-api" -> "DSH Go 및 외부 Agent"
-                                else -> listOf("OpenRayneo", "내비게이션", "어시스턴트", "기록")[tab]
+                                "navigation" -> "길 안내"
+                                "display-controls" -> "안경 화면 및 오디오"
+                                "translation" -> "실시간 번역"
+                                else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                             }
                         )
                     },
@@ -80,9 +84,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                         if (route.isNotEmpty())
                             IconButton(
                                 onClick = {
-                                    route =
-                                        if (route == "settings" || model.onboarding) ""
-                                        else "settings"
+                                    backRoute()
                                 }
                             ) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, "뒤로")
@@ -91,7 +93,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     actions = {
                         if (route.isEmpty()) {
                             if (s.glasses.link.phase == LinkPhase.FULL) StatusPill("안경 연결됨")
-                            IconButton(onClick = { route = "settings" }) {
+                            IconButton(onClick = { openRoute("settings") }) {
                                 Icon(Icons.Outlined.Settings, "설정")
                             }
                         }
@@ -107,23 +109,24 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
                     val icons =
                         listOf(
-                            Icons.Outlined.Visibility,
-                            Icons.Outlined.NearMe,
+                            Icons.Outlined.Home,
                             Icons.AutoMirrored.Outlined.Chat,
                             Icons.Outlined.FolderOpen,
+                            Icons.Outlined.Dashboard,
+                            Icons.Outlined.Visibility,
                         )
-                    listOf("안경", "내비게이션", "어시스턴트", "기록").forEachIndexed { index, title ->
+                    listOf("홈", "AI", "기억", "도구", "기기").forEachIndexed { index, title ->
                         NavigationBarItem(
                             selected = tab == index,
                             onClick = { tab = index },
                             colors =
                                 NavigationBarItemDefaults.colors(
-                                    indicatorColor = Color.Transparent
+                                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer
                                 ),
                             icon = {
                                 BadgedBox(
                                     badge = {
-                                        if (index == 2 && s.approvals.isNotEmpty())
+                                        if (index == 1 && s.approvals.isNotEmpty())
                                             Badge { Text(s.approvals.size.toString()) }
                                     }
                                 ) {
@@ -144,7 +147,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     SettingsScreen(
                         model,
                         actions,
-                        { route = it },
+                        { openRoute(it, "settings") },
                         {
                             model.replaySetup()
                             route = ""
@@ -159,29 +162,21 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "content" -> CompanionContentScreen(model)
                 "teleprompter" -> TeleprompterScreen(model)
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
+                "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
+                "translation" -> TranslationToolScreen(model)
+                "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
+                    { openRoute("device-settings") }, { openRoute(it) })
                 else ->
                     if (model.onboarding)
-                        OnboardingScreen(model, actions, { devices = true }, { route = it })
+                        OnboardingScreen(model, actions, { devices = true }, { openRoute(it) })
                     else
                         pages.SaveableStateProvider(tab) {
                             when (tab) {
-                                0 ->
-                                    GlassesScreen(
-                                        model,
-                                        { devices = true },
-                                        { tab = it },
-                                        { route = "device-settings" },
-                                        { route = it },
-                                    )
-                                1 ->
-                                    NavigationScreen(
-                                        model,
-                                        actions,
-                                        { sources = true },
-                                        { devices = true },
-                                    )
-                                2 -> AssistantScreen(model, actions, { route = it })
-                                else -> ConversationScreen(model, actions, { route = it })
+                                0 -> HomeScreen(model, { tab = it }, { openRoute(it) }, { devices = true })
+                                1 -> AssistantScreen(model, actions, { openRoute(it) })
+                                2 -> ConversationScreen(model, actions, { openRoute(it) })
+                                3 -> ToolsScreen({ openRoute(it) }, { tab = it })
+                                else -> DeviceOverview(model, { devices = true }, { openRoute(it) })
                             }
                         }
             }
@@ -199,7 +194,10 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     items(s.navigationEntries, key = { it.key }) { entry ->
                         OutlinedCard(
                             onClick = {
-                                model.attempt {
+                                if (s.conversation.running || s.alwaysOnResumePending) {
+                                    pendingNavigation = entry.key
+                                    sources = false
+                                } else model.attempt {
                                     model.service().followNavigation(entry.key)
                                     sources = false
                                 }
@@ -229,6 +227,18 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 }
             }
         }
+    pendingNavigation?.let { key ->
+        AlertDialog(
+            onDismissRequest = { pendingNavigation = null },
+            title = { Text("기록을 종료하고 길 안내를 시작할까요?") },
+            text = { Text("현재 기록과 자동 재개를 중단합니다.") },
+            confirmButton = { TextButton(onClick = {
+                pendingNavigation = null
+                model.attempt { model.service().stopConversation(); model.service().followNavigation(key) }
+            }) { Text("기록 종료 및 전환") } },
+            dismissButton = { TextButton(onClick = { pendingNavigation = null }) { Text("취소") } }
+        )
+    }
     model.error?.let { message ->
         AlertDialog(
             onDismissRequest = { model.error = null },
@@ -291,19 +301,6 @@ private fun GlassesScreen(
                 }
             }
         }
-        item {
-            ContentCard {
-                Text("독립 컴패니언", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToolOutlinedButton(onClick = { configure("content") }) { Text("홈 화면 및 콘텐츠") }
-                    ToolOutlinedButton(onClick = { navigate(3) }) { Text("음성 기록") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { configure("teleprompter") }) { Text("프롬프터 원고함") }
-                    TextButton(onClick = { configure("agent-api") }) { Text("외부 Agent") }
-                }
-            }
-        }
         item { SectionLabel("안경 화면") }
         item { GlassesOutputPreview(state) }
         item {
@@ -311,16 +308,12 @@ private fun GlassesScreen(
                 if (linked) {
                     Note(state.displayDescription)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ToolOutlinedButton(onClick = { navigate(1) }) { Text("내비게이션") }
-                        ToolOutlinedButton(
-                            onClick = { model.attempt { model.service().startRealtimeHint() } }
-                        ) {
-                            Text("실시간 힌트")
-                        }
+                        ToolOutlinedButton(onClick = { configure("navigation") }) { Text("길 안내") }
+                        ToolOutlinedButton(onClick = { navigate(0) }) { Text("홈으로") }
                     }
                     if (!model.state.translationActive)
                         ToolOutlinedButton(
-                            onClick = { model.attempt { model.service().startTranslation() } }
+                            onClick = { configure("translation") }
                         ) {
                             Text("실시간 번역 (한국어 ↔ 영어)")
                         }
@@ -379,26 +372,12 @@ private fun GlassesScreen(
                 Note("음량은 휴대폰에서만 계산하며 오디오를 저장하거나 업로드하지 않습니다.")
             }
         }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("내비게이션", "Amap 알림", Icons.Outlined.NearMe, Modifier.weight(1f)) {
-                    navigate(1)
-                }
-                FeatureTile(
-                    "어시스턴트",
-                    "휴대폰 · 컴퓨터",
-                    Icons.AutoMirrored.Outlined.Chat,
-                    Modifier.weight(1f),
-                ) {
-                    navigate(2)
-                }
-            }
-        }
+
     }
 }
 
 @Composable
-private fun FeatureTile(
+internal fun FeatureTile(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -430,7 +409,7 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("안경 연결하기", style = MaterialTheme.typography.headlineSmall)
-        Note("안경을 깨어 있는 상태로 두고, 먼저 공식 앱이나 컴퓨터와의 연결을 끊으세요. 시스템 페어링 안내가 나타나면 휴대폰에서 확인하세요.")
+        Note("안경을 깨운 뒤 공식 RayNeo 앱 및 기존 OpenRayneo의 안경 연결을 해제하세요. 신원 읽기 오류가 발생하면 기존 앱에서 안경 연결을 해제하고 다시 시도하세요. 앱 삭제나 안경 초기화는 필요하지 않습니다.")
         Text(s.glasses.link.detail, color = MaterialTheme.colorScheme.primary)
         if (!model.bluetoothAllowed) {
             ToolButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
