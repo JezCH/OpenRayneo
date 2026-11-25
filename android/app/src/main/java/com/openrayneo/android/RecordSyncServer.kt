@@ -88,7 +88,7 @@ internal class RecordSyncServer(private val settings: AppSettings, private val r
                 val record = repository.records.firstOrNull { it.id == args["recordId"] }
                 if (record == null) { json(404, JSONObject().put("error", "사용 가능한 오디오 없음")); return }
                 if (record.audioPending) { json(409, JSONObject().put("error", "오디오 기록 중")); return }
-                if (record.audioSamples == 0L) { json(404, JSONObject().put("error", "사용 가능한 오디오 없음")); return }
+                if (record.transcriptOnly || record.audioSamples == 0L) { json(404, JSONObject().put("error", "사용 가능한 오디오 없음")); return }
                 output.write("HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: ${44 + record.audioSamples * 2 * record.audioChannels}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray())
                 audio.exportWav(record.audioId ?: record.id, record.audioSamples, output); output.flush()
             } else json(404, JSONObject().put("error", "해당 동기화 엔드포인트가 없음"))
