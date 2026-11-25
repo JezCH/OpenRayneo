@@ -50,17 +50,31 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
         SpeakerBindingDialog(model, active, segment, actions) { liveSpeaker = null }
     } }
     var source by rememberSaveable { mutableStateOf(ConversationSource.REALTIME) }
+    var resumeOnReconnect by rememberSaveable { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
                 Text("기록 및 기억", style = MaterialTheme.typography.headlineSmall)
                 Note("종일 기록은 타임라인과 요약으로 표시되며, 개별 기록은 각자의 시작·종료 시간과 내용을 보존합니다. 본인, 타인, 미상／겹친 발화를 모두 저장하며, 원문을 탭하면 인물 귀속을 수정할 수 있습니다.")
-                if (!state.running) {
+                if (model.state.alwaysOnResumePending) {
+                    Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 5분 이내 같은 안경에 자동 재연결되면 다시 시작합니다.")
+                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
+                } else if (!state.running) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ConversationSource.entries.forEach { option -> FilterChip(source == option, { source = option }, label = { Text(option.title) }) }
                     }
+                    if (source == ConversationSource.ALWAYS_ON) {
+                        Row {
+                            Checkbox(resumeOnReconnect, { resumeOnReconnect = it })
+                            Text("이번 종일 일상 기록은 연결 복구 시 자동 재개")
+                        }
+                        Note("이 동의는 이번 일상 기록과 자동 재연결에만 적용됩니다. 원본 음성이 저장될 수 있으므로 참여자의 동의 및 장소의 보안 정책을 확인하세요. 앱 서비스 중지 또는 재부팅 후에는 자동으로 시작하지 않습니다.")
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ToolButton(onClick = { model.attempt { model.service().startConversation(ConversationMode.DAILY, source) } },
+                        ToolButton(onClick = { model.attempt {
+                            model.service().startConversation(ConversationMode.DAILY, source, resumeOnReconnect = source == ConversationSource.ALWAYS_ON && resumeOnReconnect)
+                            resumeOnReconnect = false
+                        } },
                             enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("일상 기록 시작") }
                         ToolOutlinedButton(onClick = { model.attempt { model.service().startConversation(ConversationMode.MEETING, source) } },
                             enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("회의 기록 시작") }
@@ -68,7 +82,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 } else {
                     Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
                     if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
-                    ToolButton(onClick = { model.service().conversations.stop() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
+                    ToolButton(onClick = { model.service().stopConversation() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -195,7 +209,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                 Note("${record.audioChannels}채널 원본 오디오 ${record.audioSamples / 16000}초 저장됨. 휴대폰에 암호화 저장되며 컴퓨터는 필요할 때 가져옵니다.")
                 Row {
                     TextButton(onClick = { actions.exportRecording(record.id) }) { Text("내보내기: WAV") }
-                    TextButton(onClick = { model.attempt { model.service().conversations.retranscribe(record.id) } }, enabled = !state.running) { Text("원본 오디오에서 누락 구간 보충") }
+                    TextButton(onClick = { model.attempt { model.service().retranscribe(record.id) } }, enabled = !state.running) { Text("원본 오디오에서 누락 구간 보충") }
                 }
             }
             if (record.summary.isNotBlank()) Text(record.summary)
