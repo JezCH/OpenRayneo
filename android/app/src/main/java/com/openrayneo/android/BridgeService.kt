@@ -300,11 +300,12 @@ internal class BridgeService : Service() {
 
     fun scan() {
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
+        localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
+        updateNotification(); notifyUI()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         runCatching { supervisor.connect(device, bleOnly) }.onFailure {
