@@ -59,8 +59,8 @@ internal class LiveTranslator(
     }
 
     fun captionConfig(settings: JSONObject): JSONObject {
-        val speech = JSONObject().put("asrEngine", settings.optString("asrEngine"))
-            .put("asrLanguage", settings.optString("asrLanguage", "ko"))
+        val speech = JSONObject().put("asrEngine", SpeechRounds.engine(settings))
+            .put("asrLanguage", SpeechRounds.languageHints(settings))
         require(SpeechRounds.model(speech) != null) { "자막은 기기 내장 음성 인식 모델만 지원합니다. 음성 설정에서 로컬 모델을 선택하세요." }
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
         return speech
