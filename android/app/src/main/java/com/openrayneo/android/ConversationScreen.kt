@@ -52,19 +52,19 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     liveSpeaker?.let { segment -> state.activeRecord?.let { active ->
         SpeakerBindingDialog(model, active, segment, actions) { liveSpeaker = null }
     } }
-    var source by rememberSaveable { mutableStateOf(ConversationSource.REALTIME) }
+    var source by rememberSaveable { mutableStateOf(ConversationSource.ALWAYS_ON) }
     var resumeOnReconnect by rememberSaveable { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
-                Text("기록 및 기억", style = MaterialTheme.typography.headlineSmall)
-                Note("종일 기록은 타임라인과 요약으로 표시되며, 개별 기록은 각자의 시작·종료 시간과 내용을 보존합니다. 본인, 타인, 미상／겹친 발화를 모두 저장하며, 원문을 탭하면 인물 귀속을 수정할 수 있습니다.")
+                Text("새 기록", style = MaterialTheme.typography.headlineSmall)
+                Note("일상과 회의를 기록하고 아래에서 원문과 기억을 찾아보세요. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
                 if (model.state.alwaysOnResumePending) {
                     Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 5분 이내 같은 안경에 자동 재연결되면 다시 시작합니다.")
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
                 } else if (!state.running) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConversationSource.entries.forEach { option -> FilterChip(source == option, { source = option }, label = { Text(option.title) }) }
+                        ConversationSource.entries.forEach { option -> FilterChip(source == option, { source = option }, label = { Text(when (option) { ConversationSource.ALWAYS_ON -> "종일 기록"; ConversationSource.REALTIME -> "실시간 힌트"; ConversationSource.NATIVE -> "음성 깨우기" }) }) }
                     }
                     if (source == ConversationSource.ALWAYS_ON) {
                         Row {
@@ -92,8 +92,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (!state.modelReady) Note("로컬 음성 모델을 준비 중입니다. 로드에 실패하면 위의 오류를 확인하세요.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { open("voice-settings") }) { Text("음성 및 요약") }
-                    TextButton(onClick = { open("voice-profiles") }) { Text("목소리 및 인물") }
+                    TextButton(onClick = { open("voice-settings") }) { Text("음성 설정") }
+                    TextButton(onClick = { open("voice-profiles") }) { Text("인물 관리") }
                 }
             }
         }
