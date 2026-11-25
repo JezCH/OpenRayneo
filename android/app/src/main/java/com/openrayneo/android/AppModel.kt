@@ -60,6 +60,8 @@ internal data class CompanionState(
     val wakeActive: Boolean = false,
     val wakePending: Boolean = false,
     val wakeResult: String = "한국어 호출 대기 꺼짐",
+    val ambientWakeStatus: String = "호출 대기",
+    val nativeWakeStatus: String = "아직 안경 깨우기 이벤트 없음",
     val notificationReadStatus: String = "알림 리스너 서비스 대기 중",
     val notificationSnapshotAt: Long = 0,
     val notificationReadPhase: NotificationReadPhase = NotificationReadPhase.DISCONNECTED,
@@ -220,6 +222,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 wakeActive = s.translator.wakeActive,
                 wakePending = s.wakePending,
                 wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("호출 대기 ·")) s.translator.status else s.wakeResult,
+                ambientWakeStatus = s.ambientWakeStatus,
+                nativeWakeStatus = s.nativeWakeStatus,
                 captionActive = s.translator.active && s.translator.captionOnly && !s.translator.wakeActive,
                 captionStatus = if (s.translator.captionOnly) s.translator.status else "실시간 자막 꺼짐",
                 translationStatus = if (s.translator.captionOnly) "실시간 번역 꺼짐" else s.translator.status,
@@ -272,6 +276,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
+        listOf("ambientWakeEnabled", "ambientWakeContext").forEach { key -> values[key]?.let { require(it in setOf("true", "false")) } }
         values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
         values["memorySuggestOnSend"]?.let { require(it in setOf("true", "false")) }
         values["memorySuggestionDays"]?.let { require(it.toIntOrNull() in AutomaticMemoryPolicy.days) }
@@ -291,6 +296,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         updated.remove("amapKey")
         updated.remove("amapConsent")
         settings.save(updated)
+        if (listOf("ambientWakeEnabled", "ambientWakeContext", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "fastRealtimeHints", "nativeAutoAnswer", "modelUrl", "modelName", "modelKey", "mobileAgentBackend", "answerLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.resetAmbientWake()
         if (listOf("voiceAlwaysOnStart", "nativeAutoAnswer", "audioRetention", "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.cancelVoiceAlwaysOnStart()
         if (old.optString("fastRealtimeHints") != updated.optString("fastRealtimeHints")) bridge?.cancelRealtimeStream()
         if (listOf("audioRetention", "asrEngine").any { old.optString(it) != updated.optString(it) }) bridge?.cancelAlwaysOnRecovery()
@@ -332,7 +338,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "ambientWakeEnabled", "ambientWakeContext", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 

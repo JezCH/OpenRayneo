@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
+internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, deviceSettings: () -> Unit) {
     val s = model.state
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val localReady = SpeechRounds.model(model.config) != null && SpeechRounds.ready(model.getApplication<android.app.Application>(), model.config)
@@ -27,9 +27,56 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
     val editable = !s.wakeActive && !s.wakePending
     var allowAI by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
+    var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
+    var resumeAfterLink by remember { mutableStateOf(false) }
+    val fast = model.config.optBoolean("fastRealtimeHints")
+    val speechReady = SpeechRounds.ready(model.getApplication<android.app.Application>(), model.config)
+    val continuous = model.config.optBoolean("ambientWakeEnabled")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("한국어 호출 (실험)", style = MaterialTheme.typography.headlineSmall)
+            Text("호출 연결 진단", style = MaterialTheme.typography.titleMedium)
+            val firmware = s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")
+            val mic = s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")
+            fun flag(value: Boolean?) = when (value) { true -> "켜짐"; false -> "꺼짐"; null -> "기기 보고 없음" }
+            Note("안경 연결: " + if (linked) "완전 연결" else s.glasses.link.detail)
+            Note("안경 마이크: " + flag(mic))
+            Note("펌웨어 호출: " + flag(firmware?.deviceFlag("voiceWakeup")) + " · " + when (firmware?.deviceInt("wakeupWord")) { 1 -> "샤오레이 샤오레이"; 2 -> "Hey RayNeo"; else -> "호출어 미확인" })
+            Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
+            Note("최근 기본 호출: " + s.nativeWakeStatus)
+            Note("음성 모델: " + if (speechReady && s.conversation.modelReady) "준비됨" else "설정 또는 다운로드 필요")
+            Note("기록 오디오: ${s.conversation.decodedSeconds.toInt()}초 · " + (s.conversation.error ?: s.conversation.status))
+            Note("AI 연결: " + if (s.agentServer.enabled) "입구 활성화 · 모델 응답은 별도 시험" else "연결 필요")
+            ToolOutlinedButton(onClick = deviceSettings) { Text("안경 마이크·기본 호출 설정") }
+            if (!model.config.optBoolean("nativeAutoAnswer")) ToolOutlinedButton(onClick = { model.saveConfig(mapOf("nativeAutoAnswer" to "true")) }) { Text("앱 기본 호출 자동 응답 켜기") }
+            if (!speechReady) ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
+        } }
+        item { ContentCard {
+            Text("종일 및 실시간 한국어 호출", style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(continuous, { enabled -> model.saveConfig(mapOf("ambientWakeEnabled" to enabled.toString())) })
+                Text("기록 중 호출어 감지 및 AI 질문 허용")
+            }
+            if (continuous) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(model.config.optBoolean("ambientWakeContext"), { enabled -> model.saveConfig(mapOf("ambientWakeContext" to enabled.toString())) })
+                    Text("명시 호출 질문의 짧은 대화 맥락 사용")
+                }
+                Note("같은 기록·식별된 화자(또는 실시간 본인 채널)의 최근 질문/답변 최대 3개를 2분 동안 다음 명시 호출에 함께 보냅니다. 화자 미확인 시 맥락을 보내지 않습니다. 작업 도구 없음. 호출을 다시 말해야 합니다.")
+            }
+            Note("종일 기록은 안경의 오디오 전송 및 전사 지연에 의존합니다. 빠른 실시간 힌트는 화면을 유지하는 듀얼 마이크 경로를 사용합니다. 두 경로 모두 전사가 끝난 후 호출을 검사하며 별도 120초 제한은 없습니다. 화자 인증 및 작업 도구는 지원하지 않습니다.")
+            val capturing = s.conversation.running && (s.conversation.source == ConversationSource.ALWAYS_ON || (s.conversation.source == ConversationSource.REALTIME && fast))
+            Note(if (continuous && capturing) "최근 호출 상태: " + s.ambientWakeStatus else "종일 또는 빠른 실시간 기록을 시작해야 호출을 감지합니다.")
+            if (continuous && capturing) TextButton(onClick = { model.attempt { model.service().resetAmbientWake() } }) { Text("AI 질문 취소·대화 맥락 초기화") }
+            if (s.alwaysOnResumePending) {
+                Note("같은 안경의 자동 재연결 및 이전 기록 저장을 기다리는 중입니다.")
+                ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
+            } else if (!s.conversation.running) {
+                ToolButton(onClick = { resumeAfterLink = false; startContinuous = ConversationSource.ALWAYS_ON }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
+                ToolOutlinedButton(onClick = { startContinuous = ConversationSource.REALTIME }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("빠른 실시간 호출 시작") }
+            } else if (capturing) ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text("기록 및 호출 중지") }
+        } }
+        item { ContentCard {
+            Text("한국어 호출 (1회 시험)", style = MaterialTheme.typography.headlineSmall)
             Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
             Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
             Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
@@ -76,6 +123,25 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit) {
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
+    startContinuous?.let { source -> AlertDialog(onDismissRequest = { startContinuous = null }, title = { Text(if (source == ConversationSource.REALTIME) "빠른 실시간 호출을 시작할까요?" else "종일 기록 및 호출을 시작할까요?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("안경 마이크의 음성이 인식·기록되며 보존 설정에 따라 원본이 저장될 수 있습니다. 설정된 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (source == ConversationSource.REALTIME) " 빠른 스트리밍 설정(도구 없는 힌트)을 켜고 실시간 화면을 사용합니다." else "")
+                if (source == ConversationSource.ALWAYS_ON) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(resumeAfterLink, { resumeAfterLink = it })
+                        Text("이번 기록만 같은 안경 재연결 시 자동 재개")
+                    }
+                    Note("이탈 시간이 길어도 재개합니다. 직접 중지·연결 해제·서비스 종료 시 동의가 취소됩니다. 재부팅 후 자동 기록하지 않습니다.")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = {
+            startContinuous = null
+            if (source == ConversationSource.REALTIME && !fast) model.saveConfig(mapOf("fastRealtimeHints" to "true"))
+            if (source != ConversationSource.REALTIME || model.config.optBoolean("fastRealtimeHints")) model.attempt { model.service().startConversation(ConversationMode.DAILY, source, resumeOnReconnect = source == ConversationSource.ALWAYS_ON && resumeAfterLink) }
+        }, enabled = continuous && linked && speechReady && !busy && !dirty) { Text("동의하고 시작") } },
+        dismissButton = { TextButton(onClick = { startContinuous = null }) { Text("취소") } }) }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("한국어 호출 대기를 시작할까요?") },
         text = { Text("주변 음성이 일시적으로 로컬에서 인식됩니다. 기록을 저장하지 않습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (allowAI) " 호출 후 질문 1개를 설정된 AI로 보냅니다." else " AI 요청은 하지 않습니다.") },
         confirmButton = { TextButton(enabled = linked && localReady && !busy && !dirty, onClick = {

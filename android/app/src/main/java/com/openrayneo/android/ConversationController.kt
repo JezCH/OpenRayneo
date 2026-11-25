@@ -15,7 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 internal data class VoiceRequest(val text: String, val context: String, val source: ConversationSource,
     val wakeId: String? = null, val forceDsh: Boolean = true, val recordId: String? = null, val sourceRevision: Int = 1, val backfill: Boolean = false,
-    val hintContext: JSONObject? = null, val lastSpeechAt: Long = 0L)
+    val hintContext: JSONObject? = null, val lastSpeechAt: Long = 0L, val segmentIds: List<String> = emptyList()) {
+    // Main-thread request disposition, read by the worker after the posted callback returns.
+    var retainInAgentContext = true
+}
 
 /** Original channels share one frame clock; each analysis lane owns its ASR and committed cursor. */
 internal class ConversationController(private val context: Context, private val settings: AppSettings,
@@ -379,14 +382,17 @@ internal class ConversationController(private val context: Context, private val 
         val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", record?.id).put("recordRevision", record?.revision)
         val voice = VoiceRequest(input.joinToString(" ") { it.text }, modePolicy.agentPrompt + "\n" + payload, source, input.lastOrNull()?.roundId,
             true, record?.id, record?.revision ?: 1, input.any { it.processingMode == "backfill" },
-            payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt })
+            payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt }, input.map { it.id })
         dispatching = true; val ids = input.map { it.id }.toSet(); pendingAgent.removeAll { it.id in ids }
         main.post {
             val accepted = if (token == generation && contextGeneration == agentContextGeneration) request(voice) else null
             worker.post {
                 if (token != generation || contextGeneration != agentContextGeneration) return@post
                 dispatching = false
-                if (accepted == true) { previous = input.map { it.text }; publish(state.copy(status = "소스 채널별로 로컬 Agent에 전달함")); drainAgent() }
+                if (accepted == true) {
+                    if (voice.retainInAgentContext) { previous = input.map { it.text }; publish(state.copy(status = "소스 채널별로 로컬 Agent에 전달함")) }
+                    drainAgent()
+                }
                 else if (accepted == false) { pendingAgent.addAll(0, input); worker.postDelayed({ drainAgent() }, 1_000) }
             }
         }
@@ -490,7 +496,7 @@ internal class ConversationController(private val context: Context, private val 
             val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", finished?.id).put("recordRevision", finished?.revision)
             val voice = VoiceRequest(input.joinToString(" ") { it.text }, modePolicy.agentPrompt + "\n" + payload, source, input.lastOrNull()?.roundId,
                 true, finished?.id, finished?.revision ?: 1, input.any { it.processingMode == "backfill" },
-                payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt })
+                payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt }, input.map { it.id })
             val contextGeneration = agentContextGeneration
             main.post { if (contextGeneration == agentContextGeneration) request(voice) }
         }

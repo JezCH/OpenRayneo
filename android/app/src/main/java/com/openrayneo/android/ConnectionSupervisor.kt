@@ -2,12 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.openrayneo.android
 
+import android.annotation.SuppressLint
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Handler
 
-/** Owns transport retries; it never starts a glasses page. */
+/** A previously authenticated pair waits silently for a connectable advertisement.
+ * No periodic connection attempts while the glasses are absent, no retry-count cutoff.
+ * Explicit disconnect, scan or service stop cancels the in-memory recovery permission.
+ */
+@SuppressLint("MissingPermission")
 internal class ConnectionSupervisor(
-    context: Context,
+    private val context: Context,
     private val main: Handler,
     private val changed: (LinkState) -> Unit,
     private val discovered: (RayneoConnection.Device) -> Unit,
@@ -17,23 +29,33 @@ internal class ConnectionSupervisor(
     val transport = RayneoConnection(context, this)
     var state = LinkState(); private set
     private var target: RayneoConnection.Device? = null
-    // A short dropout and a device temporarily out of range have different recovery needs.
-    private val retryDelays = longArrayOf(5_000, 10_000, 15_000, 30_000, 60_000, 120_000)
-    private var attempts = 0
-    private var retrying = false
-    private var retryScanning = false
+    private var waiting = false
+    private var automatic = false
     private var starting = false
     private var bleOnly = false
-    private val retry = Runnable {
-        if (!retrying || target == null || attempts >= retryDelays.size) return@Runnable
-        attempts++; retryScanning = true
-        runCatching { transport.scan() }.onFailure {
-            retryScanning = false
-            report(it.message ?: "재연결 스캔 실패")
-            scheduleRetry()
+    private var failures = 0
+    private var closed = false
+    private val cooldowns = longArrayOf(1_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000)
+    private val retry = Runnable { startWatch() }
+    private val adapterChanges = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (closed || intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
+                    main.removeCallbacks(retry); transport.stopPresenceWatch()
+                }
+                BluetoothAdapter.STATE_ON -> if (waiting && target != null && !automatic) {
+                    failures = 0; scheduleWatch(1_000)
+                }
+            }
         }
     }
-
+    init {
+        context.registerReceiver(adapterChanges, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_EXPORTED)
+    }
+    private fun publish(next: LinkState) {
+        if (state != next) { state = next; changed(state) }
+    }
     fun scan() { cancelRetries(); transport.scan() }
     fun connect(device: RayneoConnection.Device, diagnostic: Boolean) {
         cancelRetries(); bleOnly = diagnostic
@@ -41,57 +63,67 @@ internal class ConnectionSupervisor(
         starting = true
         try { transport.connect(device, diagnostic) } finally { starting = false }
     }
-    fun cancelRetries() { target = null; retrying = false; retryScanning = false; attempts = 0; main.removeCallbacks(retry) }
-    fun disconnect() { cancelRetries(); transport.disconnect() }
-    fun close() { cancelRetries(); transport.close() }
-
-    override fun onDevice(device: RayneoConnection.Device) {
-        discovered(device)
-        val expected = target ?: return
-        if (retryScanning && (device.bluetooth.address == expected.bluetooth.address ||
-                expected.classicAddress != null && device.classicAddress == expected.classicAddress)) {
-            retryScanning = false; starting = true
-            val result = runCatching { transport.connect(device, false) }
-            if (result.isFailure) {
-                runCatching { transport.disconnect() }.onFailure { report(it.message ?: "재연결 정리 실패") }
-                report(result.exceptionOrNull()?.message ?: "재연결 실패")
-            }
-            starting = false
-            if (result.isFailure) scheduleRetry()
-        }
+    fun cancelRetries() {
+        target = null; waiting = false; automatic = false; failures = 0
+        main.removeCallbacks(retry); transport.stopPresenceWatch()
     }
+    fun disconnect() { cancelRetries(); transport.disconnect() }
+    fun close() {
+        closed = true; cancelRetries()
+        runCatching { context.unregisterReceiver(adapterChanges) }
+        transport.close()
+    }
+    fun recoveryPermissions(): Boolean = context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+    private fun adapterEnabled(): Boolean = recoveryPermissions() && context.getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
+    private fun scheduleWatch(delay: Long) {
+        if (closed || target?.classicAddress == null) return
+        waiting = true; automatic = false
+        publish(LinkState(LinkPhase.DISCONNECTED, "안경 대기 중 · 다시 가까워지면 자동 연결"))
+        main.removeCallbacks(retry)
+        if (adapterEnabled()) main.postDelayed(retry, delay)
+    }
+    private fun retryWatch(reason: String) {
+        if (closed || target == null) return
+        report(reason)
+        failures = (failures + 1).coerceAtMost(cooldowns.lastIndex)
+        scheduleWatch(cooldowns[failures])
+    }
+    private fun startWatch() {
+        val expected = target ?: return
+        if (closed || !waiting || automatic || !adapterEnabled()) return
+        runCatching {
+            transport.watchPresence(expected, { device ->
+                if (!closed && waiting && target === expected && !automatic) {
+                    waiting = false; automatic = true; starting = true
+                    val result = runCatching { transport.connect(device, automatic = true) }
+                    if (result.isFailure) runCatching { transport.disconnect() }
+                    starting = false
+                    if (result.isFailure) retryWatch(result.exceptionOrNull()?.message ?: "자동 연결 실패")
+                }
+            }, ::retryWatch)
+        }.onFailure { retryWatch(it.message ?: "자동 감지 실패") }
+    }
+    override fun onDevice(device: RayneoConnection.Device) = discovered(device)
     override fun onState(text: String, ready: Boolean, busy: Boolean) {
         val wasReady = state.phase == LinkPhase.FULL
-        val phase = when {
-            ready -> if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL
-            busy -> if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
-            else -> LinkPhase.DISCONNECTED
-        }
-        state = LinkState(phase, text)
-        changed(state)
         if (ready) {
-            retrying = false; retryScanning = false; attempts = 0; main.removeCallbacks(retry)
+            waiting = false; automatic = false; failures = 0; main.removeCallbacks(retry)
             target = target?.copy(classicAddress = transport.resolvedClassicAddress ?: target?.classicAddress)
-        } else if (!starting && target != null && (wasReady || retrying)) {
-            retrying = true
-            if (!busy) {
-                retryScanning = false
-                scheduleRetry()
-            }
+            publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
+            return
         }
-    }
-    private fun scheduleRetry() {
-        main.removeCallbacks(retry)
-        if (!retrying || target == null) return
-        if (attempts >= retryDelays.size) {
-            retrying = false; retryScanning = false
-            state = LinkState(LinkPhase.DISCONNECTED, "자동 재연결을 ${retryDelays.size}회 시도했습니다. 블루투스를 확인한 뒤 다시 연결하세요")
-            changed(state)
-        } else {
-            state = LinkState(LinkPhase.RETRY_WAIT, "연결 끊김, ${attempts + 1}번째 재연결 대기 중")
-            changed(state)
-            main.postDelayed(retry, retryDelays[attempts])
+        if (starting && automatic && !busy) return
+        if (!starting && !busy && target?.classicAddress != null && (wasReady || automatic)) {
+            if (wasReady) { failures = 0; scheduleWatch(1_000) }
+            else retryWatch(text)
+            return
         }
+        if (waiting && !starting) return // Transport may report both disconnect and the underlying error.
+        val phase = if (busy) {
+            if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
+        } else LinkPhase.DISCONNECTED
+        publish(LinkState(phase, text))
     }
     override fun onFrame(frame: ProtocolCodec.Frame, source: String) = received(frame, source)
     override fun onLog(text: String) = report(text)
