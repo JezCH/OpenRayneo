@@ -409,6 +409,7 @@ internal class BridgeService : Service() {
     }
     fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null,
                           resumeOnReconnect: Boolean = false) {
+        check(!migration.state.busy) { "기록 이전을 먼저 종료하세요" }
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
