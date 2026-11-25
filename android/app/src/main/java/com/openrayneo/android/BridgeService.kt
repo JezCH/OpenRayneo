@@ -935,7 +935,9 @@ internal class BridgeService : Service() {
     }
     fun speakKorean(text: String) {
         check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow && teleprompter.state.active == null && !teleprompter.state.busy) { "녹음·음성 기능을 먼저 종료하세요" }
-        speechOutput.speak(text)
+        val config = settings.read()
+        speechOutput.speak(text, config.optString("ttsRate").toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.5f } ?: 1f,
+            config.optString("ttsPitch").toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.25f } ?: 1f)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() { check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }; cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
