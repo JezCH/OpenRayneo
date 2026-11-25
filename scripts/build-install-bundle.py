@@ -17,6 +17,8 @@ def sha256(path):
 
 def assemble(apk, plugin, cert_report, badging, commit, run, fixed, out,
              validation_apk=None, validation_cert_report=None, validation_badging=None):
+    if not fixed:
+        raise ValueError('Persistent signing key required for a distribution bundle')
     if not re.fullmatch(r'[0-9a-f]{40}', commit) or run < 1:
         raise ValueError('Invalid build identity')
     package = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging, re.M)

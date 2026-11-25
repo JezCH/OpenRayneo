@@ -45,6 +45,9 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var classicAddress = byteArrayOf()
     private var identity = byteArrayOf()
     private var send: BluetoothGattCharacteristic? = null
+    private var pairInfo: BluetoothGattCharacteristic? = null
+    private var receiveCharacteristic: BluetoothGattCharacteristic? = null
+    private val identityGate = BleIdentityGate()
     private var pairingSequence = 0
     private var notificationSequence = 0
     private var bleDecoder = ProtocolCodec.StreamDecoder()
@@ -201,17 +204,18 @@ internal class RayneoConnection(private val context: Context, private val listen
             if (connection !== gatt) return
             guarded {
                 check(status == BluetoothGatt.GATT_SUCCESS) { "서비스 탐색 실패: $status" }
+                if (!identityGate.servicesReady()) return@guarded
                 val service = checkNotNull(connection.getService(SERVICE)) { "기기에 B81D 서비스가 없음" }
                 send = checkNotNull(service.getCharacteristic(SEND)) { "송신 특성이 없음" }
-                checkNotNull(service.getCharacteristic(RECEIVE)) { "수신 특성이 없음" }
-                checkNotNull(service.getCharacteristic(PAIR_INFO)) { "신원 특성이 없음" }
+                receiveCharacteristic = checkNotNull(service.getCharacteristic(RECEIVE)) { "수신 특성이 없음" }
+                pairInfo = checkNotNull(service.getCharacteristic(PAIR_INFO)) { "신원 특성이 없음" }
                 state("B81D 발견, 협상 중: BLE MTU…", busy = true)
                 check(connection.requestMtu(512)) { "MTU 협상을 시작할 수 없음" }
             }
         }
 
         override fun onMtuChanged(connection: BluetoothGatt, mtu: Int, status: Int) {
-            if (connection !== gatt) return
+            if (connection !== gatt || !identityGate.mtuReady()) return
             guarded {
                 check(status == BluetoothGatt.GATT_SUCCESS && mtu >= 160) {
                     "BLE MTU  부족: mtu=$mtu, status=$status"
@@ -219,7 +223,8 @@ internal class RayneoConnection(private val context: Context, private val listen
                 log("BLE MTU=$mtu")
                 blePayloadSize = mtu - 3
                 state("안경 신원 읽는 중…", busy = true)
-                check(connection.readCharacteristic(connection.getService(SERVICE).getCharacteristic(PAIR_INFO))) {
+                val characteristic = checkNotNull(pairInfo) { "안경 신원 서비스를 찾을 수 없습니다. 연결만 해제한 뒤 다시 시도하세요." }
+                check(connection.readCharacteristic(characteristic)) {
                     "신원 특성을 읽을 수 없음"
                 }
             }
@@ -239,7 +244,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                 // official Android client's six-byte Android ID convention (last 12 hex digits).
                 identity = if (bound.any { it != 0.toByte() }) bound else androidIdentity()
                 log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (bound.any { it != 0.toByte() }) "안경 바인딩" else "이 앱의 Android ID"}")
-                val receive = connection.getService(SERVICE).getCharacteristic(RECEIVE)
+                val receive = checkNotNull(receiveCharacteristic) { "안경 수신 서비스를 찾을 수 없음" }
                 check(connection.setCharacteristicNotification(receive, true)) { "BLE 알림을 켤 수 없음" }
                 val descriptor = checkNotNull(receive.getDescriptor(CCCD)) { "누락: CCCD" }
                 state("BLE 알림 구독 중…", busy = true)
@@ -487,6 +492,9 @@ internal class RayneoConnection(private val context: Context, private val listen
         socket = null
         runCatching { oldSocket?.close() }
         send = null
+        pairInfo = null
+        receiveCharacteristic = null
+        identityGate.reset()
         state("연결 끊김")
     }
 
