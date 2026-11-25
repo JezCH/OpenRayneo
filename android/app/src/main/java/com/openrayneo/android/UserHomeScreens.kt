@@ -177,24 +177,37 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
 internal fun TranslationToolScreen(model: AppModel) {
     val s = model.state
     var confirm by remember { mutableStateOf(false) }
+    var local by remember { mutableStateOf(true) }
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
             Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
             Note(s.translationStatus)
-            Note("음성 인식 및 번역 모델 설정이 필요합니다. 설정된 서비스에 발화가 전달될 수 있습니다.")
+            if (!s.translationActive) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(local, { local = true }); Text("오프라인 번역 (권장)")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(!local, { local = false }); Text("기존 AI 번역")
+                }
+                if (local) {
+                    Note(s.offlineStatus)
+                    ToolOutlinedButton(onClick = { model.attempt { model.service().translator.offline.prepare() } }, enabled = !s.offlineReady && !s.offlinePreparing) { Text("Wi-Fi로 모델 준비") }
+                    Note("SenseVoice 또는 Nemotron 로컬 음성 모델 필요. 번역문은 기기에서 처리하고 API를 호출하지 않습니다.")
+                } else Note("설정된 ASR 및 AI 서비스에 발화가 전달될 수 있으며 비용이 발생할 수 있습니다.")
+            }
             if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
             else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
-            else ToolButton(onClick = { confirm = true }, enabled = linked && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null) { Text("번역 시작") }
+            else ToolButton(onClick = { confirm = true }, enabled = linked && (!local || s.offlineReady) && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null) { Text("번역 시작") }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("실시간 번역을 시작할까요?") },
-        text = { Text("실시간 번역은 기존 기록 및 다른 안경 화면을 중단할 수 있습니다. 음성 처리 및 모델 이용량이 발생할 수 있으므로 참여자 동의와 설정을 확인하세요.") },
-        confirmButton = { TextButton(enabled = linked && !s.translationActive && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null,
-            onClick = { confirm = false; model.attempt { model.service().startTranslation() } }) { Text("동의하고 시작") } },
+        text = { Text(if (local) "로컬 음성 인식과 번역을 실행합니다. 기존 기록을 중단할 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else "기존 기록 및 다른 화면을 중단할 수 있으며 음성 및 텍스트가 설정된 서비스로 전송될 수 있습니다. 참여자 동의와 이용량을 확인하세요.") },
+        confirmButton = { TextButton(enabled = linked && (!local || s.offlineReady) && !s.translationActive && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null,
+            onClick = { confirm = false; model.attempt { model.service().startTranslation(local) } }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }
 
