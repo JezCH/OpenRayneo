@@ -238,7 +238,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
             text = { Text("현재 기록과 자동 재개를 중단합니다.") },
             confirmButton = { TextButton(onClick = {
                 pendingNavigation = null
-                model.attempt { model.service().stopConversation(); model.service().followNavigation(key) }
+                model.attempt { model.service().followNavigation(key) }
             }) { Text("기록 종료 및 전환") } },
             dismissButton = { TextButton(onClick = { pendingNavigation = null }) { Text("취소") } }
         )
