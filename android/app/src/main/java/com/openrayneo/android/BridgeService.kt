@@ -56,6 +56,8 @@ internal class BridgeService : Service() {
     private var nextAnswer = 0L
     private val serviceInstance = java.util.UUID.randomUUID().toString()
     private var latestRealtimeRequest = 0L
+    private var realtimeStreamId: String? = null
+    private var realtimePreviewRequest = 0L
     private val proactiveHintGate = ProactiveHintPolicy.DisplayGate()
     private val pendingAnswers = mutableMapOf<AnswerSource, AnswerPermit>()
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
@@ -122,8 +124,10 @@ internal class BridgeService : Service() {
             { segment, source ->
                 if (source == ConversationSource.NATIVE) segment.roundId?.let { voiceTransport.asr(segment.text, it) }
                 // Realtime hint: show what was just heard so the wearer knows the glasses are listening.
-                if (source == ConversationSource.REALTIME && conversationOwnsDisplay)
+                if (source == ConversationSource.REALTIME && conversationOwnsDisplay) {
+                    cancelRealtimeStream()
                     dispatch(GlassesEvent.StandbyText(TranslationView(LiveTranslator.clip(segment.text, 80), "듣는 중 · 답이 필요하면 여기에 표시됩니다")))
+                }
             }, ::onConversationStopped)
         conversations.partial = { text, wake -> main.post { voiceTransport.partial(text, wake) } }
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
@@ -423,6 +427,7 @@ internal class BridgeService : Service() {
             }
         } else {
             reconnectCapture.captureStopped()
+            cancelRealtimeStream()
             if (source == ConversationSource.NATIVE && voiceTransport.nativeActive) resumeAlwaysOn = null
             agent.harness.cancel("route"); agent.harness.cancel("hint")
             if (source == ConversationSource.REALTIME) {
@@ -440,6 +445,7 @@ internal class BridgeService : Service() {
             input.put("phoneId", identity.getString("phoneId")).put("conversationKey", identity.getString("conversationKey"))
         }
         if (request.source == ConversationSource.REALTIME) {
+            cancelRealtimeStream()
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
@@ -474,6 +480,23 @@ internal class BridgeService : Service() {
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
         val limit = if (maxChars > 0) "\n[안경 표시] 답변은 ${maxChars}자 이내. 더 필요하면 요약하고, 자세히 요청받을 때만 이어서 말한다." else ""
+        // Optional fast mode uses the existing standby page; never opens or steals a page.
+        if (request.source == ConversationSource.REALTIME && !request.backfill && settings.read().optBoolean("fastRealtimeHints")) {
+            val payload = request.hintContext
+            val lifetime = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt)
+            if (payload == null || lifetime == 0L || request.recordId.isNullOrBlank()) return true
+            input.put("streamHint", true).put("voiceContext", payload)
+                .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
+            if (!isRealtimeStreamCurrent(input)) return true
+            realtimeStreamId = agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+                kind = "hint", input = input, hintLifetimeMs = lifetime, preview = { text ->
+                    if (isRealtimeStreamCurrent(input)) {
+                        realtimePreviewRequest = input.optLong("realtimeRequest")
+                        dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트 · 작성 중", text)))
+                    }
+                }) { result -> finishRealtimeStream(input, result) }
+            return true
+        }
         // Passive AlwaysOn suggestions reuse the existing tool-free DSH hint path, not durable Agent tasks.
         if (request.source == ConversationSource.ALWAYS_ON && !request.backfill) {
             val active = conversations.state
@@ -496,6 +519,49 @@ internal class BridgeService : Service() {
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
         return true
+    }
+    private fun isRealtimeStreamCurrent(input: JSONObject): Boolean {
+        val active = conversations.state
+        return input.optBoolean("streamHint") && !destroyed && !state.disconnecting &&
+            state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP &&
+            state.intent == DisplayIntent.PromptStandby && conversationOwnsDisplay &&
+            active.running && !active.stopping && active.source == ConversationSource.REALTIME &&
+            active.activeRecord?.id == input.optString("recordId") &&
+            input.optString("serviceInstance") == serviceInstance &&
+            input.optString("contextKey") == settings.read().optString("nativeConversationKey") &&
+            input.optLong("realtimeRequest") == latestRealtimeRequest && input.optLong("displayRevision", -1) == state.revision &&
+            ProactiveHintPolicy.remaining(SystemClock.elapsedRealtime(), input.optLong("hintDeadline")) > 0L &&
+            settings.read().optBoolean("fastRealtimeHints")
+    }
+    fun cancelRealtimeStream() {
+        val id = realtimeStreamId
+        val preview = realtimePreviewRequest != 0L
+        realtimeStreamId = null; realtimePreviewRequest = 0L
+        if (id != null || preview) latestRealtimeRequest = ++nextAnswer
+        if (id != null) agent.harness.cancelRequest(id)
+        if (preview && !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+            state.intent == DisplayIntent.PromptStandby && state.ownership == DisplayOwnership.APP && conversationOwnsDisplay)
+            dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", "듣는 중")))
+    }
+    private fun finishRealtimeStream(input: JSONObject, result: Result<String>) {
+        val sequence = input.optLong("realtimeRequest")
+        if (sequence != latestRealtimeRequest) return
+        if (!isRealtimeStreamCurrent(input)) {
+            cancelRealtimeStream()
+            return
+        }
+        realtimeStreamId = null
+        val answer = result.getOrNull()?.trim().orEmpty()
+        val displayText = HintStreamPolicy.preview(answer.take(HintStreamPolicy.MAX_CHARS).trimEnd())
+        if (displayText != null) {
+            conversations.repository.applyDerived(RecordDerived(id = input.getString("derivedId"), recordId = input.getString("recordId"),
+                sourceRevision = input.optInt("sourceRevision", 1), kind = "analysis", text = answer, agent = "phone-local-agent"))
+            conversations.refreshRecords()
+            dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", displayText)))
+        } else if (realtimePreviewRequest == sequence) {
+            dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", if (result.isFailure) "응답 미완료" else "듣는 중")))
+        }
+        realtimePreviewRequest = 0L
     }
     private fun deliverExternalVoice(question: String, answer: String, input: JSONObject) {
         // DshRelay restores explicitly submitted non-voice tasks with an empty input object.
@@ -627,6 +693,7 @@ internal class BridgeService : Service() {
         val previous = nativeIdentity().getString("conversationKey")
         nativeIdentity(reset = true)
         conversations.resetAgentConversation()
+        cancelRealtimeStream()
         agent.harness.cancel("hint")
         agent.harness.cancelConversation(previous)
         clearAgent()
