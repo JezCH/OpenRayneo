@@ -18,6 +18,7 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
     val context = LocalContext.current.applicationContext
     var enabled by remember { mutableStateOf(PhoneNotificationForwarding.enabled(context)) }
     var allowed by remember { mutableStateOf(PhoneNotificationForwarding.allowed(context)) }
+    var lockedMetadata by remember { mutableStateOf(PhoneNotificationForwarding.lockedMetadata(context)) }
     var previews by remember { mutableStateOf(PhoneNotificationForwarding.previews(context)) }
     var search by remember { mutableStateOf("") }
     val apps = remember {
@@ -48,7 +49,17 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
                 else if (!model.state.notificationConnected) ToolOutlinedButton(onClick = {
                     model.attempt { NavigationNotifications.requestConnection(context) }
                 }) { Text("알림 연결 복구") }
-                Note("안경 연결, 집중 모드 해제, 휴대폰 잠금 해제 및 화면 켜짐, 안경의 다른 기능이 쉬는 중일 때만 새 알림을 보냅니다. 지난 알림은 다시 보내지 않습니다.")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("휴대폰 잠금 중 앱 이름 알림")
+                        Note("화면이 꺼져도 앱 이름만 표시. 본문은 표시하지 않습니다.")
+                    }
+                    Switch(checked = lockedMetadata, onCheckedChange = {
+                        PhoneNotificationForwarding.setLockedMetadata(context, it)
+                        lockedMetadata = it
+                    })
+                }
+                Note("안경 연결, 집중 모드 해제, 안경 화면·녹음 등 다른 기능이 쉬는 중일 때만 새 알림을 보냅니다. 지난 알림은 다시 보내지 않습니다. 앱 이름도 개인정보가 될 수 있습니다.")
                 Note("기본은 앱 이름만 표시. 본문 미리보기는 앱마다 선택하며 인증·비밀번호 알림 감지는 완전하지 않습니다. 민감한 앱에서는 미리보기를 끄세요. 외부 AI 전송 및 앱 내 알림 기록 저장은 하지 않습니다.")
             }
         }
