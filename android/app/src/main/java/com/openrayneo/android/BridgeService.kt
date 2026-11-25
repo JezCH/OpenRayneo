@@ -84,7 +84,7 @@ internal class BridgeService : Service() {
     }
     private val notificationRefresh = object : Runnable {
         override fun run() {
-            if (navigation.enabled) NavigationNotifications.refresh(this@BridgeService)
+            if (navigation.enabled || PhoneNotificationForwarding.enabled(this@BridgeService)) NavigationNotifications.refresh(this@BridgeService)
             content.automaticWeather()
             main.postDelayed(this, 30_000)
         }
@@ -187,6 +187,12 @@ internal class BridgeService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("local-clock", "휴대폰 기반 타이머", NotificationManager.IMPORTANCE_LOW))
         initialized = true
+        PhoneNotificationForwarding.deliver = { preview ->
+            if (destroyed || !foreground || state.link.phase != LinkPhase.FULL || state.disconnecting ||
+                state.intent != DisplayIntent.Idle || state.session != null || teleprompter.state.active != null ||
+                teleprompter.state.busy || conversations.state.running || translator.active || voiceTransport.nativeActive) false
+            else runCatching { sendCompanionNotification(preview.title, preview.body) }.getOrDefault(false)
+        }
         dispatch(GlassesEvent.NavigationChanged(navigationSnapshot()))
         NavigationNotifications.refresh(this)
         main.postDelayed(notificationRefresh, 30_000)
@@ -1178,6 +1184,8 @@ internal class BridgeService : Service() {
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
+        PhoneNotificationForwarding.deliver = null
+        PhoneNotificationForwarding.reset()
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
