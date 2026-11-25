@@ -152,6 +152,40 @@ internal class MeetingAudioStore(context: Context) {
             .putInt(16000).putInt(32000 * count).putShort((2 * count).toShort()).putShort(16).put("data".toByteArray()).putInt(size.toInt()).array()
         destination.write(header); open(id).use { check(it.copyTo(destination) == size) { "오디오 길이가 기록과 일치하지 않음" } }
     }
+    /** Import only the canonical 16 kHz PCM WAV exported by the older companion.
+     * The destination has a new random ID; plaintext is streamed into encrypted blocks.
+     */
+    fun importWav(id: String, input: InputStream, frames: Long, count: Int, cancelled: () -> Boolean) {
+        require(count in 1..2 && frames in 1..((Int.MAX_VALUE - 44L) / (2 * count)))
+        val size = frames * 2 * count
+        val expected = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+            .put("RIFF".toByteArray()).putInt(size.toInt() + 36).put("WAVEfmt ".toByteArray())
+            .putInt(16).putShort(1).putShort(count.toShort()).putInt(16000).putInt(32000 * count)
+            .putShort((2 * count).toShort()).putShort(16).put("data".toByteArray()).putInt(size.toInt()).array()
+        require(input.readNBytes(44).contentEquals(expected)) { "원본 WAV 헤더와 기록 정보가 다릅니다" }
+        val target = file(id)
+        check(!target.exists() && folder.usableSpace > size + size / 100 + 4_194_304L) { "저장공간 또는 오디오 ID 확인 필요" }
+        try {
+            DataOutputStream(target.outputStream().buffered()).use { out ->
+                out.write((if (count == 1) "ORPCM1" else "ORPCM2").toByteArray())
+                if (count == 2) out.writeInt(count)
+                var remaining = size
+                while (remaining > 0) {
+                    check(!cancelled()) { "이전 중지" }
+                    val n = minOf(remaining, (32000 * count).toLong()).toInt()
+                    val block = input.readNBytes(n)
+                    check(block.size == n) { "원본 WAV가 완전하지 않습니다" }
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secret) }
+                    val encrypted = cipher.iv + cipher.doFinal(block)
+                    out.writeInt(encrypted.size); out.write(encrypted)
+                    remaining -= n
+                }
+                check(input.read() == -1 && !cancelled()) { "원본 WAV 길이가 일치하지 않거나 이전이 중지되었습니다" }
+                out.writeInt(0)
+            }
+        } catch (error: Exception) { target.delete(); throw error }
+    }
+    fun discardUncommittedImport(id: String) { file(id).delete() }
     private fun key(): SecretKey {
         val alias = "openrayneo.meeting-audio"
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
