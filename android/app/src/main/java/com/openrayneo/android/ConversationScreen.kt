@@ -249,8 +249,10 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-        if (record.derived.isNotEmpty()) item { SectionLabel("연결된 Agent 분석 및 메모") }
-        items(record.derived, key = { "derived:${it.id}" }) { derived ->
+        item { FollowUpSection(model, record) }
+        val ordinaryDerived = record.derived.filterNot { it.id.startsWith(FollowUpPolicy.PREFIX) }
+        if (ordinaryDerived.isNotEmpty()) item { SectionLabel("연결된 Agent 분석 및 메모") }
+        items(ordinaryDerived, key = { "derived:${it.id}" }) { derived ->
             ContentCard {
                 Text(when (derived.kind) { "analysis" -> "분석"; "tags" -> "태그"; else -> "추가 메모" }, style = MaterialTheme.typography.titleSmall)
                 if (derived.text.isNotBlank()) Text(derived.text)
