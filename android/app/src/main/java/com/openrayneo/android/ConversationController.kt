@@ -405,7 +405,7 @@ internal class ConversationController(private val context: Context, private val 
     }
     private fun recoveryStart(): Long = lanes().minOf { record!!.completedFrames(it) }.coerceAtMost(samples)
     private fun beginBackfill(live: Boolean) {
-        val old = record!!; config = settings.read(); cancelASR(); pendingSentences.clear()
+        val old = record!!; check(!old.transcriptOnly) { "보충할 원본 음성이 없습니다" }; config = settings.read(); cancelASR(); pendingSentences.clear()
         lanes().forEach { laneStarts[it] = old.completedFrames(it).coerceAtMost(old.audioSamples.takeIf { !old.audioPending } ?: samples); inputThrough[it] = laneStarts.getValue(it) }
         tailSamples = recoveryStart(); roundBaseMS = tailSamples / 16
         prepareChannels(old.audioChannels, recovering = true)
@@ -456,7 +456,8 @@ internal class ConversationController(private val context: Context, private val 
                 val pending = if (liveBackfill) deferredProcessing || tailSamples < count else deferredProcessing || record?.processingPending == true
                 record = record?.copy(audioSamples = AudioRetentionPolicy.storedFrames(transcriptOnly, count),
                     audioPending = false, endedAt = record?.endedAt ?: System.currentTimeMillis(),
-                    processingPending = AudioRetentionPolicy.backfillPending(transcriptOnly, pending))
+                    processingPending = AudioRetentionPolicy.backfillPending(transcriptOnly, pending),
+                    transcriptIncomplete = transcriptOnly || record?.transcriptIncomplete == true)
                 tail?.close(); tail = null; liveBackfill = false
                 transcriptStopReady = true
                 engines.values.forEach { it.flush() }; drainSentences(); finishRounds()
@@ -535,7 +536,7 @@ internal class ConversationController(private val context: Context, private val 
         // A split must learn only the selected historical voice samples.
         val vectors = selection.flatMap { (id, ids) ->
             val row = repository.records.first { it.id == id }
-            if (row.audioPending || row.audioSamples == 0L) emptyList() else row.segments.filter { it.id in ids && it.personId == personId && !it.mixed && it.endMS - it.beginMS >= 800 }
+            if (row.transcriptOnly || row.audioPending || row.audioSamples == 0L) emptyList() else row.segments.filter { it.id in ids && it.personId == personId && !it.mixed && it.endMS - it.beginMS >= 800 }
                 .mapNotNull { segment ->
                     val pcm = recordings.readSamples(row.audioId ?: row.id, segment.beginMS, minOf(segment.endMS, segment.beginMS + 3000), segment.sourceChannel)
                     engine(segment.sourceChannel).embedding(pcm)
@@ -579,7 +580,8 @@ internal class ConversationController(private val context: Context, private val 
         val (id, kind, date) = summaryJobs.removeFirst()
         val target = repository.records.firstOrNull { it.id == id } ?: return drainSummaries()
         val sources = if (kind == "day_end") repository.records.filter { row -> row.source == ConversationSource.ALWAYS_ON && row.segments.any { day(row.timeOf(it)) == date } } else listOf(target)
-        val input = if (kind == "day_end") target.copy(segments = sources.flatMap { row -> row.segments.filter { day(row.timeOf(it)) == date } }) else target
+        val input = if (kind == "day_end") target.copy(segments = sources.flatMap { row -> row.segments.filter { day(row.timeOf(it)) == date } },
+            transcriptIncomplete = sources.any { it.transcriptIncomplete }) else target
         if (input.segments.isEmpty()) return drainSummaries()
         val versions = sources.associate { it.id to it.segments.map { segment -> segment.json().toString() } }
         activeSummary = Triple(id, kind, date); publish(state.copy(summarizing = true))
@@ -617,7 +619,7 @@ internal class ConversationController(private val context: Context, private val 
     fun configurationChanged() { worker.post { nextBackfillAt = 0; if (!state.running) resumePending() } }
     private fun resumePending() {
         if (state.running || closing || resourceConstraint() != null || System.currentTimeMillis() < nextBackfillAt || !SpeechRounds.ready(context, settings.read())) return
-        repository.records.filter { it.processingPending && !it.audioPending && it.audioSamples > 0 }.minByOrNull { it.createdAt }?.let { retranscribe(it.id) }
+        repository.records.filter { !it.transcriptOnly && it.processingPending && !it.audioPending && it.audioSamples > 0 }.minByOrNull { it.createdAt }?.let { retranscribe(it.id) }
     }
     /** Fresh per session or replay: only realtime two-channel records assume channel 1 is the wearer. */
     private fun selfGateFor(source: ConversationSource, mode: ConversationMode, cfg: JSONObject): SelfVoiceGate? =
