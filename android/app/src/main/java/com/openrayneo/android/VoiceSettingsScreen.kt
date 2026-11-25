@@ -86,7 +86,8 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("선택하지 않으면 자동 감지합니다. 클라우드는 language_hints로 전달하고, 기기 내장은 고른 언어 밖의 결과(예: 잡음을 중국어로 읽은 결과)를 버립니다.")
         var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
         Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
-        Note("기본 깨우기로 응답한 뒤 오디오를 받아 ASR과 화자 처리를 마치고 다음으로 전달합니다: 로컬 Agent.")
+        Note("기본 음성 깨우기에서 한국어 안경 배터리·밝기 명령은 기기에서 바로 처리합니다. 다른 질문은 설정한 로컬 Agent로 전달합니다.")
+        Note("예: 안경 배터리 얼마야 / 안경 밝기 몇 단계야 / 안경 밝기 올려줘 / 안경 밝기 내려줘 / 안경 밝기 7단계로 설정해줘. 밝기는 한 단계씩 또는 1~17단계로 조절하며, 안경의 재조회 결과를 확인합니다.")
         Note("종일 기록의 현재 발화는 도구 없는 짧은 선제 힌트로만 처리합니다. 필요할 때만 표시하며 오래된 힌트는 폐기합니다. 기억 조회·실시간 검색·업무 실행이 필요하면 직접 음성 깨우기 또는 Agent에 요청하세요. 힌트 추론은 연결한 DSH Go 모델을 사용합니다.")
         var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
         Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
