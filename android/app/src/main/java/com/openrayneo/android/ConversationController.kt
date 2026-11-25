@@ -55,6 +55,7 @@ internal class ConversationController(private val context: Context, private val 
     @Volatile private var savingAudio = false
     @Volatile private var transcriptOnly = false
     @Volatile private var transcriptInterrupted = false
+    private var transcriptStopReady = false // Worker thread; do not finish before the writer's stop barrier.
     @Volatile private var replaying = false
     @Volatile private var liveBackfill = false
     @Volatile private var samples = 0L // Frames per channel, never interleaved short count.
@@ -156,6 +157,7 @@ internal class ConversationController(private val context: Context, private val 
             status = if (mode == ConversationMode.ENROLL) "등록은 지정 채널의 본인 목소리만 수집합니다" else if (only) "기기 내장 전사 · 원본 음성 미보존" else if (source == ConversationSource.REALTIME) "2채널 유지: 채널 1은 기본 본인, 채널 2는 별도 식별" else "혼합/단일 채널 오디오는 전체 화자 식별",
             enrollmentSeconds = 0f, enrollmentReady = false, enrollmentCanConfirm = false, enrollmentTotalSeconds = 0f, decodedSeconds = 0.0))
         worker.post {
+            transcriptStopReady = false
             config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId
             selfGate = selfGateFor(source, mode, cfg)
             liveBackfill = false; replaying = false; replayFailed = false; tail?.close(); tail = null; cancelASR()
@@ -190,7 +192,7 @@ internal class ConversationController(private val context: Context, private val 
         if (!state.running || closing || replaying) return
         val token = generation
         writer.post {
-            if (token != generation) return@post
+            if (token != generation || (transcriptOnly && deferredProcessing)) return@post
             val count = if (right.isEmpty()) 1 else 2
             try {
                 if (captureChannels == 0) {
@@ -268,7 +270,7 @@ internal class ConversationController(private val context: Context, private val 
             if (token != generation || epoch != asrEpoch) return@post
             if (activeASR[channel] === round) activeASR.remove(channel)
             if (replaying) { replayFailed = true; deferredProcessing = true; nextBackfillAt = System.currentTimeMillis() + 60_000; stop() }
-            else { pauseLive("채널 $channel: $message"); if (closing) completeStop() }
+            else { pauseLive("채널 $channel: $message"); if (closing && (!transcriptOnly || transcriptStopReady)) completeStop() }
         } }, { worker.post {
             rounds.remove(round)
             if (token == generation && epoch == asrEpoch) {
@@ -276,7 +278,7 @@ internal class ConversationController(private val context: Context, private val 
                 val end = info.endFrame
                 val localEnd = if (fixedSelf(channel)) inputThrough[channel] ?: 0 else engine(channel).analyzedThroughMS * 16
                 if (end != null && localEnd >= end && pendingSentences.none { it.sourceChannel == channel && it.endMS * 16 <= end }) commitCursor(channel, end)
-                if (closing && rounds.isEmpty()) completeStop()
+                if (closing && rounds.isEmpty() && (!transcriptOnly || transcriptStopReady)) completeStop()
                 else if (activeASR[channel] === round) { activeASR.remove(channel); if (liveBackfill) pauseLive("채널 $channel 이번 라운드 종료, 잠시 후 계속 따라잡습니다") }
                 drainAgent()
             }
@@ -397,6 +399,7 @@ internal class ConversationController(private val context: Context, private val 
         nextBackfillAt = System.currentTimeMillis() + 60_000; markPending("$message. 모든 채널의 원본 오디오는 보존되며 나중에 채널별로 보충합니다")
     }
     private fun markPending(message: String) {
+        if (transcriptOnly) return // There is no retained audio from which to backfill.
         record?.let { if (!it.processingPending) { record = it.copy(processingPending = true); saveRecord() } }
         publish(state.copy(status = message))
     }
@@ -455,6 +458,7 @@ internal class ConversationController(private val context: Context, private val 
                     audioPending = false, endedAt = record?.endedAt ?: System.currentTimeMillis(),
                     processingPending = AudioRetentionPolicy.backfillPending(transcriptOnly, pending))
                 tail?.close(); tail = null; liveBackfill = false
+                transcriptStopReady = true
                 engines.values.forEach { it.flush() }; drainSentences(); finishRounds()
                 if (rounds.isEmpty()) completeStop() else {
                     val token = generation
@@ -486,6 +490,7 @@ internal class ConversationController(private val context: Context, private val 
             val contextGeneration = agentContextGeneration
             main.post { if (contextGeneration == agentContextGeneration) request(voice) }
         }
+        transcriptStopReady = false
         replaying = false; pendingSentences.clear(); pendingAgent.clear(); dispatching = false; engines.values.forEach { it.reset() }; manualSpeakers.clear(); closing = false
         publish(state.copy(running = false, stopping = false, segments = finished?.segments.orEmpty(), activeRecord = null, records = repository.records, status = finalMessage))
         if (finished != null && finished.mode != ConversationMode.ENROLL && !finished.processingPending && finished.segments.isNotEmpty()) { enqueueSummary(finished.id, "record_end"); scheduleDaySummaries(finished.source == ConversationSource.ALWAYS_ON) }
