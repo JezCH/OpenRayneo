@@ -11,6 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.openrayneo.android"
+        manifestPlaceholders["appLabel"] = "OpenRayneo"
         minSdk = 33
         targetSdk = 36
         // CI builds count up with the workflow run so every APK installs over the previous one; local builds stay at 37.
@@ -22,9 +23,16 @@ android {
     }
     buildTypes {
         getByName("release") {
-            // Direct-distribution Beta retains the existing certificate for in-place upgrades.
+            // In-place updates only work when the installed APK and new APK share a signing certificate.
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = false
+        }
+        create("validation") {
+            // Side-by-side device testing without uninstalling the user's separately signed trial build.
+            initWith(getByName("release"))
+            applicationIdSuffix = ".validation"
+            versionNameSuffix = "-validation"
+            manifestPlaceholders["appLabel"] = "OpenRayneo (검증용)"
         }
     }
     compileOptions {
