@@ -366,12 +366,12 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun sendMemoryQuestion(question: String, selected: MemoryReferencePolicy.Result): Boolean {
+    fun sendMemoryQuestion(question: String, selected: MemoryReferencePolicy.Result, profile: Map<String, String> = emptyMap()): Boolean {
         var submitted = false
         attempt {
             val old = ChatRecord(state.phoneQuestion, state.phoneAnswer)
             val oldWasEphemeral = state.phoneEphemeral
-            service().submitMemoryQuestion(question.trim(), selected)
+            service().submitMemoryQuestion(question.trim(), selected, profile)
             if (old.question.isNotBlank() && !oldWasEphemeral) phoneHistory = (phoneHistory + old).takeLast(30)
             phoneDraft = ""
             submitted = true

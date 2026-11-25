@@ -18,4 +18,13 @@ internal object AboutYouPolicy {
     }
     fun forAgent(profile: Profile): Profile? =
         validated(profile).takeIf { it.shareWithAgent && it.hasContent }
+    /** Explicitly selected fields only. A stale or revoked selection cannot be sent. */
+    fun shareableFields(profile: Profile): Map<String, String> = forAgent(profile)?.let {
+        linkedMapOf("about" to it.about, "interests" to it.interests, "preferences" to it.preferences).filterValues(String::isNotBlank)
+    } ?: emptyMap()
+    fun validateSelection(profile: Profile, selected: Map<String, String>): Map<String, String> {
+        val current = shareableFields(profile)
+        require(selected.all { (key, value) -> current[key] == value }) { "개인화 정보가 변경되었거나 공유 허용이 해제되었습니다" }
+        return selected.toMap()
+    }
 }

@@ -42,7 +42,9 @@ internal object MemoryReferenceSearch {
         return AutomaticMemoryPolicy.search(question, options, now, sources)
     }
     fun current(result: MemoryReferencePolicy.Result, records: List<ConversationRecord>): Boolean =
-        result.hits.all { hit -> records.any { it.id == hit.source.recordId && it.revision == hit.source.recordRevision } }
+        result.hits.all { hit -> records.any { row -> row.id == hit.source.recordId && row.revision == hit.source.recordRevision &&
+            row.segments.any { segment -> segment.id == hit.source.segmentId && segment.text == hit.source.text &&
+                segment.text.contains(hit.excerpt) } } }
 
     /** Retain resolvable original IDs and distinguish a transcription from an established fact. */
     fun json(result: MemoryReferencePolicy.Result): JSONObject {
