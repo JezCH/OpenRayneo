@@ -149,18 +149,23 @@ internal class NavigationNotifications : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         recovery!!.disconnected(reader)
+        PhoneNotificationForwarding.reset()
     }
 
     override fun onNotificationPosted(notification: StatusBarNotification) {
-        if (notification.packageName != NavigationFeed.PACKAGE || recovery?.owns(reader) != true)
+        if (recovery?.owns(reader) != true) return
+        if (notification.packageName != NavigationFeed.PACKAGE) {
+            PhoneNotificationForwarding.onPosted(this, notification)
             return
+        }
         val entry = parseSafely(notification)
         if (entry != null) NavigationFeed.update(entry) else NavigationFeed.remove(notification.key)
     }
 
     override fun onNotificationRemoved(notification: StatusBarNotification) {
-        if (notification.packageName == NavigationFeed.PACKAGE && recovery?.owns(reader) == true)
-            NavigationFeed.remove(notification.key)
+        if (recovery?.owns(reader) != true) return
+        if (notification.packageName == NavigationFeed.PACKAGE) NavigationFeed.remove(notification.key)
+        else PhoneNotificationForwarding.removed(notification.key)
     }
 
     private fun parseSafely(item: StatusBarNotification): NavigationFeed.Entry? =
