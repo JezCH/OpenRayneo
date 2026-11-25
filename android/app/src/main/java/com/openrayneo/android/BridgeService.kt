@@ -61,6 +61,8 @@ internal class BridgeService : Service() {
     private var voiceReply: VoiceDelivery? = null
     private var conversationOwnsDisplay = false
     private var resumeAlwaysOn: ConversationMode? = null
+    private val reconnectCapture = AlwaysOnReconnectPolicy()
+    val alwaysOnResumePending: Boolean get() = reconnectCapture.pending
     private var notificationText = ""
     private var notificationReadStatus = ""
     private val navigationObserver: () -> Unit = {
@@ -81,6 +83,7 @@ internal class BridgeService : Service() {
         override fun run() {
             audioOwner?.let { dispatch(GlassesEvent.AudioChanged(it, audio.state.coordinatorState())) }
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
+            if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
             main.postDelayed(this, 1_000)
         }
     }
@@ -120,7 +123,7 @@ internal class BridgeService : Service() {
                 // Realtime hint: show what was just heard so the wearer knows the glasses are listening.
                 if (source == ConversationSource.REALTIME && conversationOwnsDisplay)
                     dispatch(GlassesEvent.StandbyText(TranslationView(LiveTranslator.clip(segment.text, 80), "듣는 중 · 답이 필요하면 여기에 표시됩니다")))
-            }, ::resumeBackground)
+            }, ::onConversationStopped)
         conversations.partial = { text, wake -> main.post { voiceTransport.partial(text, wake) } }
         recordSync = RecordSyncServer(settings, conversations.repository, conversations.recordings, main, ::notifyUI)
         if (settings.read().optBoolean("recordSyncEnabled")) recordSync.start()
@@ -199,10 +202,19 @@ internal class BridgeService : Service() {
                 val previous = state
                 state = transition.state
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
+                    val active = conversations.state
+                    reconnectCapture.linkLost(foreground && !previous.disconnecting && !state.disconnecting &&
+                        active.running && !active.stopping && active.mode == ConversationMode.DAILY &&
+                        active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON,
+                        SystemClock.elapsedRealtime())
+                    resumeAlwaysOn = null
                     conversations.stop(); voiceTransport.disconnected(); voiceAudio.stop()
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
-                if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) { content.connected(); runCatching { deviceSettings.refresh() } }
+                if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
+                    content.connected(); runCatching { deviceSettings.refresh() }
+                    if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
+                }
                 if (previous.session != null && state.session == null && previous.session.mode == PageMode.PROMPT && conversations.state.running && conversations.state.source == ConversationSource.REALTIME && conversationOwnsDisplay &&
                     (state.ownership != DisplayOwnership.APP || state.intent == DisplayIntent.Idle || state.intent == DisplayIntent.Navigation || state.error != null)) {
                     conversationOwnsDisplay = false; conversations.stop()
@@ -264,10 +276,11 @@ internal class BridgeService : Service() {
 
     fun scan() {
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        devices.clear(); supervisor.scan()
+        cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
+        cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         runCatching { supervisor.connect(device, bleOnly) }.onFailure {
@@ -276,10 +289,11 @@ internal class BridgeService : Service() {
     }
     fun disconnect() {
         supervisor.cancelRetries()
-        conversations.stop()
+        stopConversation()
         dispatch(GlassesEvent.Disconnect)
     }
     fun followNavigation(key: String) {
+        cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
@@ -305,6 +319,7 @@ internal class BridgeService : Service() {
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, completion: (Result<JSONObject>) -> Unit) {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false; conversations.stop(); dispatch(GlassesEvent.PauseDisplay)
         val allowed = requests.permission()
         val deadline = SystemClock.elapsedRealtime() + 2_500
@@ -319,14 +334,55 @@ internal class BridgeService : Service() {
             }
         }; main.post(wait)
     }
-    fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null) {
+    fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null,
+                          resumeOnReconnect: Boolean = false) {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        check(!resumeOnReconnect || (foreground && mode == ConversationMode.DAILY && source == ConversationSource.ALWAYS_ON)) {
+            "종일 일상 기록의 재연결 복구는 연결 서비스가 실행 중일 때만 허용됩니다"
+        }
+        cancelAlwaysOnRecovery()
         conversations.start(mode, source, target, if (source == ConversationSource.NATIVE) voiceTransport.wakeId else null)
+        if (resumeOnReconnect) reconnectCapture.arm()
+    }
+    fun cancelAlwaysOnRecovery() {
+        val wasPending = reconnectCapture.pending
+        reconnectCapture.cancel()
+        if (wasPending) { updateNotification(); notifyUI() }
+    }
+    fun stopConversation() {
+        cancelAlwaysOnRecovery()
+        resumeAlwaysOn = null
+        conversations.stop()
+    }
+    fun retranscribe(recordId: String) {
+        cancelAlwaysOnRecovery()
+        conversations.retranscribe(recordId)
+    }
+    private fun onConversationStopped() {
+        reconnectCapture.recordStopped()
+        if (reconnectCapture.pending) tryResumeAlwaysOn() else resumeBackground()
+    }
+    private fun tryResumeAlwaysOn() {
+        if (!reconnectCapture.pending) return
+        val now = SystemClock.elapsedRealtime()
+        if (reconnectCapture.expire(now) || destroyed || !foreground || state.disconnecting) {
+            cancelAlwaysOnRecovery(); updateNotification(); notifyUI(); return
+        }
+        if (state.link.phase != LinkPhase.FULL) return
+        if (state.intent != DisplayIntent.Idle || translator.active || voiceTransport.nativeActive) {
+            cancelAlwaysOnRecovery(); return
+        }
+        if (!reconnectCapture.take(now, true, !conversations.state.running && voiceTransport.source == null && state.session == null)) return
+        runCatching { startConversation(ConversationMode.DAILY, ConversationSource.ALWAYS_ON, resumeOnReconnect = true) }
+            .onSuccess { onLog("종일 기록 재연결 복구 요청") }
+            .onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
+        updateNotification(); notifyUI()
     }
     private fun nativeWake() {
         notifyUI()
         if (!settings.read().optBoolean("nativeAutoAnswer")) return
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) return
+        cancelAlwaysOnRecovery()
         if (conversations.state.running) {
             if (conversations.state.source == ConversationSource.ALWAYS_ON) {
                 resumeAlwaysOn = conversations.state.mode.takeUnless { conversations.state.stopping }
@@ -354,6 +410,9 @@ internal class BridgeService : Service() {
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
         if (start) {
+            check(!destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting && !conversations.state.stopping) {
+                "음성 수신 시작 전에 안경 연결 또는 기록 세션이 종료됨"
+            }
             when (source) {
                 ConversationSource.REALTIME -> { conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby) }
                 ConversationSource.NATIVE, ConversationSource.ALWAYS_ON -> {
@@ -362,6 +421,7 @@ internal class BridgeService : Service() {
                 }
             }
         } else {
+            reconnectCapture.captureStopped()
             if (source == ConversationSource.NATIVE && voiceTransport.nativeActive) resumeAlwaysOn = null
             agent.harness.cancel("route"); agent.harness.cancel("hint")
             if (source == ConversationSource.REALTIME) {
@@ -448,18 +508,19 @@ internal class BridgeService : Service() {
             VoiceOutputPolicy.Route.NONE -> Unit
         }
     }
-    fun pausePrompt() { conversations.stop(); dispatch(GlassesEvent.PauseDisplay) }
+    fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
     fun startTranslation() {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val config = settings.read()
         translator.validate(config)
+        cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
         translator.start(config)
         dispatch(GlassesEvent.StartTranslation)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
-    fun openStandby() = dispatch(GlassesEvent.OpenStandby)
+    fun openStandby() { cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
     /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
     fun startRealtimeHint() {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -647,7 +708,7 @@ internal class BridgeService : Service() {
         if (!dispatching) notifyUI()
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    private fun summary() = state.displayDescription + when (state.audio.phase) {
+    private fun summary() = state.displayDescription + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
         AudioPhase.RECEIVING -> " · 음성 수신 중"
         AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
         AudioPhase.STALLED -> " · 오디오 중단됨"
@@ -667,7 +728,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
-        destroyed = true; observers.clear(); main.removeCallbacksAndMessages(null)
+        reconnectCapture.cancel(); destroyed = true; observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
