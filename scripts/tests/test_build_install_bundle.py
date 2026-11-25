@@ -63,7 +63,7 @@ class BundleTests(unittest.TestCase):
         self.assertTrue(result["validationApk"]["isolatedInstall"])
         self.assertEqual(result["validationApk"]["signerSha256"], [FP])
         self.assertEqual(sorted(p.name for p in self.kw["out"].iterdir()),
-                         ["app-release.apk", "install-manifest.json", "openrayneo-validation.apk", self.plugin.name])
+                         ["app-release.apk", "install-manifest.json", self.plugin.name, "openrayneo-validation.apk"])
         saved = json.loads((self.kw["out"] / "install-manifest.json").read_text())
         self.assertEqual(saved["validationApk"]["sha256"], result["validationApk"]["sha256"])
 
