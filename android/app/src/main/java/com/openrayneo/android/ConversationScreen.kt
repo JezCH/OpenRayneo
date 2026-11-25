@@ -26,6 +26,9 @@ import kotlinx.coroutines.delay
 internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (String) -> Unit) {
     val state = model.state.conversation
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    val topicState = rememberTopicState()
+    var topicId by rememberSaveable { mutableStateOf<String?>(null) }
+    val chosenTopic = topicState.topics.firstOrNull { it.id == topicId }
     var liveSpeaker by remember { mutableStateOf<SpeechSegment?>(null) }
     LaunchedEffect(state.activeRecord?.id) { liveSpeaker = null }
     var query by rememberSaveable { mutableStateOf("") }
@@ -43,7 +46,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     val date = LocalDate.parse(dateText)
     val record = state.records.firstOrNull { it.id == selected }
     if (record != null) {
-        ConversationDetail(model, record, actions) { selected = null }
+        ConversationDetail(model, record, actions, topicState) { selected = null }
         return
     }
     liveSpeaker?.let { segment -> state.activeRecord?.let { active ->
@@ -100,6 +103,27 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
         if (state.running && state.segments.isNotEmpty()) {
             item { SectionLabel("현재 대화") }
             items(state.segments.takeLast(12), key = { it.id }) { segment -> SpeechRow(segment, state.people, state.activeRecord) { liveSpeaker = segment } }
+        }
+        item { TopicPanel(topicState, topicId) { topicId = it } }
+        if (chosenTopic != null) {
+            val linkedRecords = state.records.filter { it.id in chosenTopic.recordIds }.sortedByDescending { it.createdAt }
+            item {
+                SectionLabel("${chosenTopic.title} · 전체 기간 · ${linkedRecords.size}개 기록")
+                if (linkedRecords.isEmpty()) Note("날짜별 전체에서 기록을 열어 이 주제를 연결하세요.")
+                if (linkedRecords.size < chosenTopic.recordIds.size) Note("현재 기기에 없는 기록 연결은 표시하지 않습니다.")
+            }
+            items(linkedRecords, key = { "topic:${it.id}" }) { row ->
+                OutlinedCard(Modifier.fillMaxWidth().clickable { selected = row.id }) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(row.title, style = MaterialTheme.typography.titleMedium)
+                        Note("${row.source.title} · ${recordTime(row)} · ${row.segments.size}개 원문")
+                        if (row.transcriptIncomplete) Note("전사 누락 구간 있음")
+                        if (row.summary.isNotBlank() && !row.summaryStale) Text(row.summary.take(160))
+                        else row.segments.firstOrNull()?.let { Note(it.text.take(160)) }
+                    }
+                }
+            }
+            return@LazyColumn
         }
         item {
             SectionLabel("기록 일정")
@@ -192,7 +216,7 @@ private fun SpeechRow(segment: SpeechSegment, people: List<VoicePerson>, record:
 }
 
 @Composable
-private fun ConversationDetail(model: AppModel, record: ConversationRecord, actions: UiActions, back: () -> Unit) {
+private fun ConversationDetail(model: AppModel, record: ConversationRecord, actions: UiActions, topicState: TopicUiState, back: () -> Unit) {
     val state = model.state.conversation
     var speakerEdit by remember { mutableStateOf<SpeechSegment?>(null) }
     var memoryEdit by remember { mutableStateOf<AttributedMemory?>(null) }
@@ -202,6 +226,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             TextButton(back) { Text("기록으로 돌아가기") }
             Text(record.title, style = MaterialTheme.typography.headlineSmall)
             Note("${record.source.title} · ${recordTime(record)}")
+            TopicMembership(topicState, record.id)
             Note(if (record.source == ConversationSource.ALWAYS_ON) "종일 기록 타임라인과 요약. 원문을 탭하면 인물을 수정할 수 있습니다." else "${record.mode.title} · 원문을 탭하면 화자를, 기억을 탭하면 서술 대상을 수정할 수 있습니다.")
             if (record.transcriptOnly) Note(if (record.transcriptIncomplete) "완료된 전사만 보존했습니다. 원본 음성이 없어 누락 구간을 복구할 수 없습니다." else "원본 음성을 저장하지 않은 기록입니다. WAV 내보내기와 보충 전사를 사용할 수 없습니다.")
             else if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
