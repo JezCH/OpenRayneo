@@ -31,6 +31,8 @@ import org.json.JSONObject
 internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
     var memoryQuestion by remember { mutableStateOf(false) }
+    var autoMemory by remember { mutableStateOf(false) }
+    val suggestMemory = model.config.optString("memorySuggestOnSend") == "true"
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
     val running = if (mobile) s.phoneRunning else s.computerRunning
@@ -58,7 +60,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         if (followLatest && list.layoutInfo.totalItemsCount > 0)
             list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
-    if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft) { memoryQuestion = false }
+    if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft, autoMemory) { memoryQuestion = false; autoMemory = false }
     Column(Modifier.fillMaxSize().imePadding()) {
         SingleChoiceSegmentedButtonRow(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
@@ -242,7 +244,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (mobile) TextButton(onClick = { memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
+                if (mobile) TextButton(onClick = { autoMemory = false; memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -266,7 +268,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilledIconButton(
                             onClick = {
                                 followLatest = true
-                                model.send(source)
+                                if (mobile && suggestMemory && draft.length <= 2000) { autoMemory = true; memoryQuestion = true }
+                                else model.send(source)
                             },
                             enabled = inputReady && draft.isNotBlank(),
                             modifier = Modifier.size(48.dp),
