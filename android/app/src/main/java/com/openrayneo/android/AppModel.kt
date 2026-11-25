@@ -279,7 +279,12 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     private fun resetFormDrafts() {
         configurationKeys.forEach {
-            formDrafts[it] = config.optString(it)
+            formDrafts[it] = when (it) {
+                "asrEngine" -> SpeechRounds.engine(config)
+                "asrLanguage" -> SpeechRounds.languageHints(config)
+                "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                else -> config.optString(it)
+            }
         }
     }
 
