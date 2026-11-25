@@ -17,13 +17,15 @@ internal class ConnectionSupervisor(
     val transport = RayneoConnection(context, this)
     var state = LinkState(); private set
     private var target: RayneoConnection.Device? = null
+    // A short dropout and a device temporarily out of range have different recovery needs.
+    private val retryDelays = longArrayOf(5_000, 10_000, 15_000, 30_000, 60_000, 120_000)
     private var attempts = 0
     private var retrying = false
     private var retryScanning = false
     private var starting = false
     private var bleOnly = false
     private val retry = Runnable {
-        if (!retrying || target == null || attempts >= 3) return@Runnable
+        if (!retrying || target == null || attempts >= retryDelays.size) return@Runnable
         attempts++; retryScanning = true
         runCatching { transport.scan() }.onFailure {
             retryScanning = false
@@ -51,7 +53,7 @@ internal class ConnectionSupervisor(
             retryScanning = false; starting = true
             val result = runCatching { transport.connect(device, false) }
             if (result.isFailure) {
-                transport.disconnect()
+                runCatching { transport.disconnect() }.onFailure { report(it.message ?: "재연결 정리 실패") }
                 report(result.exceptionOrNull()?.message ?: "재연결 실패")
             }
             starting = false
@@ -72,20 +74,23 @@ internal class ConnectionSupervisor(
             target = target?.copy(classicAddress = transport.resolvedClassicAddress ?: target?.classicAddress)
         } else if (!starting && target != null && (wasReady || retrying)) {
             retrying = true
-            if (!busy) scheduleRetry()
+            if (!busy) {
+                retryScanning = false
+                scheduleRetry()
+            }
         }
     }
     private fun scheduleRetry() {
         main.removeCallbacks(retry)
         if (!retrying || target == null) return
-        if (attempts >= 3) {
+        if (attempts >= retryDelays.size) {
             retrying = false; retryScanning = false
-            state = LinkState(LinkPhase.DISCONNECTED, "자동 재연결을 세 번 시도했습니다. 블루투스를 확인한 뒤 다시 연결하세요")
+            state = LinkState(LinkPhase.DISCONNECTED, "자동 재연결을 ${retryDelays.size}회 시도했습니다. 블루투스를 확인한 뒤 다시 연결하세요")
             changed(state)
         } else {
             state = LinkState(LinkPhase.RETRY_WAIT, "연결 끊김, ${attempts + 1}번째 재연결 대기 중")
             changed(state)
-            main.postDelayed(retry, 5_000L * (attempts + 1))
+            main.postDelayed(retry, retryDelays[attempts])
         }
     }
     override fun onFrame(frame: ProtocolCodec.Frame, source: String) = received(frame, source)
