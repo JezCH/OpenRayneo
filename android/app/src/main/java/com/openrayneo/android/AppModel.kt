@@ -217,7 +217,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 translationActive = s.translator.active,
                 wakeActive = s.translator.wakeActive,
                 wakePending = s.wakePending,
-                wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("2분간")) s.translator.status else s.wakeResult,
+                wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("호출 대기 ·")) s.translator.status else s.wakeResult,
                 captionActive = s.translator.active && s.translator.captionOnly && !s.translator.wakeActive,
                 captionStatus = if (s.translator.captionOnly) s.translator.status else "실시간 자막 꺼짐",
                 translationStatus = if (s.translator.captionOnly) "실시간 번역 꺼짐" else s.translator.status,
@@ -263,6 +263,12 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         val old = settings.read()
         val updated = JSONObject(old.toString())
         values.forEach { (key, value) -> updated.put(key, value.trim()) }
+        if (values.keys.any { it in setOf("wakePhrases", "wakeListenSeconds", "wakeFollowupSeconds") }) {
+            KoreanWakeOptions.parse(updated.optString("wakePhrases", KoreanWakeOptions.DEFAULT_PHRASES),
+                updated.optString("wakeListenSeconds", "120").toIntOrNull() ?: 0,
+                updated.optString("wakeFollowupSeconds", "12").toIntOrNull() ?: 0)
+            check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
+        }
         val mobileChanged =
             listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend").any {
                 old.optString(it) != updated.optString(it)
@@ -298,7 +304,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             formDrafts[it] = when (it) {
                 "asrEngine" -> SpeechRounds.engine(config)
                 "asrLanguage" -> SpeechRounds.languageHints(config)
-                "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                "phoneSpeechLanguage", "responseLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
                 else -> config.optString(it)
             }
         }
@@ -310,7 +316,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "responseLanguage", "wakePhrases", "wakeListenSeconds", "wakeFollowupSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
