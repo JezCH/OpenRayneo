@@ -21,7 +21,7 @@ internal object KoreanCommandNumbers {
             if (prefix != "스무" && token.startsWith(prefix))
                 return nativeOnes[token.removePrefix(prefix)]?.let { tens + it }
         }
-        if (token.length == 1) return digits[token[0]]
+        if (token.length == 1) digits[token[0]]?.let { return it }
         val sections = token.split('만')
         if (sections.size > 2) return null
         if (sections.size == 1) return section(token)
