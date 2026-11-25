@@ -108,7 +108,20 @@ internal class ConversationRepository(context: Context) {
             correctSpeaker(row.id, row.segments.filter { it.personId in sourceIds }.map { it.id }.toSet(), targetId)
         }
     }
+    /** Reserved app-owned notes cannot be forged or updated through external annotation or sync. */
+    @Synchronized fun mutateFollowUps(recordId: String, expectedSourceRevision: Int?, change: (ConversationRecord) -> List<RecordDerived>) {
+        val old = records.firstOrNull { it.id == recordId } ?: error("원본 기록이 없습니다")
+        check(expectedSourceRevision == null || old.revision == expectedSourceRevision) { "원본 기록이 변경되었습니다. 다시 확인하세요" }
+        val updated = change(old)
+        require(updated.size <= FollowUpPolicy.MAX_ITEMS && updated.map { it.id }.distinct().size == updated.size &&
+            updated.all { it.id.startsWith(FollowUpPolicy.PREFIX) && it.recordId == old.id && it.kind == "note" && it.agent == "local-followup" })
+        val saved = old.copy(derived = old.derived.filterNot { it.id.startsWith(FollowUpPolicy.PREFIX) } +
+            updated.map { it.copy(stale = it.stale || it.sourceRevision != old.revision) }, changeSequence = ++sequence)
+        write("session-" + saved.id, saved.json())
+        records = records.map { if (it.id == saved.id) saved else it }
+    }
     @Synchronized fun applyDerived(item: RecordDerived): Boolean {
+        require(!item.id.startsWith(FollowUpPolicy.PREFIX)) { "앱 후속 조치 정보는 외부에서 변경할 수 없습니다" }
         require(item.kind in setOf("analysis", "note", "tags")) { "kind 값은 다음 중 하나여야 함: analysis/note/tags" }
         val old = records.firstOrNull { it.id == item.recordId } ?: return false
         if (old.derived.any { it.id == item.id && it.revision >= item.revision }) return true
