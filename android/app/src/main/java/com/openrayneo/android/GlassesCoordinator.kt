@@ -15,7 +15,8 @@ internal object GlassesCoordinator {
             cancelRestore()
             state = state.copy(intent = intent, revision = state.revision + 1,
                 ownership = DisplayOwnership.APP, answerPermit = null, blockedRevision = null, error = null,
-                captionMode = false, translation = TranslationView())
+                captionMode = intent == DisplayIntent.Translation && state.captionMode,
+                translation = if (intent == DisplayIntent.Translation) state.translation else TranslationView())
         }
         fun resetSession() {
             cancelRestore()
@@ -86,10 +87,11 @@ internal object GlassesCoordinator {
             is GlassesEvent.StandbyText -> state = state.copy(standby = event.view)
             GlassesEvent.StartTranslation -> {
                 setIntent(DisplayIntent.Translation)
+                state = state.copy(captionMode = false, translation = TranslationView())
             }
             GlassesEvent.StartCaption -> {
                 setIntent(DisplayIntent.Translation)
-                state = state.copy(captionMode = true)
+                state = state.copy(captionMode = true, translation = TranslationView())
             }
             is GlassesEvent.TranslationText -> if (state.intent == DisplayIntent.Translation) state = state.copy(translation = event.view)
             GlassesEvent.ClearDisplay -> if (state.session?.mode == PageMode.PROMPT && state.ownership == DisplayOwnership.APP) {
