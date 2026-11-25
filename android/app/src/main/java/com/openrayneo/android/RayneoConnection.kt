@@ -37,7 +37,8 @@ internal class RayneoConnection(private val context: Context, private val listen
     private val io = Executors.newSingleThreadExecutor()
     private var gatt: BluetoothGatt? = null
     @Volatile private var socket: BluetoothSocket? = null
-    private var scanning = false
+    private var activeScan: ScanCallback? = null
+    private var scanTimeout: Runnable? = null
     private var ready = false
     private var expectedAddress: String? = null
     val resolvedClassicAddress: String? get() = expectedAddress
@@ -57,7 +58,6 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionStage = "연결 대기 중"
     private val timeout = Runnable { fail("연결 시간 초과: $connectionStage") }
-    private val stopScanTask = Runnable { stopScan(); state("스캔 완료, 연결할 안경을 선택하세요") }
 
     fun showBonded() {
         check(adapter.isEnabled) { "먼저 휴대폰 블루투스를 켜세요" }
@@ -70,17 +70,32 @@ internal class RayneoConnection(private val context: Context, private val listen
         check(adapter.isEnabled) { "먼저 휴대폰 블루투스를 켜세요" }
         check(gatt == null) { "먼저 현재 연결을 끊으세요" }
         stopScan()
+        val scanner = checkNotNull(adapter.bluetoothLeScanner) { "블루투스 검색을 사용할 수 없습니다" }
+        val callback = newScanCallback()
+        activeScan = callback
         state("스캔 중: 안경 찾는 중…", busy = true)
-        scanning = true
-        adapter.bluetoothLeScanner.startScan(null,
-            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
-        main.postDelayed(stopScanTask, 12_000)
+        try {
+            scanner.startScan(null,
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+            val expiry = Runnable {
+                if (activeScan === callback) {
+                    stopScan(); state("스캔 완료, 연결할 안경을 선택하세요")
+                }
+            }
+            scanTimeout = expiry
+            main.postDelayed(expiry, 12_000)
+        } catch (error: Exception) {
+            stopScan()
+            state("BLE 스캔 시작 실패: ${error.message ?: error.javaClass.simpleName}")
+            throw error
+        }
     }
 
-    private val scanCallback = object : ScanCallback() {
+    // A stopped scan can still have callbacks queued on Android's main thread.
+    private fun newScanCallback() = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             main.post {
-                if (!scanning) return@post
+                if (activeScan !== this) return@post
                 val record = result.scanRecord
                 val name = record?.deviceName ?: result.device.name ?: ""
                 val manufacturer = record?.getManufacturerSpecificData(0x5716)
@@ -94,7 +109,10 @@ internal class RayneoConnection(private val context: Context, private val listen
             }
         }
         override fun onScanFailed(errorCode: Int) {
-            main.post { stopScan(); state("BLE 스캔 실패: $errorCode") }
+            main.post {
+                if (activeScan !== this) return@post
+                stopScan(); state("BLE 스캔 실패: $errorCode")
+            }
         }
     }
 
@@ -442,9 +460,13 @@ internal class RayneoConnection(private val context: Context, private val listen
     }
 
     private fun stopScan() {
-        main.removeCallbacks(stopScanTask)
-        if (scanning) adapter.bluetoothLeScanner?.stopScan(scanCallback)
-        scanning = false
+        scanTimeout?.let(main::removeCallbacks)
+        scanTimeout = null
+        val callback = activeScan ?: return
+        activeScan = null
+        // Invalidate the callback even if Bluetooth was turned off or permission revoked.
+        runCatching { adapter.bluetoothLeScanner?.stopScan(callback) }
+            .onFailure { log("BLE 스캔 정리 실패: ${it.message ?: it.javaClass.simpleName}") }
     }
 
     fun disconnect() {
