@@ -141,6 +141,28 @@ internal class ConversationRepository(context: Context) {
             .put("people", JSONArray(page.filter { !it.second.has("segments") }.map { it.second }))
             .put("acceptedDerivedIds", JSONArray(accepted))
     }
+    /** Append only: keep historical record identity/revision, never overwrite a destination record. */
+    @Synchronized fun importPerson(person: VoicePerson): Boolean {
+        require(person.id.matches(Regex("[A-Za-z0-9-]{1,80}")))
+        if (people.any { it.id == person.id }) return false
+        val next = person.copy(samples = emptyList(), contactUri = null,
+            self = person.self && people.none { it.self }, changeSequence = sequence + 1)
+        val updated = people + next
+        write("people", JSONObject().put("people", JSONArray(updated.map { it.json() })))
+        sequence++; people = updated
+        return true
+    }
+    @Synchronized fun importCompleted(record: ConversationRecord): Boolean {
+        require(record.id.matches(Regex("[A-Za-z0-9-]{1,80}")) && record.mode != ConversationMode.ENROLL &&
+            record.endedAt != null && !record.audioPending && !record.processingPending)
+        if (records.any { it.id == record.id }) return false
+        val saved = record.copy(changeSequence = sequence + 1, speakerSamples = emptyMap())
+        write("session-" + saved.id, saved.json())
+        sequence++; records = (records + saved).sortedByDescending { it.createdAt }
+        return true
+    }
+    @Synchronized fun hasRecord(id: String) = records.any { it.id == id }
+    @Synchronized fun hasPerson(id: String) = people.any { it.id == id }
     @Synchronized fun referenceSnapshot(): List<ConversationRecord> = records
     @Synchronized fun query(from: Long = Long.MIN_VALUE, to: Long = Long.MAX_VALUE, id: String = "", text: String = ""): JSONArray =
         JSONArray(records.filter { row -> row.createdAt < to && (row.endedAt ?: if (row.audioPending) System.currentTimeMillis() else row.segments.maxOfOrNull { row.endTimeOf(it) } ?: row.createdAt) > from &&
