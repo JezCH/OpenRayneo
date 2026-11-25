@@ -18,14 +18,6 @@ internal object KoreanLanguage {
     fun withAnswerPolicy(context: String, saved: String) = answerPolicy(saved) + "\n" + context
     val phoneInputOptions = listOf("ko-KR" to "한국어", "en-US" to "영어", "zh-CN" to "중국어(간체)")
     fun phoneInput(saved: String): String = saved.takeIf { code -> phoneInputOptions.any { it.first == code } } ?: DEFAULT_LOCALE
-    const val DEFAULT_LANGUAGE = "ko-KR"
-    val responseOptions = phoneInputOptions
-    fun responseLanguage(saved: String) = phoneInput(saved)
-    fun responseInstruction(saved: String): String {
-        val label = responseOptions.first { it.first == responseLanguage(saved) }.second
-        return "기본 응답 언어: $label. 사용자에게 보여 줄 자연어 답변은 이 언어로 작성합니다. 사용자가 다른 언어를 명시적으로 요청하거나 번역·인용·코드·고유명사·구조화 데이터가 필요한 경우 원래 요구와 형식을 우선합니다. 도구 매개변수, JSON 키, 식별자 및 원문은 임의로 번역하지 않습니다."
-    }
-    fun responseContext(context: String, saved: String): String = responseInstruction(saved) + "\n\n" + context
     fun isKoreanTag(value: String): Boolean = value.trim().replace('_', '-').lowercase(Locale.ROOT).let {
         it == "ko" || it.startsWith("ko-") || it == "korean" || it == "한국어" || it == "한국말" || it == "韩语" || it == "韓語"
     }
