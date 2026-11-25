@@ -29,22 +29,32 @@ internal interface SpeechRound {
 }
 
 /**
- * Chooses the ASR engine from config key "asrEngine": cloud (Bailian, default), "local" (SenseVoice,
+ * Chooses the ASR engine from config key "asrEngine": cloud (Bailian), "local" (SenseVoice,
  * sentence by sentence), "stream" (Korean streaming zipformer) or "nemotron" (multilingual streaming).
  */
 internal object SpeechRounds {
-    fun model(config: JSONObject): LocalModel<*>? = when (config.optString("asrEngine")) {
+    // New or unset configurations default to Korean local speech. Preserve existing cloud credentials
+    // and all explicitly saved engine choices, including automatic language detection.
+    fun engine(config: JSONObject): String = config.optString("asrEngine").ifBlank {
+        if (config.optString("asrKey").isNotBlank()) "cloud" else "stream"
+    }
+    fun languageHints(config: JSONObject): String = if (config.has("asrLanguage")) config.optString("asrLanguage") else "ko"
+    fun model(config: JSONObject): LocalModel<*>? = when (engine(config)) {
         "local" -> LocalModels.senseVoice
         "stream" -> LocalModels.zipformer
         "nemotron" -> LocalModels.nemotron
         else -> null
     }
-    /** Translation hears Korean and English, so the Korean-only streaming engine falls back to SenseVoice when present, else cloud. */
-    fun bilingual(context: Context, config: JSONObject): JSONObject = if (config.optString("asrEngine") != "stream") config
-        else JSONObject(config.toString()).put("asrEngine", if (LocalModels.senseVoice.installed(context)) "local" else "cloud")
+    /** A local Korean-only choice never silently switches to a cloud ASR. */
+    fun bilingual(context: Context, config: JSONObject): JSONObject = if (engine(config) != "stream") config
+        else JSONObject(config.toString()).put("asrEngine", when {
+            LocalModels.senseVoice.installed(context) -> "local"
+            LocalModels.nemotron.installed(context) -> "nemotron"
+            else -> "local" // ready() gives a concrete model-download requirement
+        })
     /** One language hint fixes the language (locale codes as in the model card); otherwise the model detects it. */
     private fun nemotronLanguage(config: JSONObject): String {
-        val hints = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val hints = languageHints(config).split(',').map { it.trim() }.filter { it.isNotEmpty() }
         return when (hints.singleOrNull()) { "ko" -> "ko-KR"; "en" -> "en-US"; else -> "auto" }
     }
     /** Whether the configured engine can run now (key entered, or model downloaded). */
@@ -53,7 +63,7 @@ internal object SpeechRounds {
     fun create(context: Context, config: JSONObject,
                sentence: (String, Long, Long, String, List<SpeechWord>) -> Unit,
                failed: (String) -> Unit, completed: () -> Unit, interim: ((String) -> Unit)? = null): SpeechRound =
-        when (config.optString("asrEngine")) {
+        when (engine(config)) {
             "local" -> LocalASR(context, config, sentence, failed, completed, interim)
             "stream" -> StreamASR(context, LocalModels.zipformer, null, sentence, failed, completed, interim)
             "nemotron" -> StreamASR(context, LocalModels.nemotron, nemotronLanguage(config), sentence, failed, completed, interim)
@@ -282,7 +292,7 @@ internal class LocalASR(private val context: Context, config: JSONObject,
     private val failed: (String) -> Unit, private val completed: () -> Unit,
     private val interim: ((String) -> Unit)? = null) : SpeechRound {
     private val task = UUID.randomUUID().toString()
-    private val allowed = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    private val allowed = SpeechRounds.languageHints(config).split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     private val executor = LocalModels.executor
     private val queued = AtomicInteger()
     @Volatile private var ended = false
