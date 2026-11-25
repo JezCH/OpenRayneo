@@ -18,6 +18,10 @@ internal object LocalClockPolicy {
         "스톱워치초기화해줘" to Kind.WATCH_RESET)
     fun parse(text: String, source: ConversationSource, backfill: Boolean): Command? {
         if (source != ConversationSource.NATIVE || backfill) return null
+        return parseExplicit(text)
+    }
+    /** For separately authorized one-shot UI sessions, never ambient records. */
+    fun parseExplicit(text: String): Command? {
         val clean = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
         val body = when { clean.startsWith("안경") -> clean.removePrefix("안경"); clean.startsWith("레이네오") -> clean.removePrefix("레이네오"); else -> return null }
         commands[body]?.let { return Command(it) }
