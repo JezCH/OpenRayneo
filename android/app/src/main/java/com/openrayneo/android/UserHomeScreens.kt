@@ -136,7 +136,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Text("안경 마이크의 대화를 인식하고 기록합니다. 현재 보존 설정에 따라 원본 음성이 저장될 수 있으며, 설정된 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요.")
                     if (mode == ConversationMode.DAILY) Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(resume, { resume = it })
-                        Text("이번 기록만 연결 복구 시 자동 재개")
+                        Text("이번 기록만 같은 안경 재연결 시 자동 재개 (서비스 종료 전까지)")
                     }
                 }
             },

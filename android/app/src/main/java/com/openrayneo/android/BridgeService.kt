@@ -67,7 +67,8 @@ internal class BridgeService : Service() {
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
     private var voiceReply: VoiceDelivery? = null
     private var conversationOwnsDisplay = false
-    private var resumeAlwaysOn: ConversationMode? = null
+    private data class BackgroundResume(val mode: ConversationMode, val reconnect: Boolean)
+    private var resumeAlwaysOn: BackgroundResume? = null
     private val voiceAlwaysOnStart = AlwaysOnVoicePolicy.PendingStart()
     private val localClock = LocalClockPolicy.Clock()
     private var wakeRequest: String? = null
@@ -110,7 +111,6 @@ internal class BridgeService : Service() {
             }
             audioOwner?.let { dispatch(GlassesEvent.AudioChanged(it, audio.state.coordinatorState())) }
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
-            if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
             if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
             pollLocalClock()
             translator.pollWake(SystemClock.elapsedRealtime())
@@ -270,8 +270,7 @@ internal class BridgeService : Service() {
                     val active = conversations.state
                     reconnectCapture.linkLost(foreground && !previous.disconnecting && !state.disconnecting &&
                         active.running && !active.stopping && active.mode == ConversationMode.DAILY &&
-                        active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON,
-                        SystemClock.elapsedRealtime())
+                        active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON)
                     resumeAlwaysOn = null
                     resetAmbientWake(); nativeWakeStatus = "연결 끊김 · 깨우기 대기 종료"
                     cancelVoiceAlwaysOnStart()
@@ -463,15 +462,14 @@ internal class BridgeService : Service() {
     }
     private fun tryResumeAlwaysOn() {
         if (!reconnectCapture.pending) return
-        val now = SystemClock.elapsedRealtime()
-        if (reconnectCapture.expire(now) || destroyed || !foreground || state.disconnecting) {
+        if (destroyed || !foreground || state.disconnecting) {
             cancelAlwaysOnRecovery(); updateNotification(); notifyUI(); return
         }
         if (state.link.phase != LinkPhase.FULL) return
-        if (state.intent != DisplayIntent.Idle || translator.active || voiceTransport.nativeActive) {
+        if (state.intent != DisplayIntent.Idle || state.ownership != DisplayOwnership.APP || translator.active || voiceTransport.nativeActive || migration.state.busy) {
             cancelAlwaysOnRecovery(); return
         }
-        if (!reconnectCapture.take(now, true, !conversations.state.running && voiceTransport.source == null && state.session == null)) return
+        if (!reconnectCapture.take(true, !conversations.state.running && !conversations.state.stopping && voiceTransport.source == null && state.session == null)) return
         runCatching { startConversation(ConversationMode.DAILY, ConversationSource.ALWAYS_ON, resumeOnReconnect = true) }
             .onSuccess { onLog("종일 기록 재연결 복구 요청") }
             .onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
@@ -485,10 +483,11 @@ internal class BridgeService : Service() {
         if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
         resetAmbientWake(); nativeWakeStatus += " · 음성 수신 전환"; notifyUI()
+        val reconnectAllowed = reconnectCapture.armed
         cancelAlwaysOnRecovery()
         if (conversations.state.running) {
             if (conversations.state.source == ConversationSource.ALWAYS_ON) {
-                resumeAlwaysOn = conversations.state.mode.takeUnless { conversations.state.stopping }
+                resumeAlwaysOn = conversations.state.mode.takeUnless { conversations.state.stopping }?.let { BackgroundResume(it, reconnectAllowed) }
                 val wake = voiceTransport.wakeId
                 conversations.handoffForWake {
                     if (voiceTransport.nativeActive && voiceTransport.wakeId == wake && state.link.phase == LinkPhase.FULL && !state.disconnecting)
@@ -520,11 +519,11 @@ internal class BridgeService : Service() {
             updateNotification(); notifyUI()
             return
         }
-        val mode = resumeAlwaysOn ?: return
+        val resume = resumeAlwaysOn ?: return
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL) { resumeAlwaysOn = null; return }
         if (voiceTransport.nativeActive || conversations.state.running) return
         resumeAlwaysOn = null
-        runCatching { startConversation(mode, ConversationSource.ALWAYS_ON) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
+        runCatching { startConversation(resume.mode, ConversationSource.ALWAYS_ON, resumeOnReconnect = resume.reconnect) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
         if (source != ConversationSource.NATIVE) resetAmbientWake()

@@ -28,6 +28,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     var allowAI by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
+    var resumeAfterLink by remember { mutableStateOf(false) }
     val fast = model.config.optBoolean("fastRealtimeHints")
     val speechReady = SpeechRounds.ready(model.getApplication<android.app.Application>(), model.config)
     val continuous = model.config.optBoolean("ambientWakeEnabled")
@@ -58,8 +59,11 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note("종일 기록은 안경의 오디오 전송 및 전사 지연에 의존합니다. 빠른 실시간 힌트는 화면을 유지하는 듀얼 마이크 경로를 사용합니다. 두 경로 모두 전사가 끝난 후 호출을 검사하며 별도 120초 제한은 없습니다. 화자 인증 및 작업 도구는 지원하지 않습니다.")
             val capturing = s.conversation.running && (s.conversation.source == ConversationSource.ALWAYS_ON || (s.conversation.source == ConversationSource.REALTIME && fast))
             Note(if (continuous && capturing) "최근 호출 상태: " + s.ambientWakeStatus else "종일 또는 빠른 실시간 기록을 시작해야 호출을 감지합니다.")
-            if (!s.conversation.running) {
-                ToolButton(onClick = { startContinuous = ConversationSource.ALWAYS_ON }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
+            if (s.alwaysOnResumePending) {
+                Note("같은 안경의 자동 재연결 및 이전 기록 저장을 기다리는 중입니다.")
+                ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
+            } else if (!s.conversation.running) {
+                ToolButton(onClick = { resumeAfterLink = false; startContinuous = ConversationSource.ALWAYS_ON }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
                 ToolOutlinedButton(onClick = { startContinuous = ConversationSource.REALTIME }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("빠른 실시간 호출 시작") }
             } else if (capturing) ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text("기록 및 호출 중지") }
         } }
@@ -112,11 +116,22 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
         item { GlassesOutputPreview(s.glasses) }
     }
     startContinuous?.let { source -> AlertDialog(onDismissRequest = { startContinuous = null }, title = { Text(if (source == ConversationSource.REALTIME) "빠른 실시간 호출을 시작할까요?" else "종일 기록 및 호출을 시작할까요?") },
-        text = { Text("안경 마이크의 음성이 인식·기록되며 보존 설정에 따라 원본이 저장될 수 있습니다. 설정된 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (source == ConversationSource.REALTIME) " 빠른 스트리밍 설정(도구 없는 힌트)을 켜고 실시간 화면을 사용합니다." else "") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("안경 마이크의 음성이 인식·기록되며 보존 설정에 따라 원본이 저장될 수 있습니다. 설정된 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (source == ConversationSource.REALTIME) " 빠른 스트리밍 설정(도구 없는 힌트)을 켜고 실시간 화면을 사용합니다." else "")
+                if (source == ConversationSource.ALWAYS_ON) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(resumeAfterLink, { resumeAfterLink = it })
+                        Text("이번 기록만 같은 안경 재연결 시 자동 재개")
+                    }
+                    Note("이탈 시간이 길어도 재개합니다. 직접 중지·연결 해제·서비스 종료 시 동의가 취소됩니다. 재부팅 후 자동 기록하지 않습니다.")
+                }
+            }
+        },
         confirmButton = { TextButton(onClick = {
             startContinuous = null
             if (source == ConversationSource.REALTIME && !fast) model.saveConfig(mapOf("fastRealtimeHints" to "true"))
-            if (source != ConversationSource.REALTIME || model.config.optBoolean("fastRealtimeHints")) model.attempt { model.service().startConversation(ConversationMode.DAILY, source) }
+            if (source != ConversationSource.REALTIME || model.config.optBoolean("fastRealtimeHints")) model.attempt { model.service().startConversation(ConversationMode.DAILY, source, resumeOnReconnect = source == ConversationSource.ALWAYS_ON && resumeAfterLink) }
         }, enabled = continuous && linked && speechReady && !busy && !dirty) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { startContinuous = null }) { Text("취소") } }) }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("한국어 호출 대기를 시작할까요?") },

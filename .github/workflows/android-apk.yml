@@ -27,6 +27,8 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-24.04
+    env:
+      DISTRIBUTE_APK: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +40,10 @@ jobs:
       - name: Install Android SDK Platform 36 / Build-Tools 36.0.0
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
 
-      # Main distribution requires a persistent key. PR builds are compile checks only.
+      # Explicit main workflow dispatch is the only distribution path. Push/PR runs compile only.
       # Store base64 of ~/.android/debug.keystore as repository secret ANDROID_DEBUG_KEYSTORE_B64.
       - name: Restore signing keystore
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: env.DISTRIBUTE_APK == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
@@ -63,7 +65,13 @@ jobs:
       - name: Set version
         run: echo "OPENRAYNEO_VERSION_NAME=1.2.0-wearable.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
+      - name: Compile Android variants (no installation APK)
+        if: env.DISTRIBUTE_APK != 'true'
+        working-directory: android
+        run: ./gradlew :app:compileReleaseKotlin :app:compileValidationKotlin --console=plain
+
       - name: Build release APK
+        if: env.DISTRIBUTE_APK == 'true'
         working-directory: android
         run: |
           # Surface compiler/lint errors as annotations so they are readable without opening the raw log.
@@ -76,6 +84,7 @@ jobs:
           }
 
       - name: Verify APK signature
+        if: env.DISTRIBUTE_APK == 'true'
         run: |
           set -o pipefail
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
@@ -83,7 +92,7 @@ jobs:
 
       # Fork continuity pin: only the public certificate fingerprint, never the private key.
       - name: Verify distribution signer continuity
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'JezCH/OpenRayneo'
+        if: env.DISTRIBUTE_APK == 'true' && github.repository == 'JezCH/OpenRayneo'
         run: |
           signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
           if [ "$signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
@@ -92,10 +101,12 @@ jobs:
           fi
 
       - name: Build side-by-side validation APK
+        if: env.DISTRIBUTE_APK == 'true'
         working-directory: android
         run: ./gradlew :app:assembleValidation --console=plain
 
       - name: Verify validation APK signature and identity
+        if: env.DISTRIBUTE_APK == 'true'
         run: |
           set -o pipefail
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/validation/app-validation.apk | tee "$RUNNER_TEMP/openrayneo-validation-certs.txt"
@@ -106,11 +117,12 @@ jobs:
         run: node --test tests/ambient-model.test.mjs tests/hint-preview.test.mjs
 
       - name: Pack DSH Go plugin
+        if: env.DISTRIBUTE_APK == 'true'
         working-directory: integrations/dsh-go
         run: npm pack --pack-destination "$RUNNER_TEMP"
 
       - name: Assemble verified installation bundle
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: env.DISTRIBUTE_APK == 'true'
         run: |
           python3 scripts/build-install-bundle.py \
             --apk android/app/build/outputs/apk/release/app-release.apk \
@@ -125,7 +137,7 @@ jobs:
             --out "$RUNNER_TEMP/openrayneo-install"
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: env.DISTRIBUTE_APK == 'true'
         with:
           name: openrayneo-android-${{ github.sha }}
           path: ${{ runner.temp }}/openrayneo-install/
@@ -134,7 +146,7 @@ jobs:
       # Optional: upload APK and plugin to a Nextcloud "file drop" (upload-only) public share.
       # Store the share link (https://host/s/TOKEN) as repository secret NEXTCLOUD_DROP_URL.
       - name: Upload to Nextcloud
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: env.DISTRIBUTE_APK == 'true'
         env:
           DROP_URL: ${{ secrets.NEXTCLOUD_DROP_URL }}
         run: |

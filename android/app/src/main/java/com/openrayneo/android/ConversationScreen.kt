@@ -60,7 +60,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 Text("새 기록", style = MaterialTheme.typography.headlineSmall)
                 Note("일상과 회의를 기록하고 아래에서 원문과 기억을 찾아보세요. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
                 if (model.state.alwaysOnResumePending) {
-                    Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 5분 이내 같은 안경에 자동 재연결되면 다시 시작합니다.")
+                    Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 같은 안경에 자동 재연결되면 이탈 시간과 관계없이 다시 시작합니다. 직접 중지하거나 서비스가 종료되면 재개하지 않습니다.")
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
                 } else if (!state.running) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

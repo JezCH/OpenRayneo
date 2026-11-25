@@ -37,7 +37,7 @@ macOS的Homebrew JDK17可通过 `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/
 
 ## Fork Android 안전 검증판 (2026-11-25)
 
-- GitHub [Android APK main 빌드](https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml) 중 성공한 최신 **push/main** 실행의 `openrayneo-android-<commit>` artifact ZIP을 다운로드한다. manifest와 APK, DSH 플러그인은 같은 빌드의 묶음이다. pull_request 실행은 설치 artifact를 배포하지 않는다.
+- GitHub [Android APK](https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml)에서 실기기 시험 준비 후 main을 선택하여 **Run workflow**(workflow_dispatch)로 명시적으로 배포한다. 성공한 해당 실행의 `openrayneo-android-<commit>` artifact ZIP을 다운로드한다. manifest와 APK, DSH 플러그인은 같은 빌드의 묶음이다. push/main 및 pull_request는 Kotlin 컴파일 및 기존 정책 검사만 수행하고 설치 APK/외부 업로드를 생성하지 않는다.
 - 기존 설치 OpenRayneo(`com.openrayneo.android`)의 서명과 배포 APK 서명이 같다는 근거가 없으면 `app-release.apk`로 업데이트하지 않는다. 실제 main #41과 #43은 서로 다른 임시 인증서였으며 Android 정상 업데이트가 불가능하다. 앱 삭제·데이터 초기화로 서명 오류를 회피하지 않는다.
 - 대신 패키지 `com.openrayneo.android.validation`인 `openrayneo-validation.apk`를 **별도 설치**한다. 원본 앱의 로컬 암호화 기록과 설정은 그대로 남고 검증판은 새 기록·새 설정을 사용한다. 기존 앱의 안경 연결/백그라운드 BridgeService를 먼저 중지해 BLE 및 로컬 8766 포트 충돌을 방지한다. 검증판에 주변 기기·알림 권한을 별도 부여한다. 모델 파일 경로 `/sdcard/OpenRayneo/models`는 공유될 수 있다.
 - 묶음에 포함된 `openrayneo-dsh-*.tgz` 버전과 실제 설치 DSH 플러그인을 맞추고 엔진을 재시작한다. 안경 연결 후 기존 Assistant 화면의 **AI 연결 및 안경 표시 진단**을 펼쳐 모델 요청 비용 가능성 안내를 확인하고 직접 동의하면 임의의 테스트 코드만 전송한다. 휴대폰에서 코드 일치/응답시간을 확인하고 필요할 때만 동일 코드를 안경으로 보낸 후 사용자가 실제 표시 여부를 확인한다.
