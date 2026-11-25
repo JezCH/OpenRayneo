@@ -51,6 +51,14 @@ internal data class CompanionState(
     val captionActive: Boolean = false,
     val captionStatus: String = "실시간 자막 꺼짐",
     val translationStatus: String = "실시간 번역 꺼짐",
+    val offlineReady: Boolean = false,
+    val offlinePreparing: Boolean = false,
+    val offlineStatus: String = "번역 모델 준비 필요",
+    val speechPlaying: Boolean = false,
+    val speechStatus: String = "음성 출력 대기",
+    val wakeActive: Boolean = false,
+    val wakePending: Boolean = false,
+    val wakeResult: String = "한국어 호출 대기 꺼짐",
     val notificationReadStatus: String = "알림 리스너 서비스 대기 중",
     val notificationSnapshotAt: Long = 0,
     val notificationReadPhase: NotificationReadPhase = NotificationReadPhase.DISCONNECTED,
@@ -201,8 +209,16 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 approvals = s.codex.requests.toList(),
                 logs = s.logs.toList(),
                 audioLevels = s.audioLevels,
+                offlineReady = s.translator.offline.ready,
+                offlinePreparing = s.translator.offline.preparing,
+                offlineStatus = s.translator.offline.status,
+                speechPlaying = s.speechOutput.speaking,
+                speechStatus = s.speechOutput.status,
                 translationActive = s.translator.active,
-                captionActive = s.translator.active && s.translator.captionOnly,
+                wakeActive = s.translator.wakeActive,
+                wakePending = s.wakePending,
+                wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("호출 대기 ·")) s.translator.status else s.wakeResult,
+                captionActive = s.translator.active && s.translator.captionOnly && !s.translator.wakeActive,
                 captionStatus = if (s.translator.captionOnly) s.translator.status else "실시간 자막 꺼짐",
                 translationStatus = if (s.translator.captionOnly) "실시간 번역 꺼짐" else s.translator.status,
                 notificationReadStatus = s.navigation.listenerState.detail,
@@ -247,6 +263,15 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         val old = settings.read()
         val updated = JSONObject(old.toString())
         values.forEach { (key, value) -> updated.put(key, value.trim()) }
+        if (values.keys.any { it in setOf("wakePhrases", "wakeSeconds", "wakeFollowSeconds") }) {
+            KoreanWakeOptions.parse(updated.optString("wakePhrases", KoreanWakeOptions.DEFAULT_PHRASES),
+                updated.optString("wakeSeconds", "120").toIntOrNull() ?: 0,
+                updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
+            check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
+        }
+        values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
+        values["ttsRate"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.5f } == true) { "음성 속도는 0.75~1.5배로 설정하세요" } }
+        values["ttsPitch"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.25f } == true) { "음성 높이는 0.75~1.25배로 설정하세요" } }
         val mobileChanged =
             listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend").any {
                 old.optString(it) != updated.optString(it)
@@ -283,6 +308,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 "asrEngine" -> SpeechRounds.engine(config)
                 "asrLanguage" -> SpeechRounds.languageHints(config)
                 "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
+                "ttsRate", "ttsPitch" -> config.optString(it).ifBlank { "1.0" }
                 else -> config.optString(it)
             }
         }
@@ -294,7 +321,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 

@@ -31,6 +31,11 @@ internal class LiveTranslator(
     @Volatile var active = false; private set
     @Volatile var status = OFF; private set
     @Volatile var captionOnly = false; private set
+    var offlineMode = false; private set
+    private var wakeWindow: KoreanWakeWindow? = null
+    private var wakeAction: ((String) -> Unit)? = null
+    val wakeActive get() = active && wakeWindow != null
+    val offline = OfflineTranslation(main, changed)
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -49,13 +54,22 @@ internal class LiveTranslator(
     private var restartTask: Runnable? = null
 
     /** Throws with a user-facing message when ASR or the translation model is not configured. */
-    fun validate(settings: JSONObject) {
-        val speech = SpeechRounds.bilingual(context, settings)
+    fun validate(settings: JSONObject, local: Boolean = false) {
+        val speech = if (local) offlineSpeech(settings) else SpeechRounds.bilingual(context, settings)
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
+        if (local) { require(offline.readyFor(settings)) { "먼저 휴대폰 로컬 번역 모델 연결을 시험하세요" }; return }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
         }
         MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+    }
+
+    private fun offlineSpeech(settings: JSONObject): JSONObject {
+        val copy = JSONObject().put("asrEngine", SpeechRounds.engine(settings)).put("asrLanguage", "ko,en")
+        if (SpeechRounds.engine(copy) !in setOf("local", "nemotron")) {
+            copy.put("asrEngine", if (LocalModels.nemotron.installed(context)) "nemotron" else "local")
+        }
+        return copy
     }
 
     fun captionConfig(settings: JSONObject): JSONObject {
@@ -67,14 +81,15 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread. No cloud fallback in caption mode. */
-    fun start(settings: JSONObject, captions: Boolean = false) {
+    fun start(settings: JSONObject, captions: Boolean = false, local: Boolean = false) {
         val speech = if (captions) captionConfig(settings) else {
-            validate(settings)
-            JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
+            validate(settings, local)
+            if (local) offlineSpeech(settings) else JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
         }
         stop()
         synchronized(this) {
             captionOnly = captions
+            offlineMode = local && !captions
             config = speech
             generation++
             active = true
@@ -84,6 +99,20 @@ internal class LiveTranslator(
         status = listening()
         openASR()
         changed()
+    }
+
+    fun startWake(settings: JSONObject, action: (String) -> Unit) {
+        val korean = JSONObject(settings.toString()).put("asrLanguage", "ko")
+        val options = KoreanWakeOptions.from(settings.optString("wakePhrases"), settings.optString("wakeSeconds"), settings.optString("wakeFollowSeconds"))
+        start(korean, captions = true)
+        wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime(), options)
+        wakeAction = action
+        status = "한국어 호출 대기 · " + options.phrases.joinToString(" / ")
+        show("한국어 호출 대기", options.phrases.first() + ", 질문하세요")
+        changed()
+    }
+    fun pollWake(now: Long) {
+        if (wakeWindow?.expired(now) == true) { stop("한국어 호출 대기 종료"); gaveUp() }
     }
 
     /** Must be called on the main thread. [reason] stays visible as the status after stopping. */
@@ -97,6 +126,8 @@ internal class LiveTranslator(
         }
         restartTask?.let(main::removeCallbacks); restartTask = null
         call?.cancel()
+        offline.cancel()
+        wakeWindow = null; wakeAction = null
         history.clear(); sourceLine = ""; targetLine = ""
         if (wasActive || reason != null) { status = reason ?: if (captionOnly) "실시간 자막 꺼짐" else OFF; changed() }
     }
@@ -117,7 +148,7 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread (service onDestroy). */
-    fun close() { stop(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
+    fun close() { stop(); offline.close(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
 
     private fun openASR() {
         val token: Int
@@ -159,12 +190,12 @@ internal class LiveTranslator(
         if (failures != 0 || status != listening()) { failures = 0; status = listening(); changed() }
     }
 
-    private fun listening() = if (captionOnly) "듣는 중 · 로컬 자막" else LISTENING
+    private fun listening() = if (wakeActive) "한국어 호출 대기" else if (captionOnly) "듣는 중 · 로컬 자막" else if (offlineMode) "듣는 중 · 오프라인 한영 번역" else LISTENING
     private fun render() = if (captionOnly) show("실시간 자막", clip(sourceLine, TARGET_LIMIT))
         else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
 
     private fun interim(token: Int, text: String) {
-        if (token != generation || !active || misheard(text)) return
+        if (token != generation || !active || wakeActive || misheard(text)) return
         heard()
         sourceLine = text
         render()
@@ -175,12 +206,30 @@ internal class LiveTranslator(
         heard()
         // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
         if (misheard(text)) return
+        wakeWindow?.let { window ->
+            val question = window.accept(text, android.os.SystemClock.elapsedRealtime())
+            if (question != null) {
+                val action = wakeAction
+                stop("한국어 호출 인식 완료")
+                gaveUp()
+                action?.invoke(question)
+            }
+            return
+        }
         if (captionOnly) { sourceLine = text; render(); return }
         val sequence = ++latestFinal
         val from = if (isKorean(text)) "Korean" else "English"
         val to = if (from == "Korean") "English" else "Korean"
         sourceLine = text; targetLine = "…"
         render()
+        if (offlineMode) {
+            offline.translate(text, to) { result ->
+                if (token != generation || !active || sequence != latestFinal) return@translate
+                result.fold({ translated -> targetLine = clip(translated, TARGET_LIMIT); render() },
+                    { targetLine = "(로컬 번역 실패)"; render(); status = "로컬 번역 실패 · 모델 서버 확인"; changed() })
+            }
+            return
+        }
         val context = history.toList()
         val snapshot = config
         translations.execute {

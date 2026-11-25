@@ -7,8 +7,17 @@ import java.util.Locale
 
 /** Presentation only: never translate device protocol values or persisted speaker identifiers. */
 internal object KoreanLanguage {
+    const val DEFAULT_LOCALE = "ko-KR"
+    const val DEFAULT_ASR = "ko"
+    val answerOptions = listOf("ko-KR" to "한국어", "en-US" to "영어", "ja-JP" to "일본어", "zh-CN" to "중국어(간체)")
+    fun answerLanguage(saved: String) = saved.takeIf { code -> answerOptions.any { it.first == code } } ?: DEFAULT_LOCALE
+    fun answerPolicy(saved: String): String {
+        val language = answerOptions.first { it.first == answerLanguage(saved) }.second
+        return "[응답 언어] 기본 답변 언어는 $language 입니다. 사용자가 다른 언어를 명시하거나 번역을 요청한 경우 그 요청을 따르세요. 원문 인용, 이름, 코드, JSON 키와 값의 계약, 도구 인수는 언어 정책 때문에 바꾸지 마세요."
+    }
+    fun withAnswerPolicy(context: String, saved: String) = answerPolicy(saved) + "\n" + context
     val phoneInputOptions = listOf("ko-KR" to "한국어", "en-US" to "영어", "zh-CN" to "중국어(간체)")
-    fun phoneInput(saved: String): String = saved.takeIf { code -> phoneInputOptions.any { it.first == code } } ?: "ko-KR"
+    fun phoneInput(saved: String): String = saved.takeIf { code -> phoneInputOptions.any { it.first == code } } ?: DEFAULT_LOCALE
     fun isKoreanTag(value: String): Boolean = value.trim().replace('_', '-').lowercase(Locale.ROOT).let {
         it == "ko" || it.startsWith("ko-") || it == "korean" || it == "한국어" || it == "한국말" || it == "韩语" || it == "韓語"
     }

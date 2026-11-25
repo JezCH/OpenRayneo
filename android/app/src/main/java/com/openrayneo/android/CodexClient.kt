@@ -93,7 +93,7 @@ internal class CodexClient(private val settings: AppSettings, private val change
         check(connected && !running) { "컴퓨터를 연결하고 현재 작업이 끝날 때까지 기다리세요" }
         val id = checkNotNull(threadID)
         question = text; answer = ""; messages.clear(); running = true; status = "컴퓨터에서 처리 중…"; changed()
-        rpc("turn/start", JSONObject().put("threadId", id).put("input", JSONArray().put(JSONObject().put("type", "text").put("text", text)))) {
+        rpc("turn/start", JSONObject().put("threadId", id).put("input", JSONArray().put(JSONObject().put("type", "text").put("text", KoreanLanguage.withAnswerPolicy(text, settings.read().optString("answerLanguage")))))) {
             turnID = it.getJSONObject("turn").getString("id")
         }
     }

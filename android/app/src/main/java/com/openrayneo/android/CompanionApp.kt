@@ -77,6 +77,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
                                 "captions" -> "실시간 자막"
+                                "korean-wake" -> "한국어 호출"
+                                "korean-glyphs" -> "한글 표시 검사"
                                 "phone-notifications" -> "휴대폰 알림"
                                 else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                             }
@@ -167,6 +169,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
                 "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") })
+                "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") })
+                "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
                     { openRoute("device-settings") }, { openRoute(it) })
@@ -315,6 +319,8 @@ private fun GlassesScreen(
                         ToolOutlinedButton(onClick = { configure("navigation") }) { Text("길 안내") }
                         ToolOutlinedButton(onClick = { navigate(0) }) { Text("홈으로") }
                     }
+                    if (model.state.wakeActive || model.state.wakePending)
+                        TextButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("한국어 호출 중지") }
                     if (model.state.captionActive)
                         TextButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("실시간 자막 종료") }
                     if (!model.state.translationActive)
@@ -323,7 +329,7 @@ private fun GlassesScreen(
                         ) {
                             Text("실시간 번역 (한국어 ↔ 영어)")
                         }
-                    if (model.state.translationActive && !model.state.captionActive) {
+                    if (model.state.translationActive && !model.state.captionActive && !model.state.wakeActive) {
                         Note("실시간 번역 (한국어 ↔ 영어): ${model.state.translationStatus}")
                         TextButton(onClick = { model.attempt { model.service().stopTranslation() } }) {
                             Text("번역 종료")

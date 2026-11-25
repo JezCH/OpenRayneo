@@ -35,6 +35,7 @@ internal class BridgeService : Service() {
     lateinit var agent: MobileAgent; private set
     lateinit var codex: CodexClient; private set
     lateinit var translator: LiveTranslator; private set
+    lateinit var speechOutput: KoreanSpeechOutput; private set
     var state = GlassesState(); private set
     val status get() = state.link.detail
     val ready get() = state.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
@@ -68,6 +69,10 @@ internal class BridgeService : Service() {
     private var resumeAlwaysOn: ConversationMode? = null
     private val voiceAlwaysOnStart = AlwaysOnVoicePolicy.PendingStart()
     private val localClock = LocalClockPolicy.Clock()
+    private var wakeRequest: String? = null
+    private var wakeGeneration = 0L
+    var wakeResult = "한국어 호출 대기 꺼짐"; private set
+    val wakePending get() = wakeRequest != null
     private val focusPolicy = FocusPolicy.State()
     val focusMode get() = focusPolicy.focused
     val appNotificationsEnabled get() = focusPolicy.notificationsEnabled
@@ -100,6 +105,8 @@ internal class BridgeService : Service() {
             if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
             if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
             pollLocalClock()
+            translator.pollWake(SystemClock.elapsedRealtime())
+            if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
             main.postDelayed(this, 1_000)
         }
     }
@@ -107,6 +114,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        speechOutput = KoreanSpeechOutput(this, main, ::notifyUI)
         LocalModels.keepResident(this, settings.read())
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
@@ -449,6 +457,7 @@ internal class BridgeService : Service() {
         updateNotification(); notifyUI()
     }
     private fun nativeWake() {
+        if (speechOutput.speaking) speechOutput.stop()
         notifyUI()
         if (translator.active && translator.captionOnly) return
         if (teleprompter.state.smartFollow) { teleprompter.suspendFollow("음성 깨우기 감지: 따라 읽기 중지. 원고 상태를 확인하세요"); return }
@@ -497,6 +506,7 @@ internal class BridgeService : Service() {
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
         if (start) {
+            if (speechOutput.speaking) speechOutput.stop()
             check(!destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting && !conversations.state.stopping) {
                 "음성 수신 시작 전에 안경 연결 또는 기록 세션이 종료됨"
             }
@@ -693,7 +703,7 @@ internal class BridgeService : Service() {
             input.put("streamHint", true).put("voiceContext", payload)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
             if (!isRealtimeStreamCurrent(input)) return true
-            realtimeStreamId = agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+            realtimeStreamId = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime, preview = { text ->
                     if (isRealtimeStreamCurrent(input)) {
                         realtimePreviewRequest = input.optLong("realtimeRequest")
@@ -716,14 +726,14 @@ internal class BridgeService : Service() {
                 state.link.phase != LinkPhase.FULL || voiceTransport.source != ConversationSource.ALWAYS_ON) return true
             input.put("voiceContext", payload).put("focusGeneration", focusPolicy.generation).put("hintSequence", ++nextAnswer)
                 .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
-            agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+            agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime) { result ->
                 result.onSuccess { answer -> deliverExternalVoice(request.text, answer, input) }
             }
             return true
         }
         // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
-        agent.harness.submit(request.text, request.context + limit, input = input) { result ->
+        agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(request.context + limit, settings.read().optString("answerLanguage")), input = input) { result ->
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
         }
         return true
@@ -829,7 +839,9 @@ internal class BridgeService : Service() {
         }
     }
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
-    fun startCaption() {
+    fun startCaption() = startCaptionMode(false, false)
+    fun startKoreanWake(allowAI: Boolean) = startCaptionMode(true, allowAI)
+    private fun startCaptionMode(wake: Boolean, allowAI: Boolean) {
         check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
             !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
@@ -837,23 +849,95 @@ internal class BridgeService : Service() {
             !agent.running && !codex.running) { "진행 중인 기록·화면·AI 작업을 먼저 종료하세요" }
         val config = settings.read()
         translator.captionConfig(config)
+        if (wake && allowAI) check(agentServer.state.enabled) { "먼저 AI 연결을 설정하세요" }
+        cancelKoreanWake()
         cancelVoiceAlwaysOnStart()
         cancelAlwaysOnRecovery()
-        translator.start(config, captions = true)
+        if (speechOutput.speaking) speechOutput.stop()
+        if (wake) {
+            val options = KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds"))
+            wakeResult = "호출 대기 · ${options.listenSeconds}초 · " + options.phrases.joinToString(" / ")
+            translator.startWake(config) { question -> handleKoreanWake(question, allowAI) }
+        } else translator.start(config, captions = true)
         dispatch(GlassesEvent.StartCaption)
+        if (wake && translator.wakeActive) dispatch(GlassesEvent.TranslationText(TranslationView("한국어 호출 대기", KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds")).phrases.first() + ", 질문하세요")))
     }
     fun stopCaption() { if (translator.active && translator.captionOnly) stopTranslation() }
-    fun startTranslation() {
+    fun cancelKoreanWake() {
+        wakeGeneration++
+        wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
+        if (translator.wakeActive) stopCaption()
+        wakeResult = "한국어 호출 대기 꺼짐"; notifyUI()
+    }
+    private fun handleKoreanWake(question: String, allowAI: Boolean) {
+        if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle ||
+            conversations.state.running || voiceTransport.nativeActive || translator.active) return
+        val command = LocalClockPolicy.parseExplicit(question)
+        val focus = FocusPolicy.parseExplicit(question)
+        val normalized = KoreanLanguage.normalize(question).filterNot(Char::isWhitespace).trimEnd('?','!','.')
+        val local = when {
+            command != null -> {
+                pollLocalClock()
+                val wasRunning = localClock.timerRunning
+                val answer = localClock.execute(command, SystemClock.elapsedRealtime())
+                if (!wasRunning && localClock.timerRunning) runCatching { getSystemService(NotificationManager::class.java).cancel(7918) }
+                updateNotification(); answer
+            }
+            focus != null -> applyFocusCommand(focus)
+            normalized in setOf("지금몇시야", "현재시간알려줘", "시간알려줘") ->
+                java.text.SimpleDateFormat("a h시 m분", java.util.Locale.KOREA).format(java.util.Date())
+            normalized in setOf("오늘며칠이야", "오늘날짜알려줘", "날짜알려줘") ->
+                java.text.SimpleDateFormat("yyyy년 M월 d일 EEEE", java.util.Locale.KOREA).format(java.util.Date())
+            else -> null
+        }
+        if (local != null) {
+            wakeResult = local
+            runCatching { sendCompanionNotification("한국어 호출", local, FocusPolicy.Output.DIRECT_ANSWER) }
+            notifyUI(); return
+        }
+        if (!allowAI || !agentServer.state.enabled || agent.running || codex.running) {
+            wakeResult = "지원되는 로컬 명령이 아니거나 AI 질문이 허용되지 않았습니다."; notifyUI(); return
+        }
+        val token = ++wakeGeneration
+        wakeResult = "질문 전용 AI 응답 대기 중"; notifyUI()
+        try {
+            wakeRequest = agent.harness.submit(question, KoreanLanguage.withAnswerPolicy("간결하게 답변하세요. 도구를 호출하거나 작업을 실행하지 말고, 질문에만 답변하세요. 안경 표시를 위해 100자 이내로 답변하세요.", settings.read().optString("answerLanguage")),
+                kind = "hint", input = JSONObject().put("purpose", "korean_wake").put("question", question), hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
+                if (destroyed || token != wakeGeneration) return@submit
+                wakeRequest = null
+                wakeResult = result.getOrNull()?.takeIf { it.isNotBlank() } ?: "AI 응답 실패 또는 만료"
+                if (state.link.phase == LinkPhase.FULL && !state.disconnecting && state.intent == DisplayIntent.Idle &&
+                    !conversations.state.running && !translator.active && !voiceTransport.nativeActive) {
+                    runCatching { sendCompanionNotification("한국어 호출", wakeResult.take(100), FocusPolicy.Output.DIRECT_ANSWER) }
+                }
+                notifyUI()
+            }
+        } catch (error: Exception) { wakeRequest = null; wakeResult = "AI 질문 실패"; notifyUI() }
+    }
+    fun sendKoreanGlyphSample(text: String) {
+        check(text.isNotBlank() && text.length <= 60)
+        check(state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
+            !translator.active && !voiceTransport.nativeActive && teleprompter.state.active == null && !teleprompter.state.busy) { "다른 화면과 음성 기능을 먼저 종료하세요" }
+        check(sendCompanionNotification("한글 표시 검사", text, FocusPolicy.Output.DIRECT_ANSWER)) { "안경을 먼저 연결하세요" }
+    }
+    fun startTranslation(local: Boolean = false) {
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val config = settings.read()
-        translator.validate(config)
+        translator.validate(config, local)
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
-        translator.start(config)
+        if (speechOutput.speaking) speechOutput.stop()
+        translator.start(config, local = local)
         dispatch(GlassesEvent.StartTranslation)
+    }
+    fun speakKorean(text: String) {
+        check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow && teleprompter.state.active == null && !teleprompter.state.busy) { "녹음·음성 기능을 먼저 종료하세요" }
+        val config = settings.read()
+        speechOutput.speak(text, config.optString("ttsRate").toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.5f } ?: 1f,
+            config.optString("ttsPitch").toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.25f } ?: 1f)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
     fun openStandby() { check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }; cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
@@ -880,6 +964,7 @@ internal class BridgeService : Service() {
     fun submitAnswer(source: AnswerSource, text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = false) {
         check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
+        check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }
         }
@@ -1213,7 +1298,8 @@ internal class BridgeService : Service() {
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
-        translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
+        wakeGeneration++; wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
+        speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
