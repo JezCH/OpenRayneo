@@ -1274,11 +1274,11 @@ internal class BridgeService : Service() {
         check(!conversations.state.running && !conversations.state.stopping && !conversations.state.summarizing) { "기록 및 요약 작업을 먼저 종료하세요" }
         migration.preview(port, token)
     }
-    fun transferMigration() {
+    fun transferMigration(includeAudio: Boolean) {
         check(!recordSync.state.enabled && !conversations.state.running && !conversations.state.stopping &&
             !conversations.state.summarizing && !translator.active && !voiceTransport.nativeActive) { "새 앱의 동기화·기록·음성 작업을 먼저 종료하세요" }
         check(!SummaryDispatchPolicy.autoEnabled(settings.read().optString("memoryAutoSummary"))) { "기록 이전 전에 자동 요약을 끄세요" }
-        migration.transfer()
+        migration.transfer(includeAudio)
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
     private fun summary() = state.displayDescription + (if (focusMode) " · 앱 집중 모드" else "") + (if (!appNotificationsEnabled) " · 앱 안경 알림 꺼짐" else "") + (if (localClock.timerRunning) " · 타이머 실행 중" else "") + (if (localClock.watchRunning) " · 스톱워치 실행 중" else "") + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
