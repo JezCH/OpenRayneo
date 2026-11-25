@@ -266,7 +266,6 @@ internal fun SettingsScreen(
         SectionLabel("개인화")
         SettingsRow("호출어 및 대기 시간", "한국어 소프트웨어 호출 설정", Icons.Outlined.Mic) { open("korean-wake") }
         SectionLabel("권한 및 기기")
-        SettingsRow("한국어 호출", "나만의 호출어, 호출 대기 시간", Icons.Outlined.Mic) { open("korean-wake") }
         SettingsRow("음성 및 요약", "안경 ASR, 인물 분석 및 기록 요약", Icons.Outlined.Mic) { open("voice-settings") }
         SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
         SettingsRow("홈 화면 및 콘텐츠", "위젯, 할 일, 일정 및 날씨", Icons.Outlined.Dashboard) { open("content") }
