@@ -2,7 +2,7 @@
 
 OpenRayneo owns the glasses connection, audio storage, ASR, local speaker processing and record summaries.
 The phone's external Agent decides whether to wait, answer, call tools or run a workflow.
-Current delivery: Android **37 / 1.2.0-beta.4** with plugin **0.1.8**; Android36 remains compatible.
+This revision uses plugin **0.1.10**. Update the companion APK and plugin together for historical-input rejection and review-queue isolation.
 Architecture and current limitations live in the workspace `.arch/`; operations live in `docs/runbook.md`.
 
 ## Install and connect
@@ -13,7 +13,7 @@ Install this directory once:
 dsh plugin --profile web add /absolute/path/openrayneo-dsh
 ```
 
-For a packaged update, replace the installed plugin directory with `openrayneo-dsh-0.1.8.tgz` contents.
+For a packaged update, replace the installed plugin directory with `openrayneo-dsh-0.1.10.tgz` contents.
 The npm archive has a top-level `package/`; use `--strip-components=1` when extracting into that directory.
 Update the companion APK and restart the DSH engine after replacing plugin code.
 Existing connection credentials and saved phone records remain.
@@ -41,7 +41,7 @@ Completed ASR and speaker results are delivered together, including unknown or m
 The encrypted phone outbox preserves pending inputs while DSH is unavailable and answers until delivery.
 Live **小雷小雷** inputs reuse one DSH conversation across wake, record and task IDs.
 The persisted binding is scoped by phone installation, native conversation key and selected Agent preset.
-Stable native keys require Android36 or newer; other sources and historical backfill retain separate sessions.
+Stable native keys require Android36 or newer; other live sources retain separate sessions. Historical backfill stays in records instead of starting a new Agent task.
 Phone **助手 → 新建对话** rotates the native key and clears local short context without deleting records.
 Changing the Agent preset chooses its own binding; stale replies cannot enter a new conversation.
 
@@ -53,6 +53,8 @@ Bindings survive plugin reload and DSH cold restart through the real session con
 Only a genuinely missing session may be recreated before prompting; transient failures do not replay prompts/tools.
 Terminal delivery retries use readback. Approvals and phone-control permissions remain in DSH Go.
 
-Backfill carries `input.backfill=true`, original time facts and processing delay.
-It updates historical context; it is not a fresh instruction to execute past commands.
-Completed old utterances are not replayed. Explicit current authorization still governs new actions.
+Historical backfill remains in the existing record/summary pipeline. The new phone relay rejects new backfill Agent requests and cancels outstanding legacy backfill requests on restore; the updated plugin also rejects such a request before model dispatch. Already executed effects are not undone. Explicitly request historical analysis from the record screen if needed.
+
+## Optional independent ambient model
+
+By default, automatic hints continue to use DSH `agentDefaultModel.currentSelection()`. In the OpenRayneo plugin configuration, set both `ambientProvider` (registered DSH provider route) and `ambientModel` (its exact model ID) to select a separate model for AlwaysOn and opt-in fast realtime hints. Optionally specify `ambientReasoningEffort`, an exact adapter-supported identifier; leave it blank to use that selected model’s provider default. Clear all three fields to restore the original behavior. These are configuration fields, not a new provider or credential mechanism. The model must already be available through the configured DSH service. The runtime validates the selected route and effort; unsupported selections fail without fallback to the default model. Existing Agent session/preset selection, manual follow-up extraction, and summary service are unchanged. No model price or free entitlement is implied. Verify actual billing and latency with your chosen provider.
