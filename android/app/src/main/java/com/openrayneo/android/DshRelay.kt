@@ -166,6 +166,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         status(id)
     }
     fun cancelRequest(id: String) = cancelMatching { it.id == id }
+    fun cancelPassiveHints() = cancelMatching { it.kind == "hint" && it.input?.optString("source") == "ALWAYS_ON" && it.input?.has("hintDeadline") == true }
     fun cancelConversation(key: String) = cancelMatching { it.input?.optString("conversationKey") == key }
     private fun cancelMatching(matches: (Request) -> Boolean) = synchronized(lock) {
         requests.values.filter { it.state in setOf("queued", "running") && matches(it) }.forEach { request ->
