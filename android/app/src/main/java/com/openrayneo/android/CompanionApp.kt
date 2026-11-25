@@ -76,6 +76,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "navigation" -> "길 안내"
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
+                                "captions" -> "실시간 자막"
                                 "phone-notifications" -> "휴대폰 알림"
                                 else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                             }
@@ -165,6 +166,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
+                "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") })
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
                     { openRoute("device-settings") }, { openRoute(it) })
@@ -313,13 +315,15 @@ private fun GlassesScreen(
                         ToolOutlinedButton(onClick = { configure("navigation") }) { Text("길 안내") }
                         ToolOutlinedButton(onClick = { navigate(0) }) { Text("홈으로") }
                     }
+                    if (model.state.captionActive)
+                        TextButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("실시간 자막 종료") }
                     if (!model.state.translationActive)
                         ToolOutlinedButton(
                             onClick = { configure("translation") }
                         ) {
                             Text("실시간 번역 (한국어 ↔ 영어)")
                         }
-                    if (model.state.translationActive) {
+                    if (model.state.translationActive && !model.state.captionActive) {
                         Note("실시간 번역 (한국어 ↔ 영어): ${model.state.translationStatus}")
                         TextButton(onClick = { model.attempt { model.service().stopTranslation() } }) {
                             Text("번역 종료")

@@ -257,7 +257,8 @@ internal class BridgeService : Service() {
                 }
                 // The translator runs only while the glasses show its window; any other page, link loss or yield stops it.
                 // On link loss the intent would otherwise survive and reopen an orphan window after reconnecting.
-                if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP)) {
+                if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP ||
+                    (state.captionMode && (state.error != null || state.audio.phase == AudioPhase.FAILED)))) {
                     translator.stop(); events.add(GlassesEvent.PauseDisplay)
                 } else if (translator.active && state.intent != DisplayIntent.Translation) translator.stop()
                 updateAnswerClearTimer()
@@ -334,6 +335,7 @@ internal class BridgeService : Service() {
         dispatch(GlassesEvent.Disconnect)
     }
     fun followNavigation(key: String) {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
@@ -360,6 +362,7 @@ internal class BridgeService : Service() {
         } else { resetAgentProbe(); agentServer.stop() }
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, smartFollow: Boolean = false, completion: (Result<JSONObject>) -> Unit) {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         if (smartFollow) {
@@ -391,6 +394,7 @@ internal class BridgeService : Service() {
     }
     fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null,
                           resumeOnReconnect: Boolean = false) {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(!resumeOnReconnect || (foreground && mode == ConversationMode.DAILY && source == ConversationSource.ALWAYS_ON)) {
@@ -441,6 +445,7 @@ internal class BridgeService : Service() {
     }
     private fun nativeWake() {
         notifyUI()
+        if (translator.active && translator.captionOnly) return
         if (teleprompter.state.smartFollow) { teleprompter.suspendFollow("음성 깨우기 감지: 따라 읽기 중지. 원고 상태를 확인하세요"); return }
         if (!settings.read().optBoolean("nativeAutoAnswer")) return
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) return
@@ -819,7 +824,22 @@ internal class BridgeService : Service() {
         }
     }
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
+    fun startCaption() {
+        check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
+            !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
+            !voiceTransport.nativeActive && !translator.active && teleprompter.state.active == null && !teleprompter.state.busy &&
+            !agent.running && !codex.running) { "진행 중인 기록·화면·AI 작업을 먼저 종료하세요" }
+        val config = settings.read()
+        translator.captionConfig(config)
+        cancelVoiceAlwaysOnStart()
+        cancelAlwaysOnRecovery()
+        translator.start(config, captions = true)
+        dispatch(GlassesEvent.StartCaption)
+    }
+    fun stopCaption() { if (translator.active && translator.captionOnly) stopTranslation() }
     fun startTranslation() {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val config = settings.read()
@@ -834,6 +854,7 @@ internal class BridgeService : Service() {
     fun openStandby() { check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }; cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
     /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
     fun startRealtimeHint() {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) {
@@ -852,6 +873,7 @@ internal class BridgeService : Service() {
     fun dismissAnswer() = dispatch(GlassesEvent.DismissAnswer)
 
     fun submitAnswer(source: AnswerSource, text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = false) {
+        check(!translator.active || !translator.captionOnly) { "실시간 자막을 먼저 종료하세요" }
         check(!teleprompter.state.smartFollow) { "따라 읽기 프롬프터를 먼저 종료하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }

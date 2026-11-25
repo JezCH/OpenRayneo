@@ -27,6 +27,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.alwaysOnResumePending -> "기록 재개 대기"
         c.stopping -> "기록 저장 중"
         c.running -> c.mode.title + " 기록 중"
+        s.captionActive -> "실시간 자막 중"
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
         s.teleprompter.busy -> "프롬프터 준비 중"
@@ -60,6 +61,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 if (c.running || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
                         modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "저장 중…" else "기록 중지") }
+                } else if (s.captionActive) {
+                    ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("자막 종료") }
                 } else if (s.translationActive) {
                     ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }, modifier = Modifier.fillMaxWidth()) { Text("번역 종료") }
                 } else if (s.teleprompter.active != null) {
@@ -159,6 +162,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("길 안내", "Amap 지원", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
+        item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {
             Text("타이머 · 스톱워치", style = MaterialTheme.typography.titleMedium)
@@ -179,7 +183,8 @@ internal fun TranslationToolScreen(model: AppModel) {
             Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
             Note(s.translationStatus)
             Note("음성 인식 및 번역 모델 설정이 필요합니다. 설정된 서비스에 발화가 전달될 수 있습니다.")
-            if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
+            if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
+            else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
             else ToolButton(onClick = { confirm = true }, enabled = linked && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null) { Text("번역 시작") }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
@@ -210,4 +215,43 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
         item { FeatureTile("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
         item { FeatureTile("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune, Modifier.fillMaxWidth()) { open("diagnostics") } }
     }
+}
+
+@Composable
+internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit) {
+    val s = model.state
+    val context = model.getApplication<android.app.Application>()
+    val config = model.config
+    val localReady = SpeechRounds.model(config) != null && SpeechRounds.ready(context, config)
+    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
+        s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.glasses.navigation.enabled ||
+        s.teleprompter.active != null || s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
+    var confirm by remember { mutableStateOf(false) }
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { ContentCard {
+            Text("실시간 자막", style = MaterialTheme.typography.headlineSmall)
+            Note(s.captionStatus)
+            Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
+            if (s.captionActive) ToolButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("자막 종료") }
+            else {
+                if (!linked) Note("먼저 안경을 연결하세요.")
+                if (!localReady) {
+                    Note("기기 내장 음성 모델을 선택하고 설치해야 합니다. 클라우드로 자동 전환하지 않습니다.")
+                    ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
+                }
+                if (busy) Note("다른 기록·안경 화면·AI 작업을 먼저 종료하세요.")
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy) { Text("자막 시작") }
+            }
+        } }
+        item { GlassesOutputPreview(s.glasses) }
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        title = { Text("실시간 자막을 시작할까요?") },
+        text = { Text("안경 마이크를 사용합니다. 원문과 음성은 저장하지 않지만 주변 참여자의 동의와 장소 보안 규칙을 확인하세요.") },
+        confirmButton = { TextButton(enabled = linked && localReady && !busy, onClick = {
+            confirm = false
+            model.attempt { model.service().startCaption() }
+        }) { Text("동의하고 시작") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }
