@@ -269,6 +269,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
+        values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
+        values["ttsRate"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.5f } == true) { "음성 속도는 0.75~1.5배로 설정하세요" } }
+        values["ttsPitch"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.25f } == true) { "음성 높이는 0.75~1.25배로 설정하세요" } }
         val mobileChanged =
             listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend").any {
                 old.optString(it) != updated.optString(it)
@@ -306,6 +309,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 "asrLanguage" -> SpeechRounds.languageHints(config)
                 "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
                 "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
+                "ttsRate", "ttsPitch" -> config.optString(it).ifBlank { "1.0" }
                 else -> config.optString(it)
             }
         }
@@ -317,7 +321,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
