@@ -307,6 +307,7 @@ internal class BridgeService : Service() {
                         active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON)
                     resumeAlwaysOn = null
                     cancelPrompterLaunch()
+                    agentServer.cancelOutstanding("안경 연결 변경")
                     resetAmbientWake(); nativeWakeStatus = "연결 끊김 · 깨우기 대기 종료"
                     cancelVoiceAlwaysOnStart()
                     conversations.stop(); voiceTransport.disconnected(); voiceAudio.stop()
@@ -404,6 +405,7 @@ internal class BridgeService : Service() {
         resetAgentProbe()
         resetFocus(); localClock.clear()
         supervisor.cancelRetries()
+        agentServer.cancelOutstanding("안경 연결 해제")
         cancelPrompterLaunch()
         stopConversation()
         dispatch(GlassesEvent.Disconnect)
@@ -1250,7 +1252,7 @@ internal class BridgeService : Service() {
     fun cancelAnswer(source: AnswerSource) {
         invalidateAnswer(source)
         when (source) {
-            AnswerSource.MOBILE_AGENT -> agent.cancel()
+            AnswerSource.MOBILE_AGENT -> { agentServer.cancelOutstanding("휴대폰 AI 중지"); agent.cancel() }
             AnswerSource.COMPUTER_CODEX -> codex.cancel()
         }
     }
