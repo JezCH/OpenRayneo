@@ -22,14 +22,20 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     val harness = DshRelay(main, repository, restored) { message -> if (running) { status = message; changed() } }
     fun submit(text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = true) {
         check(!running) { "답변을 기다리거나 먼저 중지하세요" }
+        // Restricted requests must not enter a durable tool-executing session.
+        check(retainHistory || !allowTools) { "기록 없는 작업 실행은 지원하지 않습니다. 질문 전용을 사용하세요" }
+        val policy = KoreanLanguage.withAnswerPolicy(context, settings.read().optString("answerLanguage"))
         val session = ++generation
         question = text; answer = ""; running = true; ephemeral = !retainHistory
         status = "로컬 외부 Agent의 수신 대기 중…"; changed()
-        requestId = harness.submit(text, context) { result ->
+        val kind = if (allowTools) "task" else "hint"
+        val input = if (allowTools) null else JSONObject().put("purpose", "explicit_question").put("question", text)
+        requestId = harness.submit(text, policy, kind = kind, input = input,
+            hintLifetimeMs = if (allowTools) 0L else ProactiveHintPolicy.MAX_AGE_MS) { result ->
             if (session == generation) {
                 requestId = null; running = false
                 result.fold({ reply -> answer = reply; status = "로컬 Agent의 이번 라운드가 끝남"; changed(); finalAnswer(text, reply) },
-                    { error -> status = error.message ?: "로컬 Agent 작업이 완료되지 않음"; changed() })
+                    { error -> status = "AI 요청을 완료하지 못했습니다. 연결 상태와 서비스 설정을 확인하세요"; changed() })
             }
         }
     }
