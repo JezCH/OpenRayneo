@@ -164,7 +164,7 @@ internal class MeetingAudioStore(context: Context) {
             .putShort((2 * count).toShort()).putShort(16).put("data".toByteArray()).putInt(size.toInt()).array()
         require(input.readNBytes(44).contentEquals(expected)) { "원본 WAV 헤더와 기록 정보가 다릅니다" }
         val target = file(id)
-        check(!target.exists() && folder.usableSpace > size + size / 100 + 4_194_304L) { "저장공간 또는 오디오 ID 확인 필요" }
+        check(folder.usableSpace > size + size / 100 + 4_194_304L && target.createNewFile()) { "저장공간 또는 오디오 ID 확인 필요" }
         try {
             DataOutputStream(target.outputStream().buffered()).use { out ->
                 out.write((if (count == 1) "ORPCM1" else "ORPCM2").toByteArray())
