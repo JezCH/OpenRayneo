@@ -94,14 +94,44 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         return if ((reported[field] ?: 0) < before) "전송됨, 기기가 아직 새 값을 보고하지 않음"
             else if (matches(state)) "안경 재조회로 확인됨" else if (acknowledgementMissing) "변경 응답을 받지 못했고 현재 재조회 값이 요청과 다름" else "기기 재조회 값이 요청과 다릅니다. 현재 값을 확인하세요"
     }
-    /** Read the battery from this request's reply, not a cached or disconnected device state. */
-    fun readBatteryForVoice(): Int? {
+    /** Read from the current request's reply, not cached state or an acknowledgement echo. */
+    private fun readStatusIntForVoice(key: String, range: IntRange): Int? {
         val reply = requests.request(15, 1, envelope("request_general_status")) { type, body ->
             type == 1 && body.has("generalStatus")
         }
-        val value = reply?.optJSONObject("generalStatus")?.opt("battery") as? Number ?: return null
-        val percent = value.toDouble()
-        return percent.toInt().takeIf { percent == it.toDouble() && it in 0..100 }
+        val value = reply?.optJSONObject("generalStatus")?.opt(key) as? Number ?: return null
+        val number = value.toDouble()
+        return number.toInt().takeIf { number == it.toDouble() && it in range }
+    }
+    fun readBatteryForVoice(): Int? = readStatusIntForVoice("battery", 0..100)
+
+    /** Run on the existing serialized device queue with a current-wake permission. */
+    fun executeVoiceCommand(command: LocalDeviceQuery.Command): String {
+        if (command.kind == LocalDeviceQuery.Kind.BATTERY)
+            return LocalDeviceQuery.batteryAnswer(readBatteryForVoice())
+        if (command.kind == LocalDeviceQuery.Kind.BRIGHTNESS_SET && !LocalDeviceQuery.validLevel(command.level))
+            return "안경 밝기는 1~17단계로 지정해 주세요."
+        val current = readStatusIntForVoice("brightness", 1..17)
+            ?: return LocalDeviceQuery.brightnessAnswer(null)
+        if (command.kind == LocalDeviceQuery.Kind.BRIGHTNESS_READ)
+            return LocalDeviceQuery.brightnessAnswer(current)
+        val target = LocalDeviceQuery.target(command, current)
+            ?: return LocalDeviceQuery.brightnessAnswer(null)
+        if (current == target) return "이미 밝기 ${current}단계입니다."
+        try {
+            requests.request(15, 2, JSONObject().put("cmd", "brightness_change").put("payload", payload(target))) { type, body ->
+                type == 3 && body.optString("cmd") == "brightness_change"
+            }
+        } catch (_: IllegalStateException) {
+            // A lost ACK does not establish failure or success. Read the actual device value.
+            // The request queue rechecks the wake permission before any additional wire command.
+        }
+        val actual = readStatusIntForVoice("brightness", 1..17)
+        return when {
+            actual == target -> "안경 밝기를 ${target}단계로 설정했습니다."
+            actual == null -> "밝기 변경 결과를 확인하지 못했습니다."
+            else -> "요청한 밝기와 다릅니다. 현재 ${actual}단계입니다."
+        }
     }
     fun readForTool(): JSONObject { readAll(); return JSONObject().put("status", state.status).put("settings", state.settings) }
     fun tool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
