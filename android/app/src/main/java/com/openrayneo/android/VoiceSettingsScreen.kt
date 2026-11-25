@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -90,6 +90,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("예: 안경 자동 밝기 상태 알려줘 / 안경 화면 높이를 5단계로 설정해줘 / 안경 화면 거리 3단계로 맞춰줘 / 안경 자동 절전 시간을 60초로 설정해줘. 높이 1~6, 거리 1~3, 절전 5·10·15·25·40·60·120초. 자동 화면 밝기는 조회만 지원합니다.")
         Note("예: 안경 배터리 얼마야 / 안경 밝기 몇 단계야 / 안경 밝기 올려줘 / 안경 밝기 내려줘 / 안경 밝기 7단계로 설정해줘. 밝기는 한 단계씩 또는 1~17단계로 조절하며, 안경의 재조회 결과를 확인합니다.")
         Note("종일 기록의 현재 발화는 도구 없는 짧은 선제 힌트로만 처리합니다. 필요할 때만 표시하며 오래된 힌트는 폐기합니다. 기억 조회·실시간 검색·업무 실행이 필요하면 직접 음성 깨우기 또는 Agent에 요청하세요. 힌트 추론은 연결한 DSH Go 모델을 사용합니다.")
+        var voiceAlwaysOnStart by remember(model.config) { mutableStateOf(model.config.optBoolean("voiceAlwaysOnStart")) }
+        Row {
+            Checkbox(voiceAlwaysOnStart, { voiceAlwaysOnStart = it; drafts["voiceAlwaysOnStart"] = it.toString() })
+            Text("음성 깨우기에서 종일 기록 시작 허용")
+        }
+        Note("예: 안경 종일 기록 시작해줘 / 안경 종일 기록 중지해줘. 시작은 이 허용을 저장한 후 음성 대화를 90초 안에 정상 종료해야 적용됩니다. 기존 기록 마무리 후에 시작하며, 음성 명령은 착용자 인증을 보장하지 않습니다. 주변 참여자의 동의 및 장소 보안 규칙을 확인하세요. 중지 명령은 깨우기 때문에 잠시 멈춘 종일 기록의 재개를 취소합니다. 이 명령으로 시작한 기록은 재연결 자동 복구나 재부팅 후 자동 시작을 허용하지 않습니다.")
         var fastRealtimeHints by remember(model.config) { mutableStateOf(model.config.optBoolean("fastRealtimeHints")) }
         Row {
             Checkbox(fastRealtimeHints, { fastRealtimeHints = it; drafts["fastRealtimeHints"] = it.toString() })

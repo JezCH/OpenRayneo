@@ -66,6 +66,7 @@ internal class BridgeService : Service() {
     private var voiceReply: VoiceDelivery? = null
     private var conversationOwnsDisplay = false
     private var resumeAlwaysOn: ConversationMode? = null
+    private val voiceAlwaysOnStart = AlwaysOnVoicePolicy.PendingStart()
     private val reconnectCapture = AlwaysOnReconnectPolicy()
     val alwaysOnResumePending: Boolean get() = reconnectCapture.pending
     private var notificationText = ""
@@ -89,6 +90,7 @@ internal class BridgeService : Service() {
             audioOwner?.let { dispatch(GlassesEvent.AudioChanged(it, audio.state.coordinatorState())) }
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
             if (reconnectCapture.expire(SystemClock.elapsedRealtime())) { updateNotification(); notifyUI() }
+            if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
             main.postDelayed(this, 1_000)
         }
     }
@@ -141,7 +143,10 @@ internal class BridgeService : Service() {
         voiceTransport = GlassesVoiceTransport(connection::sendFrame, ::nativeWake, {
             voiceAudio.stop(); conversations.voiceRoundBoundary(); voiceAudio.start(1); conversations.nextRound()
         }, { ended ->
-            if (ended) conversations.stop() else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
+            if (ended) {
+                voiceAlwaysOnStart.nativeEnded(conversations.state.activeRecord?.id)
+                conversations.stop()
+            } else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
         }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
         // Only when the posted next turn will really start (auto answer on, native session running); otherwise capture closes as before.
         voiceTransport.answeringChanged = { on ->
@@ -208,6 +213,7 @@ internal class BridgeService : Service() {
                 val transition = GlassesCoordinator.reduce(state, events.removeFirst())
                 val previous = state
                 state = transition.state
+                if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     val active = conversations.state
                     reconnectCapture.linkLost(foreground && !previous.disconnecting && !state.disconnecting &&
@@ -215,6 +221,7 @@ internal class BridgeService : Service() {
                         active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON,
                         SystemClock.elapsedRealtime())
                     resumeAlwaysOn = null
+                    cancelVoiceAlwaysOnStart()
                     conversations.stop(); voiceTransport.disconnected(); voiceAudio.stop()
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
@@ -283,11 +290,11 @@ internal class BridgeService : Service() {
 
     fun scan() {
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         runCatching { supervisor.connect(device, bleOnly) }.onFailure {
@@ -300,7 +307,7 @@ internal class BridgeService : Service() {
         dispatch(GlassesEvent.Disconnect)
     }
     fun followNavigation(key: String) {
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
@@ -326,7 +333,7 @@ internal class BridgeService : Service() {
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, completion: (Result<JSONObject>) -> Unit) {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false; conversations.stop(); dispatch(GlassesEvent.PauseDisplay)
         val allowed = requests.permission()
         val deadline = SystemClock.elapsedRealtime() + 2_500
@@ -347,7 +354,7 @@ internal class BridgeService : Service() {
         check(!resumeOnReconnect || (foreground && mode == ConversationMode.DAILY && source == ConversationSource.ALWAYS_ON)) {
             "종일 일상 기록의 재연결 복구는 연결 서비스가 실행 중일 때만 허용됩니다"
         }
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversations.start(mode, source, target, if (source == ConversationSource.NATIVE) voiceTransport.wakeId else null)
         if (resumeOnReconnect) reconnectCapture.arm()
     }
@@ -356,13 +363,18 @@ internal class BridgeService : Service() {
         reconnectCapture.cancel()
         if (wasPending) { updateNotification(); notifyUI() }
     }
+    fun cancelVoiceAlwaysOnStart() {
+        val pending = voiceAlwaysOnStart.pending
+        voiceAlwaysOnStart.cancel()
+        if (pending) { updateNotification(); notifyUI() }
+    }
     fun stopConversation() {
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         resumeAlwaysOn = null
         conversations.stop()
     }
     fun retranscribe(recordId: String) {
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversations.retranscribe(recordId)
     }
     private fun onConversationStopped() {
@@ -409,11 +421,26 @@ internal class BridgeService : Service() {
         }
     }
     private fun resumeBackground() {
+        if (voiceAlwaysOnStart.pending) {
+            val cfg = runCatching { settings.read() }.getOrNull()
+            val active = conversations.state
+            val allowed = !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+                !voiceTransport.nativeActive && voiceTransport.source == null && !active.running && active.error == null &&
+                state.intent == DisplayIntent.Idle && state.session == null && !translator.active &&
+                cfg?.optBoolean("voiceAlwaysOnStart") == true && cfg.optBoolean("nativeAutoAnswer")
+            if (voiceAlwaysOnStart.take(SystemClock.elapsedRealtime(), allowed)) {
+                runCatching { startConversation(ConversationMode.DAILY, ConversationSource.ALWAYS_ON) }
+                    .onSuccess { onLog("종일 기록 음성 시작 요청 전달됨") }
+                    .onFailure { conversations.report(it.message ?: "종일 기록 시작 실패") }
+            } else onLog("종일 기록 음성 시작 취소: 세션 종료 또는 실행 조건 미충족")
+            updateNotification(); notifyUI()
+            return
+        }
         val mode = resumeAlwaysOn ?: return
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL) { resumeAlwaysOn = null; return }
         if (voiceTransport.nativeActive || conversations.state.running) return
         resumeAlwaysOn = null
-        startConversation(mode, ConversationSource.ALWAYS_ON)
+        runCatching { startConversation(mode, ConversationSource.ALWAYS_ON) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
         if (start) {
@@ -430,7 +457,10 @@ internal class BridgeService : Service() {
         } else {
             reconnectCapture.captureStopped()
             cancelRealtimeStream()
-            if (source == ConversationSource.NATIVE && voiceTransport.nativeActive) resumeAlwaysOn = null
+            if (source == ConversationSource.NATIVE && voiceTransport.nativeActive) {
+                resumeAlwaysOn = null
+                cancelVoiceAlwaysOnStart()
+            }
             agent.harness.cancel("route"); agent.harness.cancel("hint")
             if (source == ConversationSource.REALTIME) {
                 if (conversationOwnsDisplay) dispatch(GlassesEvent.PauseDisplay)
@@ -450,6 +480,39 @@ internal class BridgeService : Service() {
             cancelRealtimeStream()
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
+        }
+        val sessionCommand = AlwaysOnVoicePolicy.parse(request.text, request.source, request.backfill)
+        if (sessionCommand != null) {
+            val active = conversations.state
+            val wake = request.wakeId
+            val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
+            if (fresh && wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                active.source == ConversationSource.NATIVE && request.recordId != null &&
+                active.activeRecord?.id == request.recordId && !destroyed && foreground &&
+                state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                val answer = when (sessionCommand) {
+                    AlwaysOnVoicePolicy.Command.STOP -> {
+                        val hadPending = voiceAlwaysOnStart.pending || resumeAlwaysOn != null || reconnectCapture.pending
+                        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); resumeAlwaysOn = null
+                        if (hadPending) "종일 기록 시작 또는 재개 요청을 취소했습니다." else "재개할 종일 기록이 없습니다."
+                    }
+                    AlwaysOnVoicePolicy.Command.START -> when {
+                        !settings.read().optBoolean("voiceAlwaysOnStart") -> "음성 설정에서 종일 기록 음성 시작을 먼저 허용해 주세요."
+                        request.hintContext?.optJSONArray("segments")?.let { segments -> segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false } } != true -> "겹친 발화 또는 불확실한 명령입니다. 다시 요청해 주세요."
+                        resumeAlwaysOn != null -> "기존 종일 기록의 재개를 기다리고 있습니다."
+                        state.intent != DisplayIntent.Idle || state.session != null || translator.active -> "다른 화면 기능을 종료한 후 요청해 주세요."
+                        else -> {
+                            voiceAlwaysOnStart.arm(request.recordId, SystemClock.elapsedRealtime())
+                            updateNotification(); notifyUI()
+                            "90초 안에 음성 대화를 닫으면 종일 기록 시작을 요청합니다."
+                        }
+                    }
+                }
+                input.put("derivedId", java.util.UUID.randomUUID().toString())
+                deliverExternalVoice(request.text, answer, input)
+            }
+            return true
         }
         // Exact local commands are consumed even if their native wake has expired.
         // Check permission again when the serialized operation actually sends each wire command.
@@ -627,14 +690,14 @@ internal class BridgeService : Service() {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         val config = settings.read()
         translator.validate(config)
-        cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()
         translator.start(config)
         dispatch(GlassesEvent.StartTranslation)
     }
     fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
-    fun openStandby() { cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
+    fun openStandby() { cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); dispatch(GlassesEvent.OpenStandby) }
     /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
     fun startRealtimeHint() {
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -698,6 +761,7 @@ internal class BridgeService : Service() {
         val previous = nativeIdentity().getString("conversationKey")
         nativeIdentity(reset = true)
         conversations.resetAgentConversation()
+        cancelVoiceAlwaysOnStart()
         cancelRealtimeStream()
         agent.harness.cancel("hint")
         agent.harness.cancelConversation(previous)
@@ -844,7 +908,7 @@ internal class BridgeService : Service() {
         if (!dispatching) notifyUI()
     }
     private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    private fun summary() = state.displayDescription + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
+    private fun summary() = state.displayDescription + (if (voiceAlwaysOnStart.pending) " · 종일 기록 시작 대기" else "") + (if (reconnectCapture.pending) " · 종일 기록 재개 대기" else "") + when (state.audio.phase) {
         AudioPhase.RECEIVING -> " · 음성 수신 중"
         AudioPhase.WAITING_PACKET, AudioPhase.WAITING_PCM -> " · 오디오 대기 중"
         AudioPhase.STALLED -> " · 오디오 중단됨"
@@ -864,7 +928,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
-        reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
+        voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
         translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
