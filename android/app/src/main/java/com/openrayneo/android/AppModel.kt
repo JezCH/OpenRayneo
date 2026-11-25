@@ -316,6 +316,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 "asrLanguage" -> SpeechRounds.languageHints(config)
                 "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
                 "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
+                "memorySuggestOnSend" -> (config.optString(it) == "true").toString()
+                "memorySuggestionDays" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.days }?.toString() ?: "30"
+                "memorySuggestionLimit" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.limits }?.toString() ?: "3"
                 "ttsOutput" -> config.optString(it).takeIf { value -> value in setOf("headphones", "media") } ?: "headphones"
                 "ttsRate", "ttsPitch" -> config.optString(it).ifBlank { "1.0" }
                 else -> config.optString(it)
@@ -329,7 +332,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "offlineTranslationUrl", "offlineTranslationModel", "offlineTranslationKey", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
