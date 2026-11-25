@@ -213,6 +213,7 @@ internal class BridgeService : Service() {
                 val transition = GlassesCoordinator.reduce(state, events.removeFirst())
                 val previous = state
                 state = transition.state
+                if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     val active = conversations.state
                     reconnectCapture.linkLost(foreground && !previous.disconnecting && !state.disconnecting &&
@@ -498,6 +499,7 @@ internal class BridgeService : Service() {
                     }
                     AlwaysOnVoicePolicy.Command.START -> when {
                         !settings.read().optBoolean("voiceAlwaysOnStart") -> "음성 설정에서 종일 기록 음성 시작을 먼저 허용해 주세요."
+                        request.hintContext?.optJSONArray("segments")?.let { segments -> segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false } } != true -> "겹친 발화 또는 불확실한 명령입니다. 다시 요청해 주세요."
                         resumeAlwaysOn != null -> "기존 종일 기록의 재개를 기다리고 있습니다."
                         state.intent != DisplayIntent.Idle || state.session != null || translator.active -> "다른 화면 기능을 종료한 후 요청해 주세요."
                         else -> {
