@@ -179,6 +179,13 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             Note(if (!mobile && s.approvals.isNotEmpty()) "응답을 기다리는 중" else "처리 중…")
                         }
                     } else if (answer.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = {
+                                model.attempt { model.service().speakKorean(answer) }
+                            }, enabled = !s.speechPlaying && !s.conversation.running && !s.translationActive && !s.nativeWakeAvailable && !s.teleprompter.smartFollow) { Text("한국어로 듣기") }
+                            if (s.speechPlaying) TextButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 중지") }
+                        }
+                        Note(s.speechStatus + " · 휴대폰 미디어 출력 경로 사용. 이어폰 연결을 확인하세요.")
                         Row(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
