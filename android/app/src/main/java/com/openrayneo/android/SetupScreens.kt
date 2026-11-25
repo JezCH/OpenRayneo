@@ -265,6 +265,8 @@ internal fun SettingsScreen(
         SettingsRow("DSH Go 및 외부 Agent", "음성 작업 위임, 안경 도구 및 로컬 API", Icons.Outlined.Hub) { open("agent-api") }
         SectionLabel("개인화")
         SettingsRow("호출어 및 대기 시간", "한국어 소프트웨어 호출 설정", Icons.Outlined.Mic) { open("korean-wake") }
+        SectionLabel("기록 및 데이터")
+        SettingsRow("기존 기록 가져오기", "다른 설치본에서 전사·요약·음성 이전", Icons.Outlined.FolderOpen) { open("record-migration") }
         SectionLabel("권한 및 기기")
         SettingsRow("음성 및 요약", "안경 ASR, 인물 분석 및 기록 요약", Icons.Outlined.Mic) { open("voice-settings") }
         SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
