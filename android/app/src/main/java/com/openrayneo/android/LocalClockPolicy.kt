@@ -6,7 +6,8 @@ internal object LocalClockPolicy {
     const val MAX_TIMER_MS = 86_400_000L
     enum class Kind { TIMER_START, TIMER_READ, TIMER_CANCEL, WATCH_START, WATCH_READ, WATCH_STOP, WATCH_RESET }
     data class Command(val kind: Kind, val durationMs: Long? = null)
-    private val duration = "(?:([0-9]+)시간)?(?:([0-9]+)분)?(?:([0-9]+)초)?"
+    private const val numeral = KoreanCommandNumbers.TOKEN
+    private val duration = "(?:($numeral)시간)?(?:($numeral)분)?(?:($numeral)초)?"
     private val before = Regex("^타이머${duration}(?:로)?(?:시작해줘|설정해줘|맞춰줘)$")
     private val after = Regex("^${duration}타이머(?:를)?(?:시작해줘|설정해줘|맞춰줘)$")
     private val commands = mapOf(
@@ -17,11 +18,11 @@ internal object LocalClockPolicy {
         "스톱워치초기화해줘" to Kind.WATCH_RESET)
     fun parse(text: String, source: ConversationSource, backfill: Boolean): Command? {
         if (source != ConversationSource.NATIVE || backfill) return null
-        val clean = text.trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
+        val clean = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
         val body = when { clean.startsWith("안경") -> clean.removePrefix("안경"); clean.startsWith("레이네오") -> clean.removePrefix("레이네오"); else -> return null }
         commands[body]?.let { return Command(it) }
         val match = before.matchEntire(body) ?: after.matchEntire(body) ?: return null
-        val parts = match.groupValues.drop(1).map { if (it.isEmpty()) 0L else it.toLongOrNull() ?: return Command(Kind.TIMER_START) }
+        val parts = match.groupValues.drop(1).map { if (it.isEmpty()) 0L else KoreanCommandNumbers.parse(it)?.toLong() ?: return Command(Kind.TIMER_START) }
         val ms = if (parts[0] in 0..24 && parts[1] in 0..1440 && parts[2] in 0..86400)
             (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000 else 0L
         return Command(Kind.TIMER_START, ms.takeIf { it in 1000..MAX_TIMER_MS })
