@@ -104,8 +104,10 @@ internal fun GlassesSettingsScreen(model: AppModel) {
             settings.optJSONArray("supportedLanguages")?.let { languages ->
                 val choices = (0 until languages.length()).map { languages.getString(it) }
                 var language by remember(settings.optString("currentLang")) { mutableStateOf(settings.optString("currentLang")) }
-                if (choices.isNotEmpty() && language.isNotBlank()) SettingsSection("시스템 언어") {
-                    choices.forEach { option -> FilterChip(language == option, { language = option }, label = { Text(option) }, enabled = editable) }
+                if (choices.isNotEmpty() && language.isNotBlank()) SettingsSection("안경 자체 시스템 언어") {
+                    Note(if (choices.any(KoreanLanguage::isKoreanTag)) "안경이 한국어를 지원 언어로 보고했습니다. 적용 후 실제 표시를 확인하세요."
+                    else "현재 안경이 보고한 시스템 언어에 한국어가 없습니다. 앱 화면·한국어 자막·질문과는 별개입니다. 미지원 언어를 강제 전송하지 않습니다.")
+                    choices.forEach { option -> FilterChip(language == option, { language = option }, label = { Text(KoreanLanguage.deviceLanguageLabel(option)) }, enabled = editable) }
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.language(language) } }, enabled = editable) { Text("언어 적용") }
                 }
             }
@@ -137,7 +139,7 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 var word by remember(current) { mutableStateOf(current) }
                 SettingsSection("깨우기 명령어") {
                     SettingsChoice("명령어", word, listOf(2 to "Hey RayNeo (영어)", 1 to "샤오레이 샤오레이 (중국어)"), editable) { word = it }
-                    Note("안경 펌웨어의 깨우기 명령어를 변경합니다. 기기가 현재 값을 보고한 뒤에 표시됩니다.")
+                    Note("안경 펌웨어는 현재 확인된 프로토콜에서 영어·중국어 깨우기만 허용합니다. 한국어 깨우기 값은 확인되지 않았습니다. 영어로 깨우거나 다이얼의 어시스턴트 동작을 사용한 뒤 한국어로 질문할 수 있습니다. 실제 한국어 수신에는 안경 ASR 준비가 필요합니다.")
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.wakeWord(word) } }, enabled = editable) { Text("깨우기 명령어 적용") }
                 }
             }
