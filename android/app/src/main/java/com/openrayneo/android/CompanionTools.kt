@@ -48,6 +48,11 @@ internal object CompanionTools {
             "tags" to field("array", "태그").put("items", field("string", "태그")), "id" to field("string", "재시도용 고정 파생 ID"),
             "revision" to field("integer", "파생 항목 버전"), "agent" to field("string", "작성 Agent 이름")))
         put(definition("memory_search", "보존이 허용된 원문 발화와 출처가 있는 기억 검색. 인물 관계는 추론하지 않음", listOf("query"), "query" to field("string", "키워드")))
+        put(definition("memory_reference", "사용자가 이전 대화 기록을 명시적으로 참조할 때 우선 사용하는 범위 제한 원문 검색. 검색어 또는 날짜 범위 또는 실제 기록/인물 ID 필요. 원문 전사는 사실 검증이 아니며, 화자와 시각은 추정일 수 있음. more=true이면 범위를 좁힐 것.", emptyList(),
+            "query" to field("string", "한국어/영어 원문 키워드 또는 짧은 문구, 최대 160자"),
+            "from" to field("integer", "시작 Unix 밀리초. to와 함께 지정"), "to" to field("integer", "종료 Unix 밀리초. from과 함께 지정"),
+            "recordIds" to field("array", "실제로 확인한 기록 ID 1~20개").put("items", field("string", "기록 ID")),
+            "personId" to field("string", "실제로 확인한 인물 ID. 불확실한 화자 제외"), "limit" to field("integer", "1~6개, 기본 4개")))
         put(definition("teleprompter_start", "사용자가 표시를 요청한 원고를 안경으로 전송하고 자동 스크롤 시작", listOf("title", "text"),
             "title" to field("string", "원고 이름"), "text" to field("string", "전문"), "speed" to field("integer", "스크롤 속도 1~10, 기본값 2")))
         put(definition("teleprompter_control", "이 앱이 시작한 프롬프터 제어", listOf("action"), "action" to field("string", "pause、resume、stop")))
