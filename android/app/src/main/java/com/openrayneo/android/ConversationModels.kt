@@ -101,6 +101,7 @@ internal data class ConversationRecord(
     val derived: List<RecordDerived> = emptyList(), val summaries: List<RecordSummary> = emptyList(),
     val audioAnchors: List<AudioAnchor> = emptyList(), val audioChannels: Int = 1,
     val channelPolicy: String = "legacy_selected_mono", val processingCursors: Map<String, Long> = emptyMap(),
+    val transcriptOnly: Boolean = false, val transcriptIncomplete: Boolean = false,
 ) {
     fun completedFrames(channel: Int): Long = processingCursors[channel.toString()] ?: segments.filter { it.sourceChannel == channel }.maxOfOrNull { it.endMS * 16 } ?: 0L
     fun anchorAt(offsetMS: Long): AudioAnchor? = audioAnchors.filter { it.offsetMS <= offsetMS }.maxByOrNull { it.offsetMS }
@@ -117,6 +118,7 @@ internal data class ConversationRecord(
         .put("derived", JSONArray(derived.map { it.json() })).put("summaries", JSONArray(summaries.map { it.json() }))
         .put("audioAnchors", JSONArray(audioAnchors.map { it.json() })).put("audioChannels", audioChannels)
         .put("channelPolicy", channelPolicy).put("processingCursors", JSONObject(processingCursors))
+        .apply { if (transcriptOnly) put("transcriptOnly", true); if (transcriptIncomplete) put("transcriptIncomplete", true) }
         .put("speakerSamples", JSONObject().apply { speakerSamples.forEach { (id, samples) -> put(id, JSONArray(samples.map { JSONArray(it.toList()) })) } })
     companion object {
         fun parse(v: JSONObject) = ConversationRecord(v.getString("id"), ConversationMode.valueOf(v.getString("mode")), v.getLong("createdAt"), v.getString("title"),
@@ -132,7 +134,8 @@ internal data class ConversationRecord(
             v.optJSONArray("derived")?.let { a -> List(a.length()) { RecordDerived.parse(a.getJSONObject(it)) } } ?: emptyList(),
             v.optJSONArray("summaries")?.let { a -> List(a.length()) { RecordSummary.parse(a.getJSONObject(it)) } } ?: emptyList(),
             v.optJSONArray("audioAnchors")?.let { a -> List(a.length()) { AudioAnchor.parse(a.getJSONObject(it)) } } ?: emptyList(), v.optInt("audioChannels", 1), v.optString("channelPolicy", "legacy_selected_mono"),
-            v.optJSONObject("processingCursors")?.let { rows -> rows.keys().asSequence().associateWith { rows.getLong(it) } } ?: emptyMap())
+            v.optJSONObject("processingCursors")?.let { rows -> rows.keys().asSequence().associateWith { rows.getLong(it) } } ?: emptyMap(),
+            v.optBoolean("transcriptOnly"), v.optBoolean("transcriptIncomplete"))
     }
 }
 internal data class ConversationState(
