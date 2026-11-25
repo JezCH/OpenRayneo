@@ -14,7 +14,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 internal data class VoiceRequest(val text: String, val context: String, val source: ConversationSource,
-    val wakeId: String? = null, val forceDsh: Boolean = true, val recordId: String? = null, val sourceRevision: Int = 1, val backfill: Boolean = false)
+    val wakeId: String? = null, val forceDsh: Boolean = true, val recordId: String? = null, val sourceRevision: Int = 1, val backfill: Boolean = false,
+    val hintContext: JSONObject? = null, val lastSpeechAt: Long = 0L)
 
 /** Original channels share one frame clock; each analysis lane owns its ASR and committed cursor. */
 internal class ConversationController(private val context: Context, private val settings: AppSettings,
@@ -377,7 +378,8 @@ internal class ConversationController(private val context: Context, private val 
         val input = pendingAgent.toList(); val token = generation; val source = state.source; val contextGeneration = agentContextGeneration
         val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", record?.id).put("recordRevision", record?.revision)
         val voice = VoiceRequest(input.joinToString(" ") { it.text }, modePolicy.agentPrompt + "\n" + payload, source, input.lastOrNull()?.roundId,
-            true, record?.id, record?.revision ?: 1, input.any { it.processingMode == "backfill" })
+            true, record?.id, record?.revision ?: 1, input.any { it.processingMode == "backfill" },
+            payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt })
         dispatching = true; val ids = input.map { it.id }.toSet(); pendingAgent.removeAll { it.id in ids }
         main.post {
             val accepted = if (token == generation && contextGeneration == agentContextGeneration) request(voice) else null
@@ -487,7 +489,8 @@ internal class ConversationController(private val context: Context, private val 
             val input = pendingAgent.toList(); val source = state.source
             val payload = modePolicy.input(source, input, repository.people, previous, previousReply).put("recordId", finished?.id).put("recordRevision", finished?.revision)
             val voice = VoiceRequest(input.joinToString(" ") { it.text }, modePolicy.agentPrompt + "\n" + payload, source, input.lastOrNull()?.roundId,
-                true, finished?.id, finished?.revision ?: 1, input.any { it.processingMode == "backfill" })
+                true, finished?.id, finished?.revision ?: 1, input.any { it.processingMode == "backfill" },
+                payload, input.maxOf { it.timelineEndAt.takeIf { time -> time > 0L } ?: it.receivedAt })
             val contextGeneration = agentContextGeneration
             main.post { if (contextGeneration == agentContextGeneration) request(voice) }
         }

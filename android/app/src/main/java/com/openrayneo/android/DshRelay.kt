@@ -3,6 +3,7 @@
 package com.openrayneo.android
 
 import android.os.Handler
+import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -12,7 +13,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private val restored: (String, String, JSONObject) -> Unit, private val progress: (String) -> Unit) {
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
-        var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis()) {
+        var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L) {
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
@@ -32,21 +33,46 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         }
     }
     private fun persist() {
-        val finished = requests.values.filter { it.state !in setOf("queued", "running") }.dropLast(64).map { it.id }.toSet()
-        finished.forEach { requests.remove(it) }
-        repository.saveAgentOutbox(JSONArray(requests.values.map { it.json() }))
+        val finished = requests.values.filter { it.state !in setOf("queued", "running") }
+        val prune = finished.filter { it.hintDeadline == 0L }.dropLast(64) +
+            finished.filter { it.hintDeadline > 0L }.dropLast(16)
+        prune.forEach { requests.remove(it.id) }
+        repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L }.map { it.json() }))
     }
-    fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null, complete: (Result<String>) -> Unit): String {
+    fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
+               hintLifetimeMs: Long = 0L, complete: (Result<String>) -> Unit): String {
+        require(hintLifetimeMs in 0L..ProactiveHintPolicy.MAX_AGE_MS && (hintLifetimeMs == 0L || kind == "hint"))
         val id = UUID.randomUUID().toString()
         if (input?.optString("recordId")?.isNotBlank() == true) input.put("derivedId", id)
-        val request = Request(id, text, context, complete, kind, input)
-        synchronized(lock) { requests[request.id] = request; persist(); lock.notifyAll() }
+        val request = Request(id, text, context, complete, kind, input,
+            hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L)
+        synchronized(lock) {
+            expireHints()
+            if (request.hintDeadline > 0L) {
+                // Keep at most one pending passive hint; do not cancel an in-flight useful result just for newer speech.
+                requests.values.filter { it.hintDeadline > 0L && it.state == "queued" }.forEach { cancelHint(it) }
+            }
+            requests[request.id] = request; persist(); lock.notifyAll()
+        }
+        if (request.hintDeadline > 0L) main.postDelayed({
+            synchronized(lock) { expireHints(); lock.notifyAll() }
+        }, hintLifetimeMs)
         return id
     }
     private fun deliver(request: Request) { main.post {
         request.complete(Result.success(request.answer.orEmpty()))
         synchronized(lock) { request.delivered = true; persist() }
     } }
+    // Call only under lock. Transient hints never survive a service restart.
+    private fun cancelHint(request: Request) {
+        request.state = "cancelled"
+        main.post { request.complete(Result.failure(IllegalStateException("선제 힌트 만료 또는 대체"))) }
+    }
+    private fun expireHints() {
+        val now = SystemClock.elapsedRealtime()
+        requests.values.filter { it.hintDeadline > 0L && it.state in setOf("queued", "running") &&
+            ProactiveHintPolicy.remaining(now, it.hintDeadline) == 0L }.forEach { cancelHint(it) }
+    }
     private fun scheduleTimeout(request: Request) {
         val timeout = if (request.kind == "task") 600_000L else 90_000L
         val remaining = (request.claimedAt + timeout - System.currentTimeMillis()).coerceAtLeast(0)
@@ -62,16 +88,32 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     fun next(authorized: () -> Boolean): JSONObject {
         val deadline = System.currentTimeMillis() + 20_000
         synchronized(lock) {
+            expireHints()
             while (authorized() && requests.values.none { it.state == "queued" }) {
                 val remaining = deadline - System.currentTimeMillis()
                 if (remaining <= 0) return JSONObject().put("request", JSONObject.NULL)
                 lock.wait(minOf(remaining, 1_000))
+                expireHints()
             }
             check(authorized()) { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
-            val request = requests.values.first { it.state == "queued" }
-            request.state = "running"; request.claimedAt = System.currentTimeMillis(); persist(); scheduleTimeout(request)
-            main.post { progress("로컬 외부 Agent가 수신함. 휴대폰 작업과 승인은 Agent 앱에서 확인하세요") }
-            return JSONObject().put("request", request.json().put("createdFor", "openrayneo").put("expiresInSeconds", if (request.kind == "task") 600 else 90))
+            expireHints()
+            // Explicit/durable tasks take precedence over suggestions.
+            val request = requests.values.firstOrNull { it.state == "queued" && it.hintDeadline == 0L }
+                ?: requests.values.firstOrNull { it.state == "queued" }
+                ?: return JSONObject().put("request", JSONObject.NULL)
+            val hintRemaining = if (request.hintDeadline > 0L)
+                ProactiveHintPolicy.remaining(SystemClock.elapsedRealtime(), request.hintDeadline) else 0L
+            if (request.hintDeadline > 0L && hintRemaining == 0L) {
+                cancelHint(request)
+                return JSONObject().put("request", JSONObject.NULL)
+            }
+            request.state = "running"; request.claimedAt = System.currentTimeMillis(); persist()
+            if (request.hintDeadline == 0L) {
+                scheduleTimeout(request)
+                main.post { progress("로컬 외부 Agent가 수신함. 휴대폰 작업과 승인은 Agent 앱에서 확인하세요") }
+            }
+            val seconds = if (request.hintDeadline > 0L) (hintRemaining + 999L) / 1000L else if (request.kind == "task") 600L else 90L
+            return JSONObject().put("request", request.json().put("createdFor", "openrayneo").put("expiresInSeconds", seconds))
         }
     }
     fun list(): JSONArray = synchronized(lock) { JSONArray(requests.values.map { request ->
@@ -80,11 +122,14 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             .put("backfill", request.input?.optBoolean("backfill") ?: false)
     }) }
     fun status(id: String): JSONObject = synchronized(lock) {
+        expireHints()
         val request = requests[id]
         JSONObject().put("id", id).put("state", request?.state ?: "cancelled").put("sessionId", request?.session.orEmpty())
     }
     fun update(id: String, body: JSONObject): JSONObject = synchronized(lock) {
+        expireHints()
         val request = checkNotNull(requests[id]) { "DSH 요청이 만료됨" }
+        if (request.hintDeadline > 0L && request.state == "cancelled") return status(id)
         if (request.state == "completed" && body.optString("state") == "completed") return status(id)
         check(request.state == "running") { "DSH 요청이 종료되었거나 취소됨" }
         if (body.has("sessionId")) request.session = body.getString("sessionId")

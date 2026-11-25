@@ -56,6 +56,7 @@ internal class BridgeService : Service() {
     private var nextAnswer = 0L
     private val serviceInstance = java.util.UUID.randomUUID().toString()
     private var latestRealtimeRequest = 0L
+    private val proactiveHintGate = ProactiveHintPolicy.DisplayGate()
     private val pendingAnswers = mutableMapOf<AnswerSource, AnswerPermit>()
     private data class VoiceDelivery(val ref: AnswerRef, val source: ConversationSource, val wakeId: String?)
     private var voiceReply: VoiceDelivery? = null
@@ -458,6 +459,23 @@ internal class BridgeService : Service() {
         // The glasses window shows only a few lines; ask the Agent to fit them (0 = no limit).
         val maxChars = settings.read().optString("answerMaxChars").toIntOrNull() ?: DEFAULT_ANSWER_MAX_CHARS
         val limit = if (maxChars > 0) "\n[안경 표시] 답변은 ${maxChars}자 이내. 더 필요하면 요약하고, 자세히 요청받을 때만 이어서 말한다." else ""
+        // Passive AlwaysOn suggestions reuse the existing tool-free DSH hint path, not durable Agent tasks.
+        if (request.source == ConversationSource.ALWAYS_ON && !request.backfill) {
+            val active = conversations.state
+            val payload = request.hintContext
+            val lifetime = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt)
+            if (payload == null || lifetime == 0L || request.recordId.isNullOrBlank() ||
+                !active.running || active.stopping || active.activeRecord?.id != request.recordId ||
+                active.source != ConversationSource.ALWAYS_ON || destroyed || state.disconnecting ||
+                state.link.phase != LinkPhase.FULL || voiceTransport.source != ConversationSource.ALWAYS_ON) return true
+            input.put("voiceContext", payload).put("hintSequence", ++nextAnswer)
+                .put("hintDeadline", SystemClock.elapsedRealtime() + lifetime)
+            agent.harness.submit(request.text, conversations.modePolicy.proactiveHintPrompt + limit,
+                kind = "hint", input = input, hintLifetimeMs = lifetime) { result ->
+                result.onSuccess { answer -> deliverExternalVoice(request.text, answer, input) }
+            }
+            return true
+        }
         // The relay's encrypted outbox accepts work even while DSH or the network is unavailable.
         agent.harness.submit(request.text, request.context + limit, input = input) { result ->
             result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
@@ -473,8 +491,18 @@ internal class BridgeService : Service() {
             return
         }
         val source = ConversationSource.values().firstOrNull { it.name == input.optString("source") }
-        if (VoiceOutputPolicy.isSilent(answer, source)) return
+        val passiveHint = input.has("hintDeadline")
+        if (!passiveHint && VoiceOutputPolicy.isSilent(answer, source)) return
         val id = input.optString("recordId")
+        if (passiveHint) {
+            val active = conversations.state
+            if (source != ConversationSource.ALWAYS_ON || !active.running || active.stopping || active.activeRecord?.id != id ||
+                active.source != ConversationSource.ALWAYS_ON || destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
+                input.optString("serviceInstance") != serviceInstance || input.optString("contextKey") != nativeIdentity().getString("conversationKey") ||
+                input.optBoolean("backfill") || voiceTransport.nativeActive || voiceTransport.source != ConversationSource.ALWAYS_ON ||
+                state.intent != DisplayIntent.Idle || state.ownership != DisplayOwnership.APP) return
+            if (!proactiveHintGate.accept(id, input.optLong("hintSequence"), answer, SystemClock.elapsedRealtime(), input.optLong("hintDeadline"))) return
+        }
         if (id.isNotBlank()) {
             conversations.repository.applyDerived(RecordDerived(id = input.optString("derivedId").ifBlank { java.util.UUID.randomUUID().toString() }, recordId = id, sourceRevision = input.optInt("sourceRevision", 1),
                 kind = "analysis", text = answer, agent = "phone-local-agent"))
@@ -494,7 +522,7 @@ internal class BridgeService : Service() {
                 active.source == ConversationSource.REALTIME && conversationOwnsDisplay && state.ownership == DisplayOwnership.APP,
             alwaysOnCurrent = sameRecord && active.source == ConversationSource.ALWAYS_ON)
         if (route == VoiceOutputPolicy.Route.NONE) return
-        conversations.rememberReply(question, answer)
+        if (!passiveHint) conversations.rememberReply(question, answer)
         when (route) {
             VoiceOutputPolicy.Route.NATIVE -> voiceTransport.reply(answer, question, checkNotNull(wake))
             VoiceOutputPolicy.Route.REALTIME -> {
@@ -584,6 +612,7 @@ internal class BridgeService : Service() {
         val previous = nativeIdentity().getString("conversationKey")
         nativeIdentity(reset = true)
         conversations.resetAgentConversation()
+        agent.harness.cancel("hint")
         agent.harness.cancelConversation(previous)
         clearAgent()
     }
