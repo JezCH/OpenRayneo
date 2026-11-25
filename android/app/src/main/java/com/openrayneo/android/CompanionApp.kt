@@ -80,6 +80,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "korean-wake" -> "한국어 호출"
                                 "korean-glyphs" -> "한글 표시 검사"
                                 "phone-notifications" -> "휴대폰 알림"
+                                "record-migration" -> "기존 기록 가져오기"
                                 else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                             }
                         )
@@ -172,6 +173,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") })
                 "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
+                "record-migration" -> RecordMigrationScreen(model)
                 "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
                     { openRoute("device-settings") }, { openRoute(it) })
                 else ->
