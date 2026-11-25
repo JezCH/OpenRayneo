@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { setTimeout as delay } from 'node:timers/promises'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
+import { createHintPreview } from './hint-preview.js'
 import { ApiError } from './api.js'
 import {nativeScope, nativeSession} from './native-sessions.js'
 import modePrompts from './voice-modes.json' with {type: 'json'}
@@ -131,6 +132,14 @@ export function startHarness(ctx, config, api, lifetime, opening) {
       if (request.kind === 'route' || request.kind === 'hint') {
         const route = ctx.agentDefaultModel.currentSelection()
         const assembler = new BlockAssembler()
+        const preview = request.kind === 'hint' && request.input?.streamHint === true
+          ? createHintPreview(answer => {
+              if (signal.aborted) return
+              return api(`/v1/harness/requests/${request.id}`, {
+                body: {state: 'partial', answer}, signal, timeoutMs: 800
+              })
+            })
+          : null
         ctx.logger?.info?.(`OpenRayneo ${request.kind} ${request.id}: ${route.provider}/${route.model}`)
         for await (const chunk of ctx.llm.stream({
           ...route, system: request.context || (request.kind === 'route' ? `${modePrompts.routing}\nJSON 객체만 반환: {"route":"wait 또는 hint 또는 agent"}` : modePrompts.hint),
@@ -139,6 +148,10 @@ export function startHarness(ctx, config, api, lifetime, opening) {
         })) {
           signal.throwIfAborted()
           assembler.push(chunk)
+          if (preview) {
+            // Older SDK assemblers may expose only completed blocks; fall back to final delivery.
+            try { preview(textOf(assembler.blocks())) } catch { /* preview is optional */ }
+          }
         }
         signal.throwIfAborted()
         if (assembler.finish.kind !== 'stop')
