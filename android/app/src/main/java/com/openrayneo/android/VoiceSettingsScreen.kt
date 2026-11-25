@@ -19,7 +19,7 @@ import org.json.JSONObject
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
-    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
+    val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
@@ -34,6 +34,16 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             }
         }
         Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 휴대폰에 설치된 시스템 음성 인식 서비스의 언어 및 네트워크 지원을 따릅니다. 아래 안경 ASR과 별도 설정입니다.")
+        SectionLabel("AI 기본 답변 언어")
+        val answerLanguage = KoreanLanguage.answerLanguage(drafts["answerLanguage"].orEmpty())
+        KoreanLanguage.answerOptions.forEach { (code, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(answerLanguage == code, { drafts["answerLanguage"] = code })
+                Text(label)
+            }
+        }
+        Note("기본은 한국어입니다. 일반 AI 답변과 한국어 호출 질문, PC 작업 응답에 적용할 언어를 선택합니다. 사용자가 명시한 번역·다른 언어 요청은 우선합니다. 기록 원문 및 별도 요약 설정은 변경하지 않습니다.")
+        TextButton(onClick = { drafts["answerLanguage"] = KoreanLanguage.DEFAULT_LOCALE; drafts["phoneSpeechLanguage"] = KoreanLanguage.DEFAULT_LOCALE }) { Text("기본 한국어로 복원") }
         SectionLabel("안경 음성 인식 엔진 (ASR)")
         var engine by remember(model.config) { mutableStateOf(SpeechRounds.engine(model.config)) }
         Column {
