@@ -30,6 +30,7 @@ import org.json.JSONObject
 @Composable
 internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
+    var memoryQuestion by remember { mutableStateOf(false) }
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
     val running = if (mobile) s.phoneRunning else s.computerRunning
@@ -57,6 +58,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         if (followLatest && list.layoutInfo.totalItemsCount > 0)
             list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
+    if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft) { memoryQuestion = false }
     Column(Modifier.fillMaxSize().imePadding()) {
         SingleChoiceSegmentedButtonRow(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
@@ -185,7 +187,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             }, enabled = !s.speechPlaying && !s.conversation.running && !s.translationActive && !s.nativeWakeAvailable && !s.teleprompter.smartFollow) { Text("한국어로 듣기") }
                             if (s.speechPlaying) TextButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 중지") }
                         }
-                        Note(s.speechStatus + " · 휴대폰 미디어 출력 경로 사용. 이어폰 연결을 확인하세요.")
+                        Note(s.speechStatus + " · 기본은 이어폰 경로 확인 후 재생합니다. 무음이 필요한 장소에서는 HUD만 사용하세요.")
                         Row(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -240,6 +242,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                if (mobile) TextButton(onClick = { memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
