@@ -35,14 +35,14 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         }
         Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 휴대폰에 설치된 시스템 음성 인식 서비스의 언어 및 네트워크 지원을 따릅니다. 아래 안경 ASR과 별도 설정입니다.")
         SectionLabel("안경 음성 인식 엔진 (ASR)")
-        var engine by remember(model.config) { mutableStateOf(model.config.optString("asrEngine").ifBlank { "cloud" }) }
+        var engine by remember(model.config) { mutableStateOf(SpeechRounds.engine(model.config)) }
         Column {
             listOf("cloud" to "클라우드 (Bailian Qwen)", "nemotron" to "기기 내장 · 실시간 다국어 (Nemotron)", "stream" to "기기 내장 · 실시간 한국어 (zipformer)",
                 "local" to "기기 내장 · 문장 단위 (SenseVoice)").forEach { (key, label) ->
                 Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { engine = key; drafts["asrEngine"] = key }); Text(label) }
             }
         }
-        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐집니다. Nemotron은 한국어·영어 등 다국어(언어 힌트가 하나면 그 언어로 고정, 아니면 자동 감지)이며 무겁고, zipformer는 가볍지만 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 스트리밍 대신 SenseVoice(없으면 클라우드)를 씁니다.")
+        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐집니다. Nemotron은 한국어·영어 등 다국어(언어 힌트가 하나면 그 언어로 고정, 아니면 자동 감지)이며 무겁고, zipformer는 가볍지만 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 전용 모델 대신 설치된 SenseVoice 또는 Nemotron을 사용합니다. 둘 다 없으면 로컬 모델을 준비해야 하며 클라우드로 자동 전환하지 않습니다.")
         val context = LocalContext.current
         SpeechRounds.model(JSONObject().put("asrEngine", engine))?.let { local ->
             var access by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
@@ -81,7 +81,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
         VoiceField(model, "asrModel", "모델", "qwen-audio-3.1-asr-flash-message")
         var asrLanguages by remember(model.config) {
-            mutableStateOf(model.config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
+            mutableStateOf(SpeechRounds.languageHints(model.config).split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
         }
         fun toggleLanguage(code: String, on: Boolean) {
             asrLanguages = if (on) asrLanguages + code else asrLanguages - code
