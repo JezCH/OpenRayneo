@@ -137,7 +137,8 @@ internal class MainActivity : ComponentActivity() {
                                             RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
                                         )
-                                        .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+                                        .putExtra(RecognizerIntent.EXTRA_LANGUAGE, KoreanLanguage.phoneInput(model.config.optString("phoneSpeechLanguage")))
+                                        .putExtra(RecognizerIntent.EXTRA_PROMPT, "AI에게 질문할 내용을 말하세요")
                                 )
                             }
                         },

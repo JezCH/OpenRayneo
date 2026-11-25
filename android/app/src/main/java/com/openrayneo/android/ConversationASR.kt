@@ -20,7 +20,7 @@ internal class ConversationASR(config: JSONObject,
     private val key = config.optString("asrKey").trim()
     private val address = config.optString("asrUrl").ifBlank { "wss://dashscope.aliyuncs.com/api-ws/v1/inference" }
     // Comma-separated ISO codes (e.g. "ko,en"); blank keeps the service's automatic language detection.
-    private val languages = config.optString("asrLanguage").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    private val languages = SpeechRounds.languageHints(config).split(',').map { it.trim() }.filter { it.isNotEmpty() }
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
     private val pending = Buffer()

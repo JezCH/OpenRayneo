@@ -97,7 +97,7 @@ internal class NotificationRecovery(
             // directions.
             state = NotificationReadState(NotificationReadPhase.CONNECTED, "알림 리스너 연결됨")
             replace(entries, state)
-            log("알림 스냅샷 동기화: Amap 후보 ${entries.size}개, 파싱 가능 ${entries.count { it.instruction != null }}개")
+            log("알림 스냅샷 동기화: 길 안내 후보 ${entries.size}개, 파싱 가능 ${entries.count { it.instruction != null }}개")
         } catch (failure: Exception) {
             if (reader !== active) return
             reader = null

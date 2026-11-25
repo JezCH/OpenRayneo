@@ -193,7 +193,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
                 Text("내비게이션 알림 소스", style = MaterialTheme.typography.headlineSmall)
                 Note("회전 방향과 거리가 포함된 알림을 선택하세요. '내비게이션 중' 메시지만으로는 방향을 알 수 없습니다.", Modifier.padding(vertical = 12.dp))
-                if (s.navigationEntries.isEmpty()) Note("아직 Amap 내비게이션 알림을 받지 못했습니다")
+                if (s.navigationEntries.isEmpty()) Note("아직 길 안내 알림을 받지 못했습니다")
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(s.navigationEntries, key = { it.key }) { entry ->
                         OutlinedCard(
@@ -212,7 +212,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text(
-                                    entry.title.ifBlank { "Amap 내비게이션" },
+                                    entry.sourceName + " · " + entry.title.ifBlank { "길 안내" },
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Note(entry.texts.filter { it != entry.title }.joinToString("\n"))
@@ -238,7 +238,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
             text = { Text("현재 기록과 자동 재개를 중단합니다.") },
             confirmButton = { TextButton(onClick = {
                 pendingNavigation = null
-                model.attempt { model.service().stopConversation(); model.service().followNavigation(key) }
+                model.attempt { model.service().followNavigation(key) }
             }) { Text("기록 종료 및 전환") } },
             dismissButton = { TextButton(onClick = { pendingNavigation = null }) { Text("취소") } }
         )
@@ -471,7 +471,7 @@ private fun NavigationScreen(
     val s = model.state
     val nav = s.glasses.navigation
     val entry = s.navigationEntries.firstOrNull { it.key == nav.key }
-    val instruction = entry?.instruction?.takeIf { nav.enabled && s.notificationConnected }
+    val instruction = entry?.safeInstruction?.takeIf { nav.enabled && s.notificationConnected }
     var time by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(entry?.updatedAt) {
         while (true) {
@@ -487,7 +487,7 @@ private fun NavigationScreen(
         item { GlassesOutputPreview(s.glasses) }
         item {
             ContentCard {
-                Text("Amap 알림", style = MaterialTheme.typography.titleMedium)
+                Text("지도 앱 알림", style = MaterialTheme.typography.titleMedium)
                 if (instruction != null) {
                     Text(
                         "${instruction.direction} · ${instruction.meters} m",
@@ -509,7 +509,7 @@ private fun NavigationScreen(
         item {
             ContentCard {
                 Text(
-                    if (nav.enabled) "Amap 알림을 따라가는 중" else "시작 준비",
+                    if (nav.enabled) "지도 앱 알림을 따라가는 중" else "시작 준비",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Note(s.notificationReadStatus)
@@ -523,7 +523,7 @@ private fun NavigationScreen(
                 Note(s.navigationStatus)
                 if (entry != null && nav.enabled) {
                     val age = ((time - entry.updatedAt).coerceAtLeast(0) / 1000)
-                    Note("최근 알림 수신: ${if (age < 60) "${age}초 전" else "${age / 60}분 전"} · Amap의 실시간 안내를 기준으로 하세요")
+                    Note("최근 알림 수신: ${if (age < 60) "${age}초 전" else "${age / 60}분 전"} · 휴대폰 지도 앱의 실시간 안내를 기준으로 하세요")
                 }
                 if (!model.notificationAllowed)
                     ToolButton(
@@ -533,8 +533,9 @@ private fun NavigationScreen(
                         Text("알림 접근 허용")
                     }
                 else if (!nav.enabled)
-                    ToolButton(onClick = actions.openGaode, modifier = Modifier.fillMaxWidth()) {
-                        Text("Amap 내비게이션 열기")
+                    Column {
+                        Note("사용할 지도 앱에서 직접 경로 안내를 시작한 뒤 아래 알림 소스를 선택하세요.")
+                        TextButton(onClick = actions.openGaode) { Text("Amap 열기") }
                     }
                 if (nav.enabled) {
                     if (s.glasses.link.phase != LinkPhase.FULL)
@@ -561,7 +562,7 @@ private fun NavigationScreen(
                     ) {
                         Text("안경 추종 중지")
                     }
-                    Note("안경 추종만 중지되고 Amap 내비게이션은 계속 실행됩니다.")
+                    Note("안경 추종만 중지되고 지도 앱의 길 안내는 계속 실행됩니다.")
                 }
             }
         }
@@ -571,7 +572,7 @@ private fun NavigationScreen(
                     headlineContent = { Text("알림 소스") },
                     supportingContent = {
                         Text(
-                            if (s.navigationEntries.isEmpty()) "Amap 내비게이션 알림 대기 중"
+                            if (s.navigationEntries.isEmpty()) "길 안내 알림 대기 중"
                             else "${s.navigationEntries.size}개 후보 알림 · 탭하여 선택"
                         )
                     },
@@ -582,7 +583,7 @@ private fun NavigationScreen(
             }
         }
         item {
-            TextButton(onClick = actions.openGaode) { Text("Amap에서 경로 보기") }
+            Note("네이버지도·카카오맵·카카오내비·티맵은 한국어 방향과 거리를 포함한 시스템 내비게이션 알림에 한해 실험적으로 인식합니다. 실제 앱별 알림 형태는 미검증입니다. 정차 상태에서 확인하고 주행 중에는 휴대폰 안내를 기준으로 하세요.")
             ToolOutlinedButton(
                 onClick = {
                     model.attempt {
@@ -594,7 +595,7 @@ private fun NavigationScreen(
                 Text("알림 읽기 복구")
             }
             Note("알림 권한과 추종 선택을 유지한 채 리스너를 다시 연결하고 현재 알림을 읽습니다.")
-            Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 Amap 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
+            Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 지도 앱 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
         }
     }
 }

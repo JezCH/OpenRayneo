@@ -452,7 +452,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             Text("알림 읽기", style = MaterialTheme.typography.titleMedium)
             Note(if (model.notificationAllowed) "시스템 권한 허용됨" else "시스템 권한 미허용")
             Note(s.notificationReadStatus)
-            Note("현재 Amap 후보: ${s.navigationEntries.size}개")
+            Note("현재 길 안내 후보: ${s.navigationEntries.size}개")
             if (s.notificationSnapshotAt > 0)
                 Note(
                     "최근 스냅샷 동기화: " +

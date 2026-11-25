@@ -15,7 +15,7 @@ internal object FocusPolicy {
         "알림상태알려줘" to Command.NOTIFICATIONS_READ)
     fun parse(text: String, source: ConversationSource, backfill: Boolean): Command? {
         if (source != ConversationSource.NATIVE || backfill) return null
-        val clean = text.trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
+        val clean = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
         val body = when { clean.startsWith("안경") -> clean.removePrefix("안경"); clean.startsWith("레이네오") -> clean.removePrefix("레이네오"); else -> return null }
         return commands[body]
     }

@@ -8,7 +8,7 @@ internal object AlwaysOnVoicePolicy {
     private val stop = setOf("종일기록중지해줘", "종일기록꺼줘", "종일기록종료해줘", "일상기록중지해줘")
     fun parse(text: String, source: ConversationSource, backfill: Boolean): Command? {
         if (source != ConversationSource.NATIVE || backfill) return null
-        val clean = text.trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
+        val clean = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot(Char::isWhitespace)
         val command = clean.removePrefix("안경").let { if (clean.startsWith("안경")) it else clean.removePrefix("레이네오") }
         if (command == clean) return null
         return when (command) { in start -> Command.START; in stop -> Command.STOP; else -> null }

@@ -279,7 +279,12 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     private fun resetFormDrafts() {
         configurationKeys.forEach {
-            formDrafts[it] = config.optString(it)
+            formDrafts[it] = when (it) {
+                "asrEngine" -> SpeechRounds.engine(config)
+                "asrLanguage" -> SpeechRounds.languageHints(config)
+                "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
+                else -> config.optString(it)
+            }
         }
     }
 
@@ -289,7 +294,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
     companion object {
         val configurationKeys = listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend", "localAgentPort", "codexUrl", "codexCwd", "codexToken",
-            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
+            "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "decisionKey", "decisionUrl", "decisionModel", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel",
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
