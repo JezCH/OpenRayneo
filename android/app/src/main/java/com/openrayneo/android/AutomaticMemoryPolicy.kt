@@ -14,7 +14,7 @@ internal object AutomaticMemoryPolicy {
         .findAll(KoreanLanguage.normalize(question).lowercase(java.util.Locale.ROOT))
         .map { it.value }.filterNot { it in stop || it.all(Char::isDigit) }
         .distinct().take(8).toList()
-    fun search(question: String, options: Options, now: Long, records: List<MemoryReferencePolicy.Source>): MemoryReferencePolicy.Result {
+    fun search(question: String, options: Options, now: Long, records: Sequence<MemoryReferencePolicy.Source>): MemoryReferencePolicy.Result {
         val terms = keywords(question)
         if (terms.isEmpty()) return MemoryReferencePolicy.Result(emptyList(), false)
         val from = (now - options.days * 86_400_000L).coerceAtLeast(0)
