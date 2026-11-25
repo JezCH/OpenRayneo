@@ -69,7 +69,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     bottomStart = 8.dp,
                 ),
             ) {
-                Text(if (s.phoneRunning) "로컬 Agent · 처리 중" else "로컬 Agent")
+                Text(if (s.phoneRunning) "AI · 처리 중" else "AI 비서")
             }
             SegmentedButton(
                 !mobile,
@@ -81,7 +81,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             ) {
                 Text(
                     if (s.approvals.isNotEmpty()) "컴퓨터 · 응답 대기"
-                    else if (s.computerRunning) "컴퓨터 · 처리 중" else "컴퓨터 Codex"
+                    else if (s.computerRunning) "컴퓨터 · 처리 중" else "PC 작업"
                 )
             }
         }
@@ -91,7 +91,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                if (mobile && configured && question.isBlank() && !running) "작업은 로컬 Agent가 처리 · DSH Go 플러그인을 계속 실행해 두세요"
+                if (mobile && configured && question.isBlank() && !running) "AI 연결 기능 켜짐 · DSH Go 플러그인이 실행 중이어야 합니다"
                 else status,
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,
@@ -129,7 +129,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
                         )
                         ToolButton(onClick = { configure(if (mobile) "agent-api" else "computer") }) {
-                            Text(if (mobile) "로컬 Agent 설정" else "컴퓨터 연결 설정")
+                            Text(if (mobile) "AI 연결 설정" else "컴퓨터 연결 설정")
                         }
                     }
                 }
@@ -241,7 +241,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         draft,
                         { if (mobile) model.phoneDraft = it else model.computerDraft = it },
                         Modifier.weight(1f),
-                        placeholder = { Text(if (mobile) "로컬 Agent에게 맡길 작업…" else "컴퓨터에 맡길 작업…") },
+                        placeholder = { Text(if (mobile) "질문하거나 작업을 요청하세요…" else "컴퓨터에 맡길 작업…") },
                         maxLines = 5,
                         shape = MaterialTheme.shapes.large,
                     )
