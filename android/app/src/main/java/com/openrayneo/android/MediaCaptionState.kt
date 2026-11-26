@@ -2,7 +2,8 @@
 package com.openrayneo.android
 
 internal enum class MediaCaptionScope { YOUTUBE, ALL_MEDIA }
-internal data class MediaCaptionOptions(val scope: MediaCaptionScope = MediaCaptionScope.YOUTUBE, val language: String = "en") {
+internal data class MediaCaptionOptions(val scope: MediaCaptionScope = MediaCaptionScope.YOUTUBE, val language: String = "en",
+                                        val translateToKorean: Boolean = true) {
     init { require(language in setOf("en", "ja", "zh", "ko")) }
 }
 internal enum class MediaCapturePhase { IDLE, STARTING, CAPTURING, STOPPING, ERROR }

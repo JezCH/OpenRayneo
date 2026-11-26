@@ -37,6 +37,12 @@ internal class LiveTranslator(
     private var wakeAction: ((String) -> Unit)? = null
     val wakeActive get() = active && wakeWindow != null
     val offline = OfflineTranslation(main, changed)
+    val mediaTranslation = MediaLocalTranslation(context, main, changed)
+    private var mediaTranslate = false
+    private var mediaLanguage = "en"
+    private var mediaFinalSource = ""
+    private var mediaFinalTarget = ""
+    private var mediaRenderedSequence = 0L
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -102,10 +108,15 @@ internal class LiveTranslator(
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
         return speech
     }
-    fun startMediaCaption(id: String, language: String) = startSpeech(mediaCaptionConfig(language), true, false, id)
+    fun startMediaCaption(id: String, options: MediaCaptionOptions) = startSpeech(mediaCaptionConfig(options.language), true, false, id,
+        MediaTranslationRoute.required(options.language, options.translateToKorean), options.language)
 
-    private fun startSpeech(speech: JSONObject, captions: Boolean, local: Boolean, mediaId: String? = null) {
+    private fun startSpeech(speech: JSONObject, captions: Boolean, local: Boolean, mediaId: String? = null,
+                            translateMedia: Boolean = false, mediaSourceLanguage: String = "en") {
         stop()
+        mediaTranslate = translateMedia
+        mediaLanguage = mediaSourceLanguage
+        mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
         synchronized(this) {
             mediaSessionId = mediaId
             captionOnly = captions
@@ -116,6 +127,7 @@ internal class LiveTranslator(
             resampler = ConversationAudio()
         }
         history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
+        if (mediaTranslate) mediaTranslation.begin(checkNotNull(mediaId), mediaLanguage)
         status = listening()
         openASR()
         changed()
@@ -138,6 +150,7 @@ internal class LiveTranslator(
     /** Must be called on the main thread. [reason] stays visible as the status after stopping. */
     fun stop(reason: String? = null) {
         val wasActive: Boolean
+        val oldMedia = mediaSessionId
         synchronized(this) {
             wasActive = active
             active = false
@@ -148,6 +161,8 @@ internal class LiveTranslator(
         restartTask?.let(main::removeCallbacks); restartTask = null
         call?.cancel()
         offline.cancel()
+        if (oldMedia != null) mediaTranslation.end(oldMedia)
+        mediaTranslate = false; mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
         wakeWindow = null; wakeAction = null
         history.clear(); sourceLine = ""; targetLine = ""
         if (wasActive || reason != null) { status = reason ?: if (captionOnly) "실시간 자막 꺼짐" else OFF; changed() }
@@ -182,7 +197,7 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread (service onDestroy). */
-    fun close() { stop(); offline.close(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
+    fun close() { stop(); mediaTranslation.close(); offline.close(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
 
     private fun openASR() {
         val token: Int
@@ -224,9 +239,27 @@ internal class LiveTranslator(
         if (failures != 0 || status != listening()) { failures = 0; status = listening(); changed() }
     }
 
-    private fun listening() = if (wakeActive) "한국어 호출 대기" else if (mediaSessionId != null) "휴대폰 재생음 · 로컬 원문 자막" else if (captionOnly) "듣는 중 · 로컬 자막" else if (offlineMode) "듣는 중 · 오프라인 한영 번역" else LISTENING
-    private fun render() = if (captionOnly) show(if (mediaSessionId != null) "미디어 원문 자막" else "실시간 자막", clip(sourceLine, TARGET_LIMIT))
+    private fun listening() = when {
+        wakeActive -> "한국어 호출 대기"
+        mediaTranslate && mediaTranslation.state.phase == LocalMediaTranslationPhase.ERROR -> "내장 번역 오류 · 원문 표시"
+        mediaTranslate -> "휴대폰 재생음 · 내장 한국어 번역"
+        mediaSessionId != null -> "휴대폰 재생음 · 로컬 원문 자막"
+        captionOnly -> "듣는 중 · 로컬 자막"
+        offlineMode -> "듣는 중 · 오프라인 한영 번역"
+        else -> LISTENING
+    }
+    private fun render() {
+        if (mediaTranslate) {
+            // Never pair a new ASR partial with an older translated sentence.
+            when {
+                mediaTranslation.state.phase == LocalMediaTranslationPhase.ERROR ->
+                    show("번역 오류 · 원문", clip(sourceLine, TARGET_LIMIT))
+                mediaFinalTarget.isNotBlank() -> show(clip(mediaFinalSource, SOURCE_LIMIT), clip(mediaFinalTarget, TARGET_LIMIT))
+                else -> show("한국어 번역 대기", clip(sourceLine, TARGET_LIMIT))
+            }
+        } else if (captionOnly) show(if (mediaSessionId != null) "미디어 원문 자막" else "실시간 자막", clip(sourceLine, TARGET_LIMIT))
         else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
+    }
 
     private fun interim(token: Int, text: String) {
         if (token != generation || !active || wakeActive || (mediaSessionId == null && misheard(text))) return
@@ -248,6 +281,24 @@ internal class LiveTranslator(
                 gaveUp()
                 action?.invoke(question)
             }
+            return
+        }
+        if (mediaTranslate) {
+            val id = mediaSessionId ?: return
+            if (text.isBlank()) return
+            val sequence = ++latestFinal
+            sourceLine = text
+            val accepted = mediaTranslation.submit(id, mediaLanguage, text) { result ->
+                if (token != generation || !active || mediaSessionId != id || sequence <= mediaRenderedSequence) return@submit
+                result.fold({ translated ->
+                    mediaRenderedSequence = sequence
+                    mediaFinalSource = text; mediaFinalTarget = translated
+                }, { mediaFinalSource = ""; mediaFinalTarget = "" })
+                status = listening()
+                render(); changed()
+            }
+            if (!accepted) { mediaFinalSource = ""; mediaFinalTarget = ""; status = listening(); changed() }
+            render()
             return
         }
         if (captionOnly) { sourceLine = text; render(); return }

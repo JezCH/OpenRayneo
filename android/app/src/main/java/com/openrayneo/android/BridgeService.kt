@@ -1060,6 +1060,17 @@ internal class BridgeService : Service() {
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
     fun startCaption() = startCaptionMode(false, false)
 
+    fun prepareMediaTranslation(language: String) {
+        check(!destroyed && !mediaCaptionState.busy && !translator.active &&
+            !conversations.state.running && !conversations.state.stopping &&
+            !voiceTransport.nativeActive && !prompterReserved && !agent.running && !codex.running && !migration.state.busy) {
+            "다른 음성·기록·AI 작업을 먼저 종료하세요"
+        }
+        translator.mediaTranslation.prepare(language)
+    }
+    fun cancelMediaTranslationPreparation() = translator.mediaTranslation.cancelPreparation()
+    fun releaseMediaTranslation() = translator.mediaTranslation.release()
+
     /** Main-thread preflight, also used by the media screen and after Android consent. */
     fun checkMediaCaption(options: MediaCaptionOptions) {
         check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -1070,7 +1081,10 @@ internal class BridgeService : Service() {
             !agent.running && !codex.running && !speechOutput.speaking && !migration.state.busy) {
             "현재 기록·안경 화면·AI 작업을 먼저 종료하세요"
         }
+        check(!translator.mediaTranslation.state.preparing) { "번역 모델 준비가 끝난 후 시작하세요" }
         translator.mediaCaptionConfig(options.language)
+        if (MediaTranslationRoute.required(options.language, options.translateToKorean))
+            check(translator.mediaTranslation.state.readyFor(options.language)) { "내장 한국어 번역 모델을 먼저 준비하세요" }
         if (options.scope == MediaCaptionScope.YOUTUBE) MediaPlaybackCaptureService.youtubeUid(this)
     }
 
@@ -1080,7 +1094,7 @@ internal class BridgeService : Service() {
         val id = java.util.UUID.randomUUID().toString()
         mediaCaptionState = MediaCaptionState(MediaCapturePhase.STARTING, id, options, "미디어 캡처 준비 중")
         try {
-            translator.startMediaCaption(id, options.language)
+            translator.startMediaCaption(id, options)
             dispatch(GlassesEvent.StartMediaCaption)
             check(mediaCaptionState.id == id && mediaCaptionState.phase == MediaCapturePhase.STARTING && state.mediaCaptionMode) {
                 "안경 자막 화면을 시작하지 못했습니다"
