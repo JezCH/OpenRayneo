@@ -692,7 +692,7 @@ internal class BridgeService : Service() {
             !conversations.state.running && !conversations.state.stopping && voiceTransport.source == null &&
             !voiceTransport.nativeActive && !wakePending && !agent.running && !codex.running && !speechOutput.speaking &&
             !reconnectCapture.pending && resumeAlwaysOn == null
-        when (NavigationVoicePolicy.decide(SystemClock.elapsedRealtime(), pending.deadline, available,
+        when (val decision = NavigationVoicePolicy.decide(SystemClock.elapsedRealtime(), pending.deadline, available,
                 navigation.activeNavigationCount, candidates.size, captureFree)) {
             NavigationVoicePolicy.Decision.WAIT -> return
             NavigationVoicePolicy.Decision.FOLLOW -> {
@@ -703,10 +703,8 @@ internal class BridgeService : Service() {
                 }
             }
             else -> {
-                val reason = NavigationVoicePolicy.decide(SystemClock.elapsedRealtime(), pending.deadline, available,
-                    navigation.activeNavigationCount, candidates.size, captureFree)
                 clearVoiceNavigation()
-                navigationSwitchStatus = when (reason) {
+                navigationSwitchStatus = when (decision) {
                     NavigationVoicePolicy.Decision.AMBIGUOUS -> "복수 길 안내 알림 · 자동 연결하지 않았습니다."
                     NavigationVoicePolicy.Decision.BUSY -> "녹음 또는 화면 사용 중 · 기존 기능 유지. 종료 후 안경 길 안내 재개라고 말하세요."
                     NavigationVoicePolicy.Decision.UNAVAILABLE -> "연결 또는 기능 상태 변경 · 안경 안내 자동 연결 취소"
@@ -949,7 +947,6 @@ internal class BridgeService : Service() {
         if (state.session != null || state.intent != DisplayIntent.Idle) {
             nativeWakeStatus += " · 기존 화면 사용 중"; notifyUI(); return
         }
-        if (state.ownership != DisplayOwnership.APP) { nativeWakeStatus += " · 다른 앱 화면 사용 중"; notifyUI(); return }
         if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
         if (conversations.state.stopping) {
