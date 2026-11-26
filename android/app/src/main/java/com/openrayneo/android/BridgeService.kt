@@ -465,7 +465,7 @@ internal class BridgeService : Service() {
         } else { resetAgentProbe(); agentServer.stop() }
     }
     fun startTeleprompter(title: String, text: String, speed: Int, documentId: String? = null, smartFollow: Boolean = false, completion: (Result<JSONObject>) -> Unit) {
-        check(!translator.active) { "실시간 번역·자막을 먼저 종료하세요" }
+        check(!translator.active && !mediaCaptionState.busy) { "실시간 번역·자막을 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         requirePrompterFree()
         check(!voiceTransport.nativeActive) { "안경 기본 음성 대화를 먼저 종료하세요" }
@@ -575,7 +575,7 @@ internal class BridgeService : Service() {
     private fun nativeWake() {
         nativeWakeStatus = "안경 기본 호출 이벤트 수신"
         if (speechOutput.speaking) speechOutput.stop()
-        if (translator.active) { nativeWakeStatus += " · 번역/자막 사용 중"; notifyUI(); return }
+        if (translator.active || mediaCaptionState.busy) { nativeWakeStatus += " · 번역/자막 사용 중"; notifyUI(); return }
         if (prompterReserved) {
             if (teleprompter.state.smartFollow) teleprompter.suspendFollow("음성 깨우기 감지: 따라 읽기 중지. 원고 상태를 확인하세요")
             nativeWakeStatus += " · 프롬프터 사용 중"; notifyUI(); return
@@ -1366,7 +1366,7 @@ internal class BridgeService : Service() {
     /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
     fun startRealtimeHint() {
         requirePrompterFree()
-        check(!translator.active && !voiceTransport.nativeActive && voiceTransport.source == null) { "다른 음성 기능을 먼저 종료하세요" }
+        check(!translator.active && !mediaCaptionState.busy && !voiceTransport.nativeActive && voiceTransport.source == null) { "다른 음성 기능을 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) {
             conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby); return
