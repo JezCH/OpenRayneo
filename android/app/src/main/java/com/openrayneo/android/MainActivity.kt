@@ -193,11 +193,10 @@ internal class MainActivity : ComponentActivity() {
                                 )
                             )
                         },
-                        openMap = { pkg ->
+                        openNaverMap = {
                             model.attempt {
-                                check(NavigationFeed.isNavigationSource(pkg))
-                                startActivity(checkNotNull(packageManager.getLaunchIntentForPackage(pkg)) {
-                                    NavigationFeed.sourceLabel(pkg) + " 앱을 휴대폰에 설치하세요."
+                                startActivity(checkNotNull(packageManager.getLaunchIntentForPackage(NavigationFeed.PACKAGE)) {
+                                    "네이버지도 앱을 휴대폰에 설치하세요."
                                 })
                             }
                         },
@@ -262,7 +261,7 @@ internal data class UiActions(
     val notificationAccess: () -> Unit,
     val notificationPermission: () -> Unit,
     val appSettings: () -> Unit,
-    val openMap: (String) -> Unit,
+    val openNaverMap: () -> Unit,
     val importConfig: () -> Unit,
     val voice: (AnswerSource) -> Unit,
     val mediaCaption: (MediaCaptionOptions) -> Unit,

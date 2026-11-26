@@ -43,7 +43,7 @@ internal data class CompanionState(
     val navigationEvidence: List<NavigationFeed.SourceEvidence> = emptyList(),
     val navigationSwitchPending: Boolean = false,
     val navigationSwitchStatus: String = "",
-    val navigationStatus: String = "지도 앱에서 길 안내를 시작한 뒤 최신 방향·거리 알림을 선택하세요",
+    val navigationStatus: String = "네이버지도에서 길 안내를 시작하세요",
     val notificationConnected: Boolean = false,
     val phoneQuestion: String = "",
     val phoneAnswer: String = "",

@@ -20,12 +20,7 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
-        <package android:name="com.autonavi.minimap" />
         <package android:name="com.nhn.android.nmap" />
-        <package android:name="net.daum.android.map" />
-        <package android:name="com.locnall.KimGiSa" />
-        <package android:name="com.skt.tmap.ku" />
-        <package android:name="com.google.android.apps.maps" />
         <package android:name="com.google.android.youtube" />
         <intent>
             <action android:name="android.intent.action.MAIN" />

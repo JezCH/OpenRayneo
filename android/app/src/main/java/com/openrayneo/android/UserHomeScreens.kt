@@ -218,7 +218,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
         item { FeatureLink("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) } }
         item { Spacer(Modifier.height(8.dp)); SectionLabel("생활 및 업무") }
         item { FeatureLink("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") } }
-        item { FeatureLink("길 안내", "휴대폰 내비게이션 알림을 안경에 표시", Icons.Outlined.NearMe) { open("navigation") } }
+        item { FeatureLink("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") } }
         item { FeatureLink("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") } }
         item { FeatureLink("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") } }
         item { Spacer(Modifier.height(8.dp)); SectionLabel("안경 확인") }

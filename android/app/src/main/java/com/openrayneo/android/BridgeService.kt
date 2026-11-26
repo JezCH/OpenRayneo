@@ -188,7 +188,7 @@ internal class BridgeService : Service() {
     }
     private val audioRefresh = object : Runnable {
         override fun run() {
-            if (navigation.enabled && navigation.selected?.experimental == true) {
+            if (navigation.enabled) {
                 val snapshot = navigationSnapshot()
                 if (snapshot != state.navigation) dispatch(GlassesEvent.NavigationChanged(snapshot))
             }
@@ -503,7 +503,7 @@ internal class BridgeService : Service() {
         requirePrompterFree()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
         val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
-        check(navigation.connected && entry.safeInstruction != null) { "알림 리스너 연결 및 최신 길 안내 방향·거리를 확인하세요." }
+        check(navigation.connected && NavigationFeed.isNavigationSource(entry.packageName) && entry.safeInstruction != null) { "네이버지도 알림 리스너 연결 및 최신 길 안내 방향·거리를 확인하세요." }
         return entry
     }
     fun followNavigation(key: String) {
@@ -515,7 +515,7 @@ internal class BridgeService : Service() {
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         resumeAlwaysOn = null
         conversationOwnsDisplay = false
-        val frame = NavigationFrame.render(instruction.direction, instruction.meters, if (entry.experimental) entry.sourceName else entry.title)
+        val frame = NavigationFrame.render(instruction.direction, instruction.meters, NavigationFeed.SOURCE_NAME)
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
     }
     // Only an explicitly confirmed request can end an existing recording.
@@ -1894,7 +1894,7 @@ internal class BridgeService : Service() {
         when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
                 .put("notificationPresent", navigation.selected != null).put("status", navigation.status)))
-            "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("gaodeNavigationChanged", false))) }
+            "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("mapNavigationChanged", false).put("provider", "naver").put("gaodeNavigationChanged", false))) }
             "show_notification" -> {
                 val queued = sendCompanionNotification(args.getString("title"), args.getString("body"))
                 completion(Result.success(JSONObject().put("queued", queued).put("visible", if (queued) "unverified" else "not_sent")
