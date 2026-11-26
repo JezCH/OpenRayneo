@@ -193,17 +193,12 @@ internal class MainActivity : ComponentActivity() {
                                 )
                             )
                         },
-                        openGaode = {
+                        openMap = { pkg ->
                             model.attempt {
-                                startActivity(
-                                    checkNotNull(
-                                        packageManager.getLaunchIntentForPackage(
-                                            NavigationFeed.PACKAGE
-                                        )
-                                    ) {
-                                        "먼저 휴대폰에 Amap(가오더 지도)을 설치하세요"
-                                    }
-                                )
+                                check(NavigationFeed.isNavigationSource(pkg))
+                                startActivity(checkNotNull(packageManager.getLaunchIntentForPackage(pkg)) {
+                                    NavigationFeed.sourceLabel(pkg) + " 앱을 휴대폰에 설치하세요."
+                                })
                             }
                         },
                         importConfig = {
@@ -267,7 +262,7 @@ internal data class UiActions(
     val notificationAccess: () -> Unit,
     val notificationPermission: () -> Unit,
     val appSettings: () -> Unit,
-    val openGaode: () -> Unit,
+    val openMap: (String) -> Unit,
     val importConfig: () -> Unit,
     val voice: (AnswerSource) -> Unit,
     val mediaCaption: (MediaCaptionOptions) -> Unit,

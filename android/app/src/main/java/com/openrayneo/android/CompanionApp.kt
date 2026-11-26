@@ -236,6 +236,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(s.navigationEntries, key = { it.key }) { entry ->
                         OutlinedCard(
+                            enabled = entry.safeInstruction != null && s.notificationConnected,
                             onClick = {
                                 if (s.conversation.running || s.alwaysOnResumePending) {
                                     pendingNavigation = entry.key
@@ -261,7 +262,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                                             s.glasses.navigation.enabled
                                     )
                                         "따라가는 중"
-                                    else "이 알림 따라가기",
+                                    else if (entry.safeInstruction == null) "최신 갱신 대기" else "이 알림 따라가기",
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -564,12 +565,13 @@ private fun NavigationScreen(
     val s = model.state
     val nav = s.glasses.navigation
     val entry = s.navigationEntries.firstOrNull { it.key == nav.key }
-    val instruction = entry?.safeInstruction?.takeIf { nav.enabled && s.notificationConnected }
     var time by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(entry?.updatedAt) {
-        while (true) {
+    val instruction = entry?.safeInstruction?.takeIf { nav.enabled && s.notificationConnected &&
+        (!entry.experimental || (time - entry.updatedAt) in 0..15_000L) }
+    LaunchedEffect(entry?.updatedAt, nav.enabled, s.navigationEntries.isNotEmpty()) {
+        if (nav.enabled || s.navigationEntries.isNotEmpty()) while (true) {
             time = System.currentTimeMillis()
-            delay(10_000)
+            delay(1_000)
         }
     }
     LazyColumn(
@@ -627,8 +629,13 @@ private fun NavigationScreen(
                     }
                 else if (!nav.enabled)
                     Column {
-                        Note("사용할 지도 앱에서 직접 경로 안내를 시작한 뒤 아래 알림 소스를 선택하세요.")
-                        TextButton(onClick = actions.openGaode) { Text("Amap 열기") }
+                        Note("1. 설치된 지도 앱에서 실제 길 안내를 시작하세요. 2. 돌아와 최신 방향·거리 알림을 선택하세요.")
+                        val installed = NavigationFeed.sources.filterKeys { it in model.installedMaps }
+                        if (installed.isEmpty()) Note("지원 후보 지도 앱이 설치되어 있지 않습니다.")
+                        installed.forEach { (pkg, label) ->
+                            ToolOutlinedButton(onClick = { actions.openMap(pkg) }, modifier = Modifier.fillMaxWidth()) { Text(label + " 열기") }
+                        }
+                        Note("Google 지도는 한국에서 도보·자동차 길 안내가 제한될 수 있습니다. 국내에서는 네이버지도 등부터 시도하세요.")
                     }
                 if (nav.enabled) {
                     if (s.glasses.link.phase != LinkPhase.FULL)
@@ -666,7 +673,7 @@ private fun NavigationScreen(
                     supportingContent = {
                         Text(
                             if (s.navigationEntries.isEmpty()) "길 안내 알림 대기 중"
-                            else "${s.navigationEntries.size}개 후보 알림 · 탭하여 선택"
+                            else "${s.navigationEntries.count { it.safeInstruction != null }}개 최신 안내 · 탭하여 선택"
                         )
                     },
                     leadingContent = { Icon(Icons.Outlined.NotificationsNone, null) },
@@ -676,7 +683,28 @@ private fun NavigationScreen(
             }
         }
         item {
-            Note("네이버지도·카카오맵·카카오내비·티맵은 한국어 방향과 거리를 포함한 시스템 내비게이션 알림에 한해 실험적으로 인식합니다. 실제 앱별 알림 형태는 미검증입니다. 정차 상태에서 확인하고 주행 중에는 휴대폰 안내를 기준으로 하세요.")
+            ContentCard {
+                Text("지도 앱 수신 진단", style = MaterialTheme.typography.titleMedium)
+                Note("알림 분류·방향/거리만 확인하며, 해석할 수 없는 알림의 원문은 저장하지 않습니다.")
+                NavigationFeed.sources.filterKeys { it in model.installedMaps }.forEach { (pkg, label) ->
+                    val evidence = s.navigationEvidence.firstOrNull { it.packageName == pkg }
+                    val recent = s.navigationEntries.any { it.packageName == pkg && it.safeInstruction != null }
+                    Text(label, style = MaterialTheme.typography.labelLarge)
+                    Note(when {
+                        !model.notificationAllowed -> "알림 접근 권한 필요"
+                        !s.notificationConnected -> "알림 리스너 연결 대기"
+                        recent -> "최신 방향·거리 인식 · 알림 소스 선택 가능"
+                        (evidence?.recognized ?: 0) > 0 -> "방향·거리 인식했으나 최근 갱신 없음"
+                        (evidence?.unrecognized ?: 0) > 0 -> "길 안내 알림 수신 · 방향/거리 해석 불가"
+                        (evidence?.observed ?: 0) > 0 -> "일반 알림만 확인 · 시스템 길 안내 알림 없음"
+                        else -> "현재 수신된 알림 없음 · 지도 앱에서 안내 시작 확인"
+                    })
+                }
+                ToolOutlinedButton(onClick = { model.attempt { NavigationNotifications.refresh(model.getApplication(), foreground = true) } }, enabled = model.notificationAllowed) { Text("현재 알림 다시 확인") }
+            }
+        }
+        item {
+            Note("국내 지도 앱과 Google 지도는 최신 방향과 거리를 포함한 시스템 길 안내 알림에 한해 실험적으로 인식합니다. 앱별 실제 알림 형태는 미검증입니다. 잘못된 방향을 표시하지 않도록 인식 불가·오래된 알림은 전송하지 않습니다. 주행 중에는 휴대폰 안내를 기준으로 하세요.")
             ToolOutlinedButton(
                 onClick = {
                     model.attempt {

@@ -40,7 +40,8 @@ internal data class CompanionState(
     val nativeWakeAvailable: Boolean = false,
     val devices: List<RayneoConnection.Device> = emptyList(),
     val navigationEntries: List<NavigationFeed.Entry> = emptyList(),
-    val navigationStatus: String = "Amap에서 내비게이션을 시작한 뒤 여기로 돌아와 알림을 따라가세요",
+    val navigationEvidence: List<NavigationFeed.SourceEvidence> = emptyList(),
+    val navigationStatus: String = "지도 앱에서 길 안내를 시작한 뒤 최신 방향·거리 알림을 선택하세요",
     val notificationConnected: Boolean = false,
     val phoneQuestion: String = "",
     val phoneAnswer: String = "",
@@ -107,6 +108,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var bluetoothAllowed by mutableStateOf(false)
         private set
 
+    var installedMaps by mutableStateOf<Set<String>>(emptySet())
+        private set
     var notificationAllowed by mutableStateOf(false)
         private set
 
@@ -240,6 +243,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 nativeWakeAvailable = s.voiceTransport.nativeActive,
                 devices = s.devices.values.toList(),
                 navigationEntries = s.navigation.entries.values.toList(),
+                navigationEvidence = s.navigation.evidence,
                 navigationStatus = s.navigation.status,
                 notificationConnected = s.navigation.connected,
                 phoneQuestion = s.agent.question,
@@ -283,6 +287,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshPermissions() {
+        installedMaps = NavigationFeed.sources.keys.filter { context.packageManager.getLaunchIntentForPackage(it) != null }.toSet()
         bluetoothAllowed =
             listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT).all {
                 context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED

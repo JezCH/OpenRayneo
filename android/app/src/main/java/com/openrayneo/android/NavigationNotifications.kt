@@ -20,8 +20,29 @@ internal object NavigationFeed {
     const val PACKAGE = "com.autonavi.minimap"
     val koreanSources = linkedMapOf("com.nhn.android.nmap" to "네이버지도", "net.daum.android.map" to "카카오맵",
         "com.locnall.KimGiSa" to "카카오내비", "com.skt.tmap.ku" to "티맵")
-    fun isNavigationSource(pkg: String) = pkg == PACKAGE || pkg in koreanSources
-    fun sourceLabel(pkg: String) = koreanSources[pkg] ?: "Amap"
+    const val GOOGLE = "com.google.android.apps.maps"
+    val sources = linkedMapOf<String,String>().apply {
+        putAll(koreanSources)
+        put(GOOGLE, "Google 지도")
+        put(PACKAGE, "Amap")
+    }
+    fun isNavigationSource(pkg: String) = pkg in sources
+    fun sourceLabel(pkg: String) = sources[pkg] ?: "지도 앱"
+    enum class Observation { NON_NAVIGATION, UNRECOGNIZED, RECOGNIZED }
+    data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int)
+    // Active notification metadata only; never retain rejected notification content.
+    private val observations = linkedMapOf<String, Pair<String, Observation>>()
+    fun observe(key: String, pkg: String, result: Observation) {
+        observations.remove(key)
+        observations[key] = pkg to result
+        while (observations.size > 64) observations.remove(observations.keys.first())
+    }
+    fun resetObservations() = observations.clear()
+    val evidence get() = sources.keys.map { pkg ->
+        val seen = observations.values.filter { it.first == pkg }
+        SourceEvidence(pkg, seen.size, seen.count { it.second == Observation.RECOGNIZED },
+            seen.count { it.second == Observation.UNRECOGNIZED })
+    }
 
     data class Entry(
         val key: String,
@@ -68,7 +89,7 @@ internal object NavigationFeed {
                 !connected -> listenerState.detail
                 !enabled -> "지도 앱에서 길 안내를 시작한 뒤 알림을 직접 선택하세요"
                 selected == null -> "선택한 길 안내 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
-                selected?.fresh == false -> "국내 지도 알림 갱신 대기 · 휴대폰 안내 확인"
+                selected?.fresh == false -> "지도 알림 갱신 대기 · 휴대폰 안내 확인"
                 selected?.safeInstruction == null -> "회전 방향과 거리를 인식하지 못했습니다. 휴대폰 안내를 확인하세요"
                 else -> selected!!.safeInstruction!!.let { "${selected!!.sourceName} 추종: ${it.direction} · ${it.meters}m" }
             }
@@ -93,7 +114,7 @@ internal object NavigationFeed {
 
     fun connection(value: NotificationReadState) {
         listenerState = value
-        if (!connected) entries.clear()
+        if (!connected) { entries.clear(); resetObservations() }
         changed()
     }
 
@@ -111,12 +132,18 @@ internal object NavigationFeed {
     }
 
     fun remove(key: String) {
-        if (entries.remove(key) != null) changed()
+        val entry = entries.remove(key)
+        val observation = observations.remove(key)
+        if (entry != null || observation != null) changed()
+    }
+    fun reject(key: String) {
+        entries.remove(key)
+        changed()
     }
 
     fun follow(key: String) {
         val entry = checkNotNull(entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
-        check(!entry.experimental || entry.safeInstruction != null) { "국내 지도 알림의 최신 방향·거리를 인식하지 못했습니다." }
+        check(entry.safeInstruction != null) { "최신 방향·거리를 인식하지 못했습니다." }
         selectedKey = key
         enabled = true
         preferences
@@ -142,10 +169,11 @@ internal object NavigationFeed {
 internal class NavigationNotifications : NotificationListenerService() {
     private val reader =
         object : NavigationNotificationReader {
-            override fun snapshot(): List<NavigationFeed.Entry> =
-                checkNotNull(activeNotifications) { "알림 스냅샷을 사용할 수 없음" }
-                    .filter { NavigationFeed.isNavigationSource(it.packageName) }
-                    .mapNotNull(::parseSafely)
+            override fun snapshot(): List<NavigationFeed.Entry> {
+                val active = checkNotNull(activeNotifications) { "알림 스냅샷을 사용할 수 없음" }
+                NavigationFeed.resetObservations()
+                return active.filter { NavigationFeed.isNavigationSource(it.packageName) }.mapNotNull(::parseSafely)
+            }
 
             override fun unbind() = requestUnbind()
         }
@@ -173,11 +201,12 @@ internal class NavigationNotifications : NotificationListenerService() {
         }
         if (notification.packageName != NavigationFeed.PACKAGE && notification.notification.category != Notification.CATEGORY_NAVIGATION) {
             PhoneNotificationForwarding.onPosted(this, notification)
-            NavigationFeed.remove(notification.key)
+            NavigationFeed.observe(notification.key, notification.packageName, NavigationFeed.Observation.NON_NAVIGATION)
+            NavigationFeed.reject(notification.key)
             return
         }
         val entry = parseSafely(notification)
-        if (entry != null) NavigationFeed.update(entry) else NavigationFeed.remove(notification.key)
+        if (entry != null) NavigationFeed.update(entry) else NavigationFeed.reject(notification.key)
     }
 
     override fun onNotificationRemoved(notification: StatusBarNotification) {
@@ -193,16 +222,20 @@ internal class NavigationNotifications : NotificationListenerService() {
         try {
             parse(item)
         } catch (failure: Exception) {
+            NavigationFeed.observe(item.key, item.packageName, NavigationFeed.Observation.UNRECOGNIZED)
             Log.w("OpenRayneo", "길 안내 알림 파싱 실패: ${failure.javaClass.simpleName}")
             null
         }
 
     private fun parse(item: StatusBarNotification): NavigationFeed.Entry? {
         val notification = item.notification
-        if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return null
-        if (item.packageName == NavigationFeed.PACKAGE) {
-            if (notification.channelId != "ROUTE_CHANNEL_ID" && notification.category != Notification.CATEGORY_NAVIGATION) return null
-        } else if (item.packageName !in NavigationFeed.koreanSources || notification.category != Notification.CATEGORY_NAVIGATION) return null
+        val eligible = notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 &&
+            (notification.category == Notification.CATEGORY_NAVIGATION ||
+                item.packageName == NavigationFeed.PACKAGE && notification.channelId == "ROUTE_CHANNEL_ID")
+        if (!eligible) {
+            NavigationFeed.observe(item.key, item.packageName, NavigationFeed.Observation.NON_NAVIGATION)
+            return null
+        }
         val extras = notification.extras ?: Bundle.EMPTY
         val texts =
             buildList {
@@ -234,7 +267,10 @@ internal class NavigationNotifications : NotificationListenerService() {
                         }
                 }
                 .distinct()
-        if (item.packageName != NavigationFeed.PACKAGE && KoreanNavigationText.parse(texts) == null) return null
+        val recognized = if (item.packageName == NavigationFeed.PACKAGE) GaodeNotificationParser.parse(texts) != null
+            else KoreanNavigationText.parse(texts) != null
+        NavigationFeed.observe(item.key, item.packageName, if (recognized) NavigationFeed.Observation.RECOGNIZED else NavigationFeed.Observation.UNRECOGNIZED)
+        if (!recognized) return null
         return NavigationFeed.Entry(
             item.key,
             extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
