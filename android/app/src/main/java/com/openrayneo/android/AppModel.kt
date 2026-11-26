@@ -348,7 +348,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             "speakerThreshold", "voiceRoutingPrompt", "memoryPrompt", "memoryAutoSummary", "answerClearSeconds", "answerMaxChars", "saveMeetingAudio", "audioRetention", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     }
 
-    fun send(source: AnswerSource) = attempt {
+    fun send(source: AnswerSource, executeTask: Boolean = false) = attempt {
         val mobile = source == AnswerSource.MOBILE_AGENT
         val text = (if (mobile) phoneDraft else computerDraft).trim()
         require(text.isNotBlank()) { "먼저 질문을 입력하세요" }
@@ -356,7 +356,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             if (mobile) ChatRecord(state.phoneQuestion, state.phoneAnswer)
             else ChatRecord(state.computerQuestion, state.computerAnswer)
         val oldWasEphemeral = state.phoneEphemeral
-        service().submitAnswer(source, text)
+        service().submitAnswer(source, text, allowTools = !mobile || executeTask)
         if (mobile) {
             if (old.question.isNotBlank() && !oldWasEphemeral) phoneHistory = (phoneHistory + old).takeLast(30)
             phoneDraft = ""
