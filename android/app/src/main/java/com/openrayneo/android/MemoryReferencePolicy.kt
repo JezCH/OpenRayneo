@@ -28,6 +28,16 @@ internal object MemoryReferencePolicy {
     private val order = compareByDescending<Hit> { it.score }.thenByDescending { it.source.start }
         .thenBy { it.source.recordId }.thenBy { it.source.segmentId }
 
+    /** Preserve raw text and UTF-16 boundaries for any local ranking strategy. */
+    fun excerpt(source: Source, index: Int, score: Int): Hit {
+        val raw = source.text
+        val start = (index.coerceIn(0, raw.length) - 32).coerceAtLeast(0)
+            .let { if (it > 0 && it < raw.length && raw[it].isLowSurrogate()) it - 1 else it }
+        val end = (start + MAX_TEXT).coerceAtMost(raw.length)
+            .let { if (it > start && raw[it - 1].isHighSurrogate()) it - 1 else it }
+        return Hit(source, raw.substring(start, end), start > 0 || end < raw.length, score)
+    }
+
     fun search(scope: Scope, sources: Sequence<Source>): Result {
         val query = normalize(scope.query)
         val tokens = query.split(Regex("\\s+")).filter { it.isNotBlank() }.distinct()
@@ -46,12 +56,9 @@ internal object MemoryReferencePolicy {
                 else -> continue
             }
             // Keep an original-text excerpt, not normalized or generated wording.
-            val raw = source.text
-            val index = if (query.isEmpty()) 0 else raw.indexOf(scope.query.trim(), ignoreCase = true).takeIf { it >= 0 }
-                ?: tokens.firstNotNullOfOrNull { token -> raw.indexOf(token, ignoreCase = true).takeIf { it >= 0 } } ?: 0
-            val start = (index - 32).coerceAtLeast(0).let { if (it > 0 && raw[it].isLowSurrogate()) it - 1 else it }
-            val end = (start + MAX_TEXT).coerceAtMost(raw.length).let { if (it > start && raw[it - 1].isHighSurrogate()) it - 1 else it }
-            val hit = Hit(source, raw.substring(start, end), start > 0 || end < raw.length, score)
+            val index = if (query.isEmpty()) 0 else source.text.indexOf(scope.query.trim(), ignoreCase = true).takeIf { it >= 0 }
+                ?: tokens.firstNotNullOfOrNull { token -> source.text.indexOf(token, ignoreCase = true).takeIf { it >= 0 } } ?: 0
+            val hit = excerpt(source, index, score)
             count++
             if (best.size < scope.limit) best.add(hit)
             else if (order.compare(hit, best.peek()) < 0) { best.poll(); best.add(hit) }
