@@ -52,7 +52,7 @@ internal class AppUpdateCheck(context: Context) {
         checking -> "업데이트 확인 중"
         error.isNotBlank() -> "최근 확인 실패 · 다시 확인 가능"
         candidate != null -> "새 버전 " + candidate!!.name
-        lastCheckedAt > 0L -> "마지막 확인 시 새 버전 없음"
+        lastCheckedAt > 0L -> "마지막 확인 시 공개 업데이트 채널에 새 버전 없음"
         else -> "검증 버전 확인 · 다운로드 · 설치"
     }
 

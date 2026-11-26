@@ -16,11 +16,13 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
         val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate(),
         var modelRoute: AgentProbePolicy.ModelRoute? = null,
-        var automaticContext: (() -> JSONObject?)? = null) {
+        var automaticContext: (() -> JSONObject?)? = null,
+        val queuedSinceElapsed: Long = SystemClock.elapsedRealtime()) {
         val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe", "korean_wake", "explicit_question")
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
     }
+    private companion object { const val UNCLAIMED_TASK_MS = 120_000L }
     private val lock = Object()
     private val requests = linkedMapOf<String, Request>()
     init {
@@ -37,9 +39,10 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             }
             requests[request.id] = request
             if (request.state == "running") scheduleTimeout(request)
+            if (request.state == "queued" && request.kind == "task") scheduleUnclaimed(request)
             if (request.state == "completed" && !request.delivered && request.answer != null) deliver(request)
         }
-        if (historicalCancelled) persist()
+        synchronized(lock) { expireUnclaimedTasks(); if (historicalCancelled) persist() }
     }
     private fun persist() {
         val finished = requests.values.filter { it.state !in setOf("queued", "running") }
@@ -75,6 +78,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.hintDeadline > 0L) main.postDelayed({
             synchronized(lock) { expireHints(); lock.notifyAll() }
         }, hintLifetimeMs)
+        if (kind == "task") scheduleUnclaimed(request)
         return id
     }
     private fun deliver(request: Request) { main.post {
@@ -87,7 +91,28 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         request.automaticContext = null
         main.post { request.complete(Result.failure(IllegalStateException("선제 힌트 만료 또는 대체"))) }
     }
+    // Do not replay a durable task that was never claimed in a reasonable time.
+    // Preserve claimed work and its existing timeout/approval semantics.
+    private fun remainingUnclaimed(request: Request): Long {
+        val wallAge = System.currentTimeMillis() - request.createdAt
+        val elapsedAge = SystemClock.elapsedRealtime() - request.queuedSinceElapsed
+        if (wallAge < 0L || elapsedAge < 0L) return 0L
+        return (UNCLAIMED_TASK_MS - maxOf(wallAge, elapsedAge)).coerceAtLeast(0L)
+    }
+    private fun expireUnclaimedTasks() {
+        val expired = requests.values.filter { it.kind == "task" && it.state == "queued" && remainingUnclaimed(it) == 0L }
+        if (expired.isEmpty()) return
+        expired.forEach { request ->
+            request.state = "cancelled"; request.automaticContext = null
+            main.post { request.complete(Result.failure(IllegalStateException("외부 Agent가 2분 안에 업무를 수신하지 않아 취소했습니다. 다시 요청하세요."))) }
+        }
+        persist(); lock.notifyAll()
+    }
+    private fun scheduleUnclaimed(request: Request) {
+        main.postDelayed({ synchronized(lock) { expireUnclaimedTasks() } }, remainingUnclaimed(request))
+    }
     private fun expireHints() {
+        expireUnclaimedTasks()
         val now = SystemClock.elapsedRealtime()
         requests.values.filter { it.hintDeadline > 0L && it.state in setOf("queued", "running") &&
             ProactiveHintPolicy.remaining(now, it.hintDeadline) == 0L }.forEach { cancelHint(it) }
@@ -166,7 +191,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         }
         return JSONObject().put("request", payload)
     }
-    fun list(): JSONArray = synchronized(lock) { JSONArray(requests.values.map { request ->
+    fun list(): JSONArray = synchronized(lock) { expireUnclaimedTasks(); JSONArray(requests.values.map { request ->
         JSONObject().put("id", request.id).put("state", request.state).put("kind", request.kind).put("sessionId", request.session)
             .put("claimedAt", request.claimedAt).put("createdAt", request.createdAt).put("recordId", request.input?.optString("recordId"))
             .put("backfill", request.input?.optBoolean("backfill") ?: false)

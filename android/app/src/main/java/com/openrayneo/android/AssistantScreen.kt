@@ -57,7 +57,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             s.agentServer.enabled
         else listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
     val draft = if (mobile) model.phoneDraft else model.computerDraft
-    val inputReady = s.available && configured && (mobile || s.computerConnected) && !running
+    val inputReady = s.available && configured && (if (mobile) s.agentServer.pollRecent else s.computerConnected) && !running
     // Search locally after a pause in typing; cancellation prevents stale recommendations.
     var suggestionCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
@@ -335,7 +335,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     }
                     if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
                     if (!executeTask) OrdinaryContextButton()
-                    if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
+                    if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 2분 내 수신되지 않은 업무는 취소됩니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
                     else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy && draft.length <= 2000) {
                         Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
                     }
@@ -344,6 +344,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     Note(when {
                         !s.available -> "연결 서비스 준비 중"
                         !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
+                        mobile && !s.agentServer.pollRecent -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
                         !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
                         else -> "현재 질문을 보낼 수 없습니다."
                     })

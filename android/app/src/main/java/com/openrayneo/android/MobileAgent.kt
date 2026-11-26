@@ -63,7 +63,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
                     }
                     answer = reply; status = if (allowTools) "외부 Agent 작업 응답 완료" else "AI 답변 완료"; changed(); finalAnswer(text, reply)
                 },
-                    { error -> status = "AI 요청을 완료하지 못했습니다. 연결 상태와 서비스 설정을 확인하세요"; changed(); finalAnswer(text, "") })
+                    { error -> status = error.message?.take(180) ?: "AI 요청을 완료하지 못했습니다. 연결 상태와 서비스 설정을 확인하세요"; changed(); finalAnswer(text, "") })
             }
         } } catch (error: Exception) {
             requestId = null; running = false; status = "AI 요청을 시작하지 못했습니다"; changed(); throw error
