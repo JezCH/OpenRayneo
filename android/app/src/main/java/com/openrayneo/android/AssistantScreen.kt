@@ -28,6 +28,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -40,7 +43,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     var autoMemory by remember { mutableStateOf(false) }
     var continuityDialog by remember { mutableStateOf(false) }
     var confirmNewChat by remember { mutableStateOf(false) }
-    val suggestMemory = model.config.optString("memorySuggestOnSend") == "true"
+    val suggestMemory = model.config.optBoolean("memorySuggestOnSend")
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
     val running = if (mobile) s.phoneRunning else s.computerRunning
@@ -54,6 +57,22 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         else listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
     val draft = if (mobile) model.phoneDraft else model.computerDraft
     val inputReady = s.available && configured && (mobile || s.computerConnected) && !running
+    // Search locally after a pause in typing; cancellation prevents stale recommendations.
+    var suggestionCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
+        model.config.optString("memorySuggestionDays"), model.config.optString("memorySuggestionLimit")) {
+        suggestionCount = 0
+        if (mobile && !executeTask && suggestMemory && !running && s.available && !s.migration.busy && draft.trim().length in 4..2000) {
+            delay(800)
+            suggestionCount = suspendCancellableCoroutine<Int> { continuation ->
+                try {
+                    model.service().suggestQuestionMemory(draft) { result ->
+                        if (continuation.isActive) continuation.resume(result.getOrNull()?.hits?.size ?: 0)
+                    }
+                } catch (_: Exception) { if (continuation.isActive) continuation.resume(0) }
+            }
+        }
+    }
     val phoneList = rememberLazyListState()
     val computerList = rememberLazyListState()
     val list = if (mobile) phoneList else computerList
@@ -306,7 +325,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     }
                     if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
                     if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
-                    else TextButton(onClick = { autoMemory = false; memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
+                    else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy) {
+                        Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
+                    }
                 }
                 Row(
                     verticalAlignment = Alignment.Bottom,
@@ -331,11 +352,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilledIconButton(
                             onClick = {
                                 followLatest = true
-                                if (mobile && !executeTask && suggestMemory && draft.length <= 2000) { autoMemory = true; memoryQuestion = true }
-                                else {
-                                    model.send(source, executeTask = mobile && executeTask)
-                                    executeTask = false
-                                }
+                                model.send(source, executeTask = mobile && executeTask)
+                                executeTask = false
                             },
                             enabled = inputReady && draft.isNotBlank(),
                             modifier = Modifier.size(48.dp),
