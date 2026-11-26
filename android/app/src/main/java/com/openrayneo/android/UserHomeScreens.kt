@@ -63,7 +63,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 Note("음성 수신: " + s.glasses.audio.detail)
                 Note("음성 인식: " + if (c.modelReady) "준비됨" else "설정 또는 모델 준비 필요")
                 if (model.config.optBoolean("ambientWakeEnabled") && c.running && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
-                Note("AI: " + if (s.agentServer.enabled) "연결 기능 켜짐 · 실제 응답은 별도 확인" else "연결 설정 필요")
+                Note("AI: " + s.agentServer.receiverStatus)
                 if (c.running || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
                         modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "저장 중…" else "기록 중지") }

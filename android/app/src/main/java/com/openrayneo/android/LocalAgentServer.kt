@@ -18,7 +18,15 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal data class AgentServerState(val enabled: Boolean = false, val port: Int = 0, val notice: String = "로컬 Agent 엔드포인트 꺼짐")
+internal data class AgentServerState(val enabled: Boolean = false, val port: Int = 0,
+    val notice: String = "로컬 Agent 엔드포인트 꺼짐", val pollSeen: Boolean = false, val pollRecent: Boolean = false) {
+    val receiverStatus: String get() = when {
+        !enabled -> "연결 설정 필요"
+        pollRecent -> "외부 Agent 수신 요청 확인 · 모델 응답 별도 확인"
+        pollSeen -> "최근 수신 요청 없음 · 작업 중일 수 있음"
+        else -> "엔드포인트 켜짐 · 외부 Agent 수신 대기"
+    }
+}
 /** Explicitly enabled, loopback-only API. No model credentials, raw audio or voice vectors are returned. */
 internal class LocalAgentServer(private val main: Handler, private val settings: AppSettings, private val changed: () -> Unit,
     private val status: () -> JSONObject, private val records: () -> JSONArray,
@@ -137,6 +145,19 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     @Volatile private var socket: ServerSocket? = null
     @Volatile private var token = ""
     var state = AgentServerState(); private set
+    // A valid long poll demonstrates a receiver, not an authenticated model account or successful inference.
+    // 45 seconds allows the existing 20-second long poll, client backoff, and ordinary scheduling delays.
+    private val pollExpiry = Runnable {
+        if (state.enabled && state.pollRecent) { state = state.copy(pollRecent = false); changed() }
+    }
+    private fun noteReceiverPoll(owner: ServerSocket, authorized: String?) {
+        main.post {
+            if (socket !== owner || owner.isClosed || authorized != "Bearer $token" || !state.enabled) return@post
+            main.removeCallbacks(pollExpiry)
+            main.postDelayed(pollExpiry, 45_000L)
+            if (!state.pollRecent) { state = state.copy(pollSeen = true, pollRecent = true); changed() }
+        }
+    }
     fun tokenForUser(): String = token
     fun start() {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -152,7 +173,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         state = AgentServerState(true, server.localPort, "로컬에서만 수신 · 요청에는 전용 Bearer 토큰 필요"); changed()
         network.execute {
             try { while (!server.isClosed) { val client = server.accept(); if (!slots.tryAcquire()) client.close() else {
-                clients.add(client); network.execute { try { handle(client) } finally { clients.remove(client); client.close(); slots.release() } }
+                clients.add(client); network.execute { try { handle(client, server) } finally { clients.remove(client); client.close(); slots.release() } }
             } } }
             catch (error: java.io.IOException) { if (!server.isClosed) main.post { state = state.copy(notice = "Agent 엔드포인트 중단: ${error.message}"); stop() } }
         }
@@ -160,12 +181,13 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     fun stop(persistSetting: Boolean = true) {
         if (persistSetting) { val config = settings.read(); config.put("localAgentEnabled", false); settings.save(config) }
         socket?.close(); socket = null; token = ""
+        main.removeCallbacks(pollExpiry)
         clients.forEach { it.close() }; clients.clear()
         cancelOutstanding("Agent 연결 종료 또는 토큰 변경"); tasks.clear()
         state = AgentServerState(); changed()
     }
     fun rotate() { stop(); val config = settings.read(); config.remove("localAgentToken"); settings.save(config); start() }
-    private fun handle(client: Socket) = client.use { connection ->
+    private fun handle(client: Socket, owner: ServerSocket) = client.use { connection ->
         connection.soTimeout = 5_000
         var code = 200
         val response: JSONObject = try {
@@ -179,7 +201,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             val headers = mutableMapOf<String, String>(); var headerBytes = 0
             while (true) { val value = line(); headerBytes += value.length; require(headerBytes <= 16384); if (value.isEmpty()) break
                 require(value.contains(':')); headers[value.substringBefore(':').lowercase()] = value.substringAfter(':').trim() }
-            if (token.isEmpty() || headers["authorization"] != "Bearer $token") { code = 401; JSONObject().put("error", "Bearer 토큰이 유효하지 않음") }
+            if (socket !== owner || owner.isClosed || token.isEmpty() || headers["authorization"] != "Bearer $token") { code = 401; JSONObject().put("error", "Bearer 토큰이 유효하지 않음") }
             else if (headers.containsKey("origin")) { code = 403; JSONObject().put("error", "웹 페이지의 교차 출처 호출은 허용하지 않음") }
             else {
                 require(!headers.containsKey("transfer-encoding")) { "다음을 사용하세요: Content-Length" }
@@ -188,9 +210,10 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                 val body = if (bytes.isEmpty()) JSONObject() else JSONObject(bytes.toString(Charsets.UTF_8))
                 val authorized = headers["authorization"]
                 if (request[0] == "GET" && request[1] == "/v1/harness/next") {
-                    harness().next { socket != null && authorized == "Bearer $token" }
+                    noteReceiverPoll(owner, authorized)
+                    harness().next { socket === owner && !owner.isClosed && authorized == "Bearer $token" }
                 } else mainResult {
-                    check(socket != null && authorized == "Bearer $token") { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
+                    check(socket === owner && !owner.isClosed && authorized == "Bearer $token") { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
                     tasks.values.toList().forEach(::expire)
                     tasks.entries.removeAll { it.value.state != "running" && SystemClock.elapsedRealtime() - it.value.startedAt > taskMs }
                     val path = request[1]

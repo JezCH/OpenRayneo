@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, wearable/integrated-install-probe-20261126]
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
@@ -46,9 +46,9 @@ jobs:
   apk:
     runs-on: ubuntu-24.04
     env:
-      DISTRIBUTE_APK: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+      DISTRIBUTE_APK: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && github.repository == 'JezCH/OpenRayneo' && github.ref == 'refs/heads/wearable/integrated-install-probe-20261126') }}
       APK_TARGET: ${{ inputs.target || 'validation' }}
-      VALIDATION_EXPECTED_SIGNER: ${{ inputs.validation_signer || '' }}
+      VALIDATION_EXPECTED_SIGNER: ${{ inputs.validation_signer || ((github.event_name == 'push' && github.repository == 'JezCH/OpenRayneo' && github.ref == 'refs/heads/wearable/integrated-install-probe-20261126') && 'ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965') || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +60,8 @@ jobs:
       - name: Install Android SDK Platform 36 / Build-Tools 36.0.0
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
 
-      # Explicit main workflow dispatch is the only distribution path. Push/PR runs compile only.
+      # Dedicated install probe: pin the actual #135 test APK certificate, not an assumed installed signer.
+      # Never merge this one-off trigger into main. Public Releases publication remains dispatch-only.
       # Store base64 of ~/.android/debug.keystore as repository secret ANDROID_DEBUG_KEYSTORE_B64.
       # Trusted main pushes also inspect the registered key without distributing an APK.
       # PRs never receive the signing secret. Report only the public certificate fingerprint.
