@@ -21,10 +21,23 @@ android {
         buildConfigField("String", "GIT_COMMIT", "\"" + (System.getenv("GITHUB_SHA")?.take(7) ?: "local") + "\"")
         ndk { abiFilters += providers.gradleProperty("openrayneo.abis").orElse("arm64-v8a").get().split(',') }
     }
+    val distributionSigningPath = System.getenv("OPENRAYNEO_SIGNING_KEYSTORE")
+    val fixedDistributionSigning = if (distributionSigningPath.isNullOrBlank()) null else {
+        signingConfigs.create("fixedDistribution") {
+            storeFile = file(distributionSigningPath)
+            require(storeFile?.isFile == true) { "Fixed distribution keystore does not exist" }
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+    check(System.getenv("OPENRAYNEO_FIXED_SIGNING") != "true" || fixedDistributionSigning != null) {
+        "Distribution requires the verified explicit keystore path"
+    }
     buildTypes {
         getByName("release") {
-            // In-place updates only work when the installed APK and new APK share a signing certificate.
-            signingConfig = signingConfigs.getByName("debug")
+            // Never let a distribution build fall back to a generated debug keystore.
+            signingConfig = fixedDistributionSigning ?: signingConfigs.getByName("debug")
             isDebuggable = false
         }
         create("validation") {
