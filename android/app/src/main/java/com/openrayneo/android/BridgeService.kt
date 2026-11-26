@@ -44,6 +44,9 @@ internal class BridgeService : Service() {
     }
     lateinit var codex: CodexClient; private set
     lateinit var translator: LiveTranslator; private set
+    var mediaCaptionState = MediaCaptionState(); private set
+    private var mediaCaptureStop: ((String?) -> Unit)? = null
+    private var mediaCaptureTimeout: Runnable? = null
     lateinit var speechOutput: KoreanSpeechOutput; private set
     var state = GlassesState(); private set
     val status get() = state.link.detail
@@ -92,7 +95,7 @@ internal class BridgeService : Service() {
     }
     private fun requireCaptureFree() {
         check(!conversations.state.running && !conversations.state.stopping && voiceTransport.source == null &&
-            !voiceTransport.nativeActive && !translator.active) { "현재 음성·기록 기능을 먼저 종료하세요" }
+            !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy) { "현재 음성·기록 기능을 먼저 종료하세요" }
     }
     private fun requireNativeCapturePageFree(source: ConversationSource) {
         if (source != ConversationSource.REALTIME)
@@ -243,7 +246,8 @@ internal class BridgeService : Service() {
         voiceTransport.bargeIn = { deviceSettings.state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode") == true &&
             settings.read().optBoolean("nativeAutoAnswer") && conversations.state.running && conversations.state.source == ConversationSource.NATIVE }
         translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
-            if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
+            if (mediaCaptionState.busy) stopMediaCaption(translator.status)
+            else if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
         audio = PromptAudio { left, right ->
             if (translator.active) translator.accept(left, right)
@@ -350,7 +354,10 @@ internal class BridgeService : Service() {
                 }
                 // The translator runs only while the glasses show its window; any other page, link loss or yield stops it.
                 // On link loss the intent would otherwise survive and reopen an orphan window after reconnecting.
-                if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP ||
+                if (mediaCaptionState.busy) {
+                    if (mediaCaptionState.phase != MediaCapturePhase.STOPPING && (!state.mediaCaptionMode || state.link.phase != LinkPhase.FULL || state.disconnecting || state.ownership != DisplayOwnership.APP || state.error != null))
+                        stopMediaCaption(state.error ?: "안경 표시 또는 연결 변경으로 미디어 자막 종료")
+                } else if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP ||
                     (state.captionMode && (state.error != null || state.audio.phase == AudioPhase.FAILED)))) {
                     translator.stop(); events.add(GlassesEvent.PauseDisplay)
                 } else if (translator.active && state.intent != DisplayIntent.Translation) translator.stop()
@@ -1052,6 +1059,102 @@ internal class BridgeService : Service() {
     }
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
     fun startCaption() = startCaptionMode(false, false)
+
+    /** Main-thread preflight, also used by the media screen and after Android consent. */
+    fun checkMediaCaption(options: MediaCaptionOptions) {
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        check(!mediaCaptionState.busy && state.intent == DisplayIntent.Idle && state.session == null &&
+            state.ownership == DisplayOwnership.APP && !state.navigation.enabled && audioOwner == null &&
+            !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
+            voiceTransport.source == null && !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy && !prompterReserved &&
+            !agent.running && !codex.running && !speechOutput.speaking && !migration.state.busy) {
+            "현재 기록·안경 화면·AI 작업을 먼저 종료하세요"
+        }
+        translator.mediaCaptionConfig(options.language)
+        if (options.scope == MediaCaptionScope.YOUTUBE) MediaPlaybackCaptureService.youtubeUid(this)
+    }
+
+    fun startMediaCaption(options: MediaCaptionOptions, resultCode: Int, consent: Intent) {
+        check(resultCode == Activity.RESULT_OK) { "시스템 캡처 승인 필요" }
+        checkMediaCaption(options)
+        val id = java.util.UUID.randomUUID().toString()
+        mediaCaptionState = MediaCaptionState(MediaCapturePhase.STARTING, id, options, "미디어 캡처 준비 중")
+        try {
+            translator.startMediaCaption(id, options.language)
+            dispatch(GlassesEvent.StartMediaCaption)
+            check(mediaCaptionState.id == id && mediaCaptionState.phase == MediaCapturePhase.STARTING && state.mediaCaptionMode) {
+                "안경 자막 화면을 시작하지 못했습니다"
+            }
+            checkNotNull(startForegroundService(MediaPlaybackCaptureService.startIntent(this, id, options.scope, resultCode, consent)))
+            mediaCaptureTimeout = Runnable {
+                if (mediaCaptionState.id == id && mediaCaptionState.phase == MediaCapturePhase.STARTING)
+                    stopMediaCaption("미디어 캡처 시작 시간이 초과되었습니다.")
+            }.also { main.postDelayed(it, 15_000) }
+            notifyUI()
+        } catch (error: Exception) {
+            if (mediaCaptionState.id == id) stopMediaCaption(error.message ?: "미디어 자막 시작 실패")
+            throw error
+        }
+    }
+
+    fun attachMediaCapture(id: String, stop: (String?) -> Unit): Boolean {
+        if (destroyed || mediaCaptionState.id != id || mediaCaptionState.phase != MediaCapturePhase.STARTING ||
+            !state.mediaCaptionMode || state.link.phase != LinkPhase.FULL || state.disconnecting || mediaCaptureStop != null) return false
+        mediaCaptureStop = stop
+        return true
+    }
+
+    fun mediaCaptureStarted(id: String) {
+        if (mediaCaptionState.id != id || mediaCaptionState.phase != MediaCapturePhase.STARTING) return
+        mediaCaptureTimeout?.let(main::removeCallbacks); mediaCaptureTimeout = null
+        mediaCaptionState = mediaCaptionState.copy(phase = MediaCapturePhase.CAPTURING, detail = "휴대폰 내부 재생음 수집 중")
+        notifyUI()
+    }
+
+    /** Audio worker; LiveTranslator's synchronized lease prevents old PCM entering a newer session. */
+    fun acceptMediaPcm(id: String, pcm: ShortArray, count: Int): Boolean = translator.acceptMedia(id, pcm, count)
+
+    fun mediaCaptureStats(id: String, samples: Long, dropped: Long, rms: Double, firstPcmMs: Long?, heard: Boolean) {
+        if (mediaCaptionState.id != id || mediaCaptionState.phase != MediaCapturePhase.CAPTURING) return
+        mediaCaptionState = mediaCaptionState.copy(samples = samples, dropped = dropped, rms = rms,
+            firstPcmMs = firstPcmMs, heardNonzero = heard,
+            detail = if (!heard && samples >= 48_000) "무음 또는 재생 앱의 캡처 제한" else "휴대폰 내부 재생음 수집 중")
+        notifyUI()
+    }
+
+    fun stopMediaCaption(reason: String? = null) {
+        val id = mediaCaptionState.id ?: return
+        if (mediaCaptionState.phase == MediaCapturePhase.STOPPING) return
+        mediaCaptureTimeout?.let(main::removeCallbacks); mediaCaptureTimeout = null
+        mediaCaptionState = mediaCaptionState.copy(phase = MediaCapturePhase.STOPPING, detail = reason ?: "미디어 캡처 종료 중")
+        if (translator.mediaSessionId == id) translator.stop(reason)
+        if (state.mediaCaptionMode) dispatch(GlassesEvent.PauseDisplay)
+        val stop = mediaCaptureStop
+        if (stop == null) {
+            stopService(Intent(this, MediaPlaybackCaptureService::class.java))
+            mediaCaptureEnded(id, reason)
+        } else {
+            stop(reason)
+            if (mediaCaptionState.id == id) mediaCaptureTimeout = Runnable {
+                if (mediaCaptionState.id == id) {
+                    stopService(Intent(this, MediaPlaybackCaptureService::class.java))
+                    mediaCaptureEnded(id, reason ?: "미디어 서비스 종료 확인 시간 초과")
+                }
+            }.also { main.postDelayed(it, 4_000) }
+        }
+        notifyUI()
+    }
+
+    fun mediaCaptureEnded(id: String, reason: String?) {
+        if (mediaCaptionState.id != id) return
+        mediaCaptureTimeout?.let(main::removeCallbacks); mediaCaptureTimeout = null; mediaCaptureStop = null
+        mediaCaptionState = mediaCaptionState.copy(id = null, phase = if (reason == null) MediaCapturePhase.IDLE else MediaCapturePhase.ERROR,
+            detail = reason ?: "미디어 자막 종료")
+        if (translator.mediaSessionId == id) translator.stop(reason)
+        if (state.mediaCaptionMode) dispatch(GlassesEvent.PauseDisplay)
+        notifyUI()
+    }
+
     fun startKoreanWake(allowAI: Boolean) = startCaptionMode(true, allowAI)
     private fun startCaptionMode(wake: Boolean, allowAI: Boolean) {
         check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
@@ -1248,7 +1351,10 @@ internal class BridgeService : Service() {
             config.optString("ttsPitch").toFloatOrNull()?.takeIf { it.isFinite() && it in 0.75f..1.25f } ?: 1f,
             headphonesOnly = config.optString("ttsOutput") != "media")
     }
-    fun stopTranslation() { translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay) }
+    fun stopTranslation() {
+        if (mediaCaptionState.busy) { stopMediaCaption(); return }
+        translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
+    }
     fun openStandby() {
         requirePrompterFree()
         check(!translator.active && !voiceTransport.nativeActive && voiceTransport.source == null &&
@@ -1682,6 +1788,7 @@ internal class BridgeService : Service() {
         if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
     }
     override fun onDestroy() {
+        if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         navigation.observers.remove(navigationObserver)
