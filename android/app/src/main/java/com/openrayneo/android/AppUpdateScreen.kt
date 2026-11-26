@@ -137,7 +137,8 @@ internal fun AppUpdateScreen(model: AppModel) {
         candidate?.let { item ->
             Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
             Text(item.notes.ifBlank { "배포 변경사항 없음" })
-            Text("APK 크기: " + (item.size / 1024 / 1024) + " MB")
+            Text("전체 APK: " + (item.size / 1024 / 1024) + " MiB")
+            item.delta?.let { patch -> Note("변경 패치: " + ((patch.size + 1048575) / 1048576) + " MiB · 기존 모델 재사용") }
             val cached = AppUpdate.hasDownloaded(app, item)
             Button(onClick = {
                 if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
@@ -146,12 +147,18 @@ internal fun AppUpdateScreen(model: AppModel) {
                     updates.startDownload(item)
                 }
             }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) {
-                Text(if (cached) "받아 둔 APK 검증 및 설치" else "다운로드 및 설치")
+                Text(if (cached) "받아 둔 APK 검증 및 설치" else if (item.delta != null) "변경분 업데이트" else "다운로드 및 설치")
             }
             if (!cached) TextButton(onClick = { model.attempt { updates.startDownload(item) } },
                 enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
-            if (updates.downloadCandidate == item && updates.downloadProgress > 0)
-                LinearProgressIndicator(progress = { (updates.downloadProgress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
+            if (!cached && item.delta != null) TextButton(onClick = {
+                // Explicit opt-in for the much larger fallback; never silently download it.
+                model.attempt { updates.startDownload(item, forceFull = true) }
+            }, enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) {
+                Text("전체 APK 다운로드 (복구용)")
+            }
+            if (updates.downloadCandidate == item && updates.downloadProgress > 0 && updates.downloadTotal > 0)
+                LinearProgressIndicator(progress = { (updates.downloadProgress.toDouble() / updates.downloadTotal).toFloat().coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth())
             if (cached) Note("이미 받은 설치 파일은 다시 다운로드하지 않고 검증 후 재사용합니다.")
         }
