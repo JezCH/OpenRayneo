@@ -25,7 +25,10 @@ internal fun AppUpdateScreen(model: AppModel) {
     val context = LocalContext.current
     val app = context.applicationContext
     val scope = rememberCoroutineScope()
-    var candidate by remember { mutableStateOf<AppUpdate.Candidate?>(null) }
+    val updates = model.updateCheck
+    var downloadedFor by remember { mutableStateOf<AppUpdate.Candidate?>(null) }
+    val candidate = downloadedFor ?: updates.candidate
+    val currentCandidate = candidate != null && candidate == updates.candidate && updates.error.isBlank() && !updates.checking
     var downloaded by remember { mutableStateOf<File?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("업데이트를 확인하세요") }
@@ -68,17 +71,22 @@ internal fun AppUpdateScreen(model: AppModel) {
         status = "APK 다운로드 및 무결성 확인 중"
         val apk = AppUpdate.download(app, item) { count -> withContext(Dispatchers.Main) { progress = count } }
         downloaded = apk
+        downloadedFor = item
         status = "다운로드 및 인증서 검증 완료"
         return apk
     }
 
     suspend fun requestInstall(item: AppUpdate.Candidate, apk: File) {
+        if (updates.checking || updates.error.isNotBlank() || updates.candidate != item) {
+            status = "업데이트 정보가 변경되었습니다. 다시 확인한 뒤 설치하세요."
+            return
+        }
         if (!idle()) {
             status = "다운로드 완료 · 새 작업이 시작되어 설치를 보류합니다"
             return
         }
         openConfirmation = true
-        try { AppUpdateInstall.install(app, item, apk, ::idle) }
+        try { AppUpdateInstall.install(app, item, apk) { idle() && !updates.checking && updates.error.isBlank() && updates.candidate == item } }
         catch (e: Exception) { openConfirmation = false; throw e }
     }
 
@@ -109,14 +117,20 @@ internal fun AppUpdateScreen(model: AppModel) {
             Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)
         }
         Text("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Switch(checked = updates.automatic, onCheckedChange = updates::changeAutomatic,
+                enabled = !busy && AppUpdateInstall.sessionId == null)
+            Column { Text("자동 업데이트 확인"); Text("앱 실행·복귀 시, 6시간 간격", style = MaterialTheme.typography.bodySmall) }
+        }
+        Text("최근 성공: " + updates.lastCheckedLabel())
+        Text(updates.summary)
+        if (updates.error.isNotBlank()) Text(updates.error, style = MaterialTheme.typography.bodySmall)
         Button(onClick = {
-            downloaded?.delete(); downloaded = null; candidate = null; progress = 0
-            status = "최신 검증 버전 확인 중"
-            launchWork {
-                candidate = AppUpdate.checkLatest(app)
-                status = if (candidate == null) "더 높은 검증 배포본이 없습니다" else "새 버전이 있습니다"
-            }
-        }, enabled = !busy && AppUpdateInstall.sessionId == null) { Text("업데이트 확인") }
+            downloaded?.delete(); downloaded = null; downloadedFor = null; progress = 0
+            status = ""
+            updates.refresh(true)
+        }, enabled = !busy && !updates.checking && AppUpdateInstall.sessionId == null) { Text("업데이트 확인") }
+        if (downloadedFor != null && !currentCandidate) Text("다운로드한 파일의 최신 배포 상태를 다시 확인해야 합니다.")
         candidate?.let { item ->
             Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
             Text(item.notes.ifBlank { "배포 변경사항 없음" })
@@ -125,9 +139,9 @@ internal fun AppUpdateScreen(model: AppModel) {
                 Button(onClick = {
                     if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
                     else launchWork { requestInstall(item, fetchApk(item)) }
-                }, enabled = !busy && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
+                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
                 TextButton(onClick = { launchWork { fetchApk(item) } },
-                    enabled = !busy && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
+                    enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
             }
             if (progress > 0) LinearProgressIndicator(progress = { (progress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth())
@@ -135,7 +149,7 @@ internal fun AppUpdateScreen(model: AppModel) {
                 Button(onClick = {
                     if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
                     else launchWork { requestInstall(item, apk) }
-                }, enabled = !busy && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
+                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
             }
         }
         if (busy) TextButton(onClick = { job?.cancel() }) { Text("작업 취소") }
@@ -148,7 +162,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         if (AppUpdateInstall.sessionId != null && !busy)
             TextButton(onClick = { AppUpdateInstall.cancel(app) }) { Text("설치 요청 취소") }
         if (!idle()) Text("설치 전 진행 중인 기록·번역·AI·모델 다운로드 및 외부 Agent/동기화 서비스를 종료하세요.")
-        Text(status)
+        if (status.isNotBlank()) Text(status)
         if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
         Text("자동 설치는 아직 활성화하지 않았습니다. Android 또는 Galaxy 보안 정책에서 설치 승인을 요청할 수 있습니다.",
             style = MaterialTheme.typography.bodySmall)
