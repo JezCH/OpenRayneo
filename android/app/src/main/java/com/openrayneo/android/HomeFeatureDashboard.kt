@@ -15,14 +15,14 @@ internal fun RecommendedSettingsCard(model: AppModel) {
     ContentCard {
         Text("권장 AI 비서 설정", style = MaterialTheme.typography.titleMedium)
         Note("아직 지정하지 않은 호출·후속 대화·빠른 힌트 설정을 한 번에 준비합니다. 이미 지정한 ON/OFF와 모델은 유지합니다.")
-        ToolButton(onClick = { confirm = true }, enabled = model.state.available && !model.state.conversation.running && !model.state.conversation.stopping && !model.state.nativeWakeAvailable && !model.state.phoneRunning && !model.state.computerRunning,
+        ToolButton(onClick = { confirm = true }, enabled = model.recommendedEditable,
             modifier = Modifier.fillMaxWidth()) { Text("권장 설정 적용") }
         Note("녹음 또는 AI 요청을 지금 시작하지 않습니다. 장기 대화 공유는 AI 화면에서 별도 동의합니다.")
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("권장 설정을 적용할까요?") },
         text = { Text("미설정 항목에 한해 안경 기본 호출 자동 응답, 기록 중 한국어 호출, 명시 호출의 짧은 대화 맥락 및 빠른 힌트를 허용합니다. 연결된 AI에 질문이나 힌트가 전송될 수 있으며 이용량이 발생할 수 있습니다. 실제 녹음은 직접 시작해야 하고 업무 승인은 유지됩니다.") },
-        confirmButton = { TextButton(onClick = { confirm = false; model.applyRecommendedSettings() }) { Text("동의하고 적용") } },
+        confirmButton = { TextButton(enabled = model.recommendedEditable, onClick = { confirm = false; model.applyRecommendedSettings() }) { Text("동의하고 적용") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("나중에") } })
 }
 
@@ -57,7 +57,8 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
     val ambient = cfg.optBoolean("ambientWakeEnabled")
     val fast = cfg.optBoolean("fastRealtimeHints")
     val native = cfg.optBoolean("nativeAutoAnswer")
-    val capturesAmbient = c.running && !c.stopping &&
+    val receiving = s.audioLevels.coordinatorState().phase == AudioPhase.RECEIVING
+    val capturesAmbient = c.running && !c.stopping && c.mode != ConversationMode.ENROLL &&
         (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && fast))
     val captureBusy = c.running || c.stopping || s.alwaysOnResumePending || s.wakeActive || s.wakePending ||
         s.nativeWakeAvailable || s.translationActive || s.teleprompter.busy || s.teleprompter.active != null ||
@@ -78,20 +79,21 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
             else -> "AI 연결 필요"
         }, activeDetail = "안경 기본 호출 음성 처리", waitingDetail = "기본 펌웨어 호출 대기")
     val ambientStatus = FeatureStatusPolicy.resolve(ambient, linked && c.modelReady && ai && mic != false,
-        active = ambient && capturesAmbient && ai && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
+        active = ambient && capturesAmbient && ai && mic != false && c.error == null && receiving,
         waiting = true, blocker = if (mic == false) "안경 마이크 꺼짐" else null,
         error = if (ambient && capturesAmbient) c.error else null,
         setupDetail = when { !linked -> "안경 연결 필요"; !c.modelReady -> "음성 모델 준비 필요"; else -> "AI 연결 필요" },
         activeDetail = "기록 중 호출 검사 · " + s.ambientWakeStatus,
         waitingDetail = if (capturesAmbient) "전사/음성 수신 대기" else "종일 또는 빠른 실시간 기록 시작 필요")
     val hintStatus = FeatureStatusPolicy.resolve(fast, linked && c.modelReady && ai,
-        active = fast && c.running && c.source == ConversationSource.REALTIME && !c.stopping && !s.focusMode && s.appNotificationsEnabled && ai && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
+        active = fast && c.running && c.mode != ConversationMode.ENROLL && c.source == ConversationSource.REALTIME && !c.stopping && !s.focusMode && s.appNotificationsEnabled && ai && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
         waiting = true, blocker = when { s.focusMode -> "집중 모드"; !s.appNotificationsEnabled -> "앱 알림 꺼짐"; mic == false -> "안경 마이크 꺼짐"; else -> null },
         setupDetail = when { !linked -> "안경 연결 필요"; !c.modelReady -> "음성 모델 준비 필요"; else -> "AI 연결 필요" },
         activeDetail = "빠른 실시간 힌트 경로", waitingDetail = "실시간 기록 시작 필요")
     ContentCard {
         Text("기능 제어판", style = MaterialTheme.typography.titleMedium)
         Note("스위치는 사용 허용 설정입니다. 실제 실행 여부와 필요한 준비는 아래 상태에서 확인하세요.")
+        if (!editing && captureBusy) Note("음성 기능을 사용 중입니다. 호출·힌트 설정을 바꾸려면 먼저 종료하세요.")
         FeatureStateRow("기본 AI 호출", nativeStatus,
             if (!linked) "안경 연결" else if (!c.modelReady) "음성 설정" else if (!ai) "AI 연결" else "기기·호출 설정",
             { if (!linked) connect() else if (!c.modelReady) open("voice-settings") else if (!ai) open("agent-api") else open("korean-wake") },
@@ -110,7 +112,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
         }
         HorizontalDivider()
         FeatureStateRow("대화 이어가기", FeatureStatusPolicy.resolve(s.chatContinuity.enabled, s.available && ai,
-            error = s.chatContinuityError.ifBlank { null }, readyDetail = "저장된 일반 대화 " + s.chatContinuity.turns.size + "턴",
+            error = s.chatContinuityError.takeIf { it.isNotBlank() }, readyDetail = "저장된 일반 대화 " + s.chatContinuity.turns.size + "턴",
             setupDetail = "AI 연결 필요"), "공유·기억 관리", { navigate(1) })
         HorizontalDivider()
         FeatureStateRow("일상·회의 기록", FeatureStatusPolicy.resolve(true, linked && c.modelReady,
@@ -131,7 +133,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
     pending?.let { (key, label) ->
         AlertDialog(onDismissRequest = { pending = null }, title = { Text(label + " 허용") },
             text = { Text("실제 사용 조건이 충족되면 설정한 AI에 질문 또는 힌트가 전송될 수 있습니다. 이용량이 발생할 수 있으며 녹음 시작과 업무 승인은 별도입니다.") },
-            confirmButton = { TextButton(onClick = { pending = null; model.saveConfig(mapOf(key to "true")) }) { Text("동의하고 켜기") } },
+            confirmButton = { TextButton(enabled = editing, onClick = { pending = null; model.saveConfig(mapOf(key to "true")) }) { Text("동의하고 켜기") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("취소") } })
     }
 }
