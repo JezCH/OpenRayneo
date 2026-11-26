@@ -233,6 +233,7 @@ internal class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         visible = true
+        NaverVoiceLaunch.resumed(this)
         startPendingVoice()
         model.refreshPermissions()
         model.updateCheck.refresh(false)
@@ -240,6 +241,7 @@ internal class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         visible = false
+        NaverVoiceLaunch.paused(this)
         cancelVoice()
         super.onPause()
     }
