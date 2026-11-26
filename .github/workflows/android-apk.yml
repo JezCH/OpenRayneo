@@ -140,6 +140,12 @@ jobs:
         working-directory: android
         run: ./gradlew :app:compileReleaseKotlin :app:compileValidationKotlin --console=plain
 
+      # Fail on incomplete or unavailable model assets before the expensive native build.
+      - name: Prepare and verify bundled model inputs
+        if: env.DISTRIBUTE_APK == 'true'
+        working-directory: android
+        run: ./gradlew :app:prepareBundledSpeech :app:prepareBundledTranslation --console=plain
+
       - name: Build selected APK
         if: env.DISTRIBUTE_APK == 'true'
         working-directory: android

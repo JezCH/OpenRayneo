@@ -79,9 +79,6 @@ val prepareBundledSpeech by tasks.registering(Exec::class) {
     outputs.dir(output)
     commandLine("python3", script.absolutePath, "prepare", output.get().asFile.absolutePath)
 }
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(prepareBundledSpeech)
-}
 
 // Package the existing pinned Mozilla model catalog at build time.
 val prepareBundledTranslation by tasks.registering(Exec::class) {
@@ -93,8 +90,15 @@ val prepareBundledTranslation by tasks.registering(Exec::class) {
     outputs.dir(output)
     commandLine("python3", script.absolutePath, "prepare", output.get().asFile.absolutePath)
 }
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(prepareBundledTranslation)
+// Both the APK asset merger and AGP lint model writers consume these generated
+// source-set directories. Declare dependencies explicitly, including lintVital
+// (assembleValidation reached generateValidationLintVitalReportModel in #188).
+// Compile-only jobs do not need gigabytes of model data.
+tasks.matching {
+    (it.name.startsWith("merge") && it.name.endsWith("Assets")) ||
+        it.name.contains("Lint", ignoreCase = true)
+}.configureEach {
+    dependsOn(prepareBundledSpeech, prepareBundledTranslation)
 }
 
 // Build exact upstream native source; translation weights are included in the APK.
