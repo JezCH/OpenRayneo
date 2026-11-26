@@ -215,6 +215,9 @@ internal fun TranslationToolScreen(model: AppModel) {
     var localKey by remember { mutableStateOf(model.config.optString("offlineTranslationKey")) }
     val prepared = s.offlineReady && address.trim() == model.config.optString("offlineTranslationUrl") && translationModel.trim() == model.config.optString("offlineTranslationModel") && localKey.trim() == model.config.optString("offlineTranslationKey")
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val problem = if (s.translationActive) null else if (!s.available) "연결 서비스 준비 중" else
+        if (local && !prepared) "저장된 로컬 번역 모델 연결을 먼저 확인하세요" else
+            runCatching { model.service().checkTranslation(local) }.exceptionOrNull()?.let { it.message ?: "번역 준비 상태 확인 실패" }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
             Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
@@ -234,7 +237,12 @@ internal fun TranslationToolScreen(model: AppModel) {
                         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
                     ToolOutlinedButton(onClick = {
                         model.saveConfig(mapOf("offlineTranslationUrl" to address, "offlineTranslationModel" to translationModel, "offlineTranslationKey" to localKey))
-                        model.attempt { model.service().translator.offline.prepare(model.config) }
+                        model.attempt {
+                            check(address.trim() == model.config.optString("offlineTranslationUrl") &&
+                                translationModel.trim() == model.config.optString("offlineTranslationModel") &&
+                                localKey.trim() == model.config.optString("offlineTranslationKey")) { "로컬 번역 설정 저장 실패" }
+                            model.service().translator.offline.prepare(model.config)
+                        }
                     }, enabled = !s.offlinePreparing && translationModel.isNotBlank()) { Text("로컬 모델 연결 시험") }
                     Note("휴대폰에서 실행 중인 llama.cpp 호환 번역 모델이 필요합니다. SenseVoice 또는 Nemotron 로컬 음성 모델과 함께 사용합니다. 이 앱은 127.0.0.1에만 연결합니다. 로컬 서버 자체가 클라우드를 중계하지 않는지 확인하세요. 모델은 아직 앱에 내장되지 않습니다.")
                 } else Note("설정된 ASR 및 AI 서비스에 발화가 전달될 수 있으며 비용이 발생할 수 있습니다.")
@@ -243,15 +251,18 @@ internal fun TranslationToolScreen(model: AppModel) {
             else if (s.mediaCaption.busy) Note("미디어 자막을 먼저 종료하세요.")
             else if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
             else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
-            else ToolButton(onClick = { confirm = true }, enabled = linked && (!local || prepared) && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null) { Text("번역 시작") }
+            else {
+                problem?.let { Note("시작할 수 없는 이유: " + it) }
+                ToolButton(onClick = { confirm = true }, enabled = problem == null) { Text("번역 시작") }
+            }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("실시간 번역을 시작할까요?") },
-        text = { Text(if (local) "로컬 음성 인식과 휴대폰 내 모델 서버를 사용합니다. 서버의 오프라인 설정을 확인하세요. 기존 기록을 중단할 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else "기존 기록 및 다른 화면을 중단할 수 있으며 음성 및 텍스트가 설정된 서비스로 전송될 수 있습니다. 참여자 동의와 이용량을 확인하세요.") },
-        confirmButton = { TextButton(enabled = linked && (!local || prepared) && !s.translationActive && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null,
+        text = { Text(if (local) "로컬 음성 인식과 휴대폰 내 모델 서버를 사용합니다. 서버의 오프라인 설정을 확인하세요. 다른 기록과 화면 기능은 먼저 종료해야 합니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else "다른 기록과 화면 기능은 먼저 종료해야 하며 음성 및 텍스트가 설정된 서비스로 전송될 수 있습니다. 참여자 동의와 이용량을 확인하세요.") },
+        confirmButton = { TextButton(enabled = problem == null && !s.translationActive,
             onClick = { confirm = false; model.attempt { model.service().startTranslation(local) } }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }
