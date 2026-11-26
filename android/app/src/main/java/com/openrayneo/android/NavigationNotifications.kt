@@ -45,7 +45,7 @@ internal object NavigationFeed {
         val channel: String,
         val packageName: String = PACKAGE,
     ) {
-        val instruction get() = if (isNavigationSource(packageName)) KoreanNavigationText.parse(texts) else null
+        val instruction = if (isNavigationSource(packageName)) KoreanNavigationText.parse(texts) else null
         val sourceName get() = sourceLabel(packageName)
         // No provider exemption: never extend an old turn's lifetime by resnapshotting it.
         fun freshAt(now: Long) = (now - updatedAt) in 0..15_000L
@@ -75,15 +75,16 @@ internal object NavigationFeed {
         get() = if (enabled) entries[selectedKey] else null
 
     val status: String
-        get() =
-            when {
-                !connected -> listenerState.detail
-                !enabled -> "네이버지도에서 길 안내를 시작한 뒤 안경 안내를 시작하세요"
-                selected == null -> "선택한 길 안내 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
-                selected?.fresh == false -> "지도 알림 갱신 대기 · 휴대폰 안내 확인"
-                selected?.safeInstruction == null -> "회전 방향과 거리를 인식하지 못했습니다. 휴대폰 안내를 확인하세요"
-                else -> selected!!.safeInstruction!!.let { "${selected!!.sourceName} 추종: ${it.direction} · ${it.meters}m" }
-            }
+        get() {
+            if (!connected) return listenerState.detail
+            if (!enabled) return "네이버지도에서 길 안내를 시작한 뒤 안경 안내를 시작하세요"
+            val entry = selected ?: return "선택한 길 안내 알림 대기 중. 알림이 바뀌었다면 다시 선택하세요"
+            // Evaluate freshness exactly once: it can expire between two wall-clock reads.
+            val instruction = entry.safeInstruction ?: return if (entry.instruction == null)
+                "회전 방향과 거리를 인식하지 못했습니다. 휴대폰 안내를 확인하세요"
+            else "지도 알림 갱신 대기 · 휴대폰 안내 확인"
+            return "${entry.sourceName} 추종: ${instruction.direction} · ${instruction.meters}m"
+        }
 
     val frame: String?
         get() {

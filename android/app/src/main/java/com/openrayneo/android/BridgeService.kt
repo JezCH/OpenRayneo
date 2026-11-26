@@ -501,7 +501,9 @@ internal class BridgeService : Service() {
     var navigationSwitchStatus = ""; private set
     private fun navigationCandidate(key: String): NavigationFeed.Entry {
         requirePrompterFree()
-        check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
+        check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요." }
+        check(state.ownership == DisplayOwnership.APP) { "다른 앱의 안경 표시를 종료한 뒤 다시 시도하세요." }
+        check(!migration.state.busy && !wakePending) { "진행 중인 기능을 먼저 종료하세요." }
         val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
         check(navigation.connected && NavigationFeed.isNavigationSource(entry.packageName) && entry.safeInstruction != null) { "네이버지도 알림 리스너 연결 및 최신 길 안내 방향·거리를 확인하세요." }
         return entry

@@ -650,7 +650,9 @@ private fun NavigationScreen(
                         if (NavigationFeed.PACKAGE !in model.installedMaps) Note("네이버지도 앱 설치가 필요합니다.")
                         else ToolButton(onClick = actions.openNaverMap, modifier = Modifier.fillMaxWidth()) { Text("네이버지도 열기") }
                         if (candidates.isNotEmpty() && s.notificationConnected) {
-                            ToolButton(onClick = { if (candidates.size == 1) follow(candidates.single().key) else sources() },
+                            if (s.glasses.link.phase != LinkPhase.FULL || s.glasses.disconnecting)
+                                ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) { Text("안경 먼저 연결") }
+                            else ToolButton(onClick = { if (candidates.size == 1) follow(candidates.single().key) else sources() },
                                 modifier = Modifier.fillMaxWidth()) { Text("안경 길 안내 시작") }
                         } else Note("최신 방향·거리 안내 수신 대기")
                     }
@@ -683,7 +685,7 @@ private fun NavigationScreen(
                 }
             }
         }
-        if (candidates.size > 1) item {
+        if (candidates.size > 1 || nav.enabled && candidates.any { it.key != nav.key } && instruction == null) item {
             OutlinedCard(onClick = sources) {
                 ListItem(
                     headlineContent = { Text("네이버지도 안내 선택") },
