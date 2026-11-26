@@ -12,7 +12,7 @@ internal class ChatContinuity(private val load: () -> State, private val save: (
         }
         fun turn(source: String, question: String, answer: String): Turn? {
             if (source !in setOf("phone", "glasses") || question.isBlank() || answer.isBlank() || answer.trim() == "[PASS]") return null
-            return Turn(source, clip(question.trim(), 1000), clip(answer.trim(), 1800))
+            return Turn(source, clip(question.trim(), 1000).trimEnd(), clip(answer.trim(), 1800).trimEnd())
         }
     }
     data class Turn(val source: String, val question: String, val answer: String)
@@ -34,7 +34,10 @@ internal class ChatContinuity(private val load: () -> State, private val save: (
         if (state.enabled == enabled && error.isEmpty()) return
         replace(State(enabled))
     }
-    fun clear() = replace(State(state.enabled))
+    fun clear() {
+        if (state.turns.isEmpty() && error.isEmpty()) { epoch++; return }
+        replace(State(state.enabled))
+    }
     private fun replace(next: State) {
         save(next)
         state = next
