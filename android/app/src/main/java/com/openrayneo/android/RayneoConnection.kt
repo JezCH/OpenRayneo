@@ -60,6 +60,10 @@ internal class RayneoConnection(private val context: Context, private val listen
     private data class BleWrite(val bytes: ByteArray, val completion: String?)
     private val bleWrites = ArrayDeque<BleWrite>()
     private var bleWriting = false
+    private var bleBusyRetries = 0
+    private var bleRetry: Runnable? = null
+    private var bleWriteTimeout: Runnable? = null
+    private val busyDelays = longArrayOf(80, 160, 320, 640)
     private var generation = 0
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionStage = "연결 대기 중"
@@ -236,7 +240,7 @@ internal class RayneoConnection(private val context: Context, private val listen
     private fun stopObservingBond() {
         val receiver = bondReceiver ?: return
         bondReceiver = null
-        context.unregisterReceiver(receiver)
+        runCatching { context.unregisterReceiver(receiver) }
     }
 
     private val callback = object : BluetoothGattCallback() {
@@ -323,8 +327,11 @@ internal class RayneoConnection(private val context: Context, private val listen
         override fun onCharacteristicWrite(connection: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (connection !== gatt || characteristic.uuid != SEND) return
             guarded {
-                check(status == BluetoothGatt.GATT_SUCCESS) { "BLE  쓰기 실패: $status" }
+                if (!bleWriting) return@guarded
+                bleWriteTimeout?.let(main::removeCallbacks); bleWriteTimeout = null
+                check(status == BluetoothGatt.GATT_SUCCESS) { "BLE 쓰기 콜백 실패: status=$status" }
                 bleWriting = false
+                bleBusyRetries = 0
                 bleWrites.removeFirstOrNull()?.completion?.let(::log)
                 writeNextBleChunk()
             }
@@ -395,11 +402,30 @@ internal class RayneoConnection(private val context: Context, private val listen
     }
 
     private fun writeNextBleChunk() {
-        if (bleWriting || bleWrites.isEmpty()) return
+        if (bleWriting || bleRetry != null || bleWrites.isEmpty()) return
         val connection = checkNotNull(gatt)
+        val session = generation
+        val result = connection.writeCharacteristic(checkNotNull(send), bleWrites.first().bytes,
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+        if (result == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY && bleBusyRetries < busyDelays.size) {
+            val delay = busyDelays[bleBusyRetries++]
+            log("BLE 전송 일시 혼잡 · 재시도 $bleBusyRetries/${busyDelays.size}")
+            val task = Runnable {
+                bleRetry = null
+                if (generation == session && gatt === connection) guarded { writeNextBleChunk() }
+            }
+            bleRetry = task
+            main.postDelayed(task, delay)
+            return
+        }
+        check(result == BluetoothStatusCodes.SUCCESS) { "BLE 전송 요청 실패: code=$result" }
         bleWriting = true
-        check(connection.writeCharacteristic(checkNotNull(send), bleWrites.first().bytes,
-            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothStatusCodes.SUCCESS) { "BLE  전송이 받아들여지지 않음" }
+        // The submitted chunk is never replayed if its result is ambiguous.
+        val deadline = Runnable {
+            if (generation == session && gatt === connection && bleWriting) fail("BLE 쓰기 응답 시간 초과")
+        }
+        bleWriteTimeout = deadline
+        main.postDelayed(deadline, 5_000)
     }
 
     private fun authentication(random: ByteArray): ByteArray =
@@ -535,6 +561,9 @@ internal class RayneoConnection(private val context: Context, private val listen
         stopScan()
         ready = false
         authenticationHandled = false
+        bleRetry?.let(main::removeCallbacks); bleRetry = null
+        bleWriteTimeout?.let(main::removeCallbacks); bleWriteTimeout = null
+        bleBusyRetries = 0
         bleWrites.clear()
         bleWriting = false
         blePayloadSize = 20

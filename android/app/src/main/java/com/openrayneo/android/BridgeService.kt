@@ -411,6 +411,8 @@ internal class BridgeService : Service() {
         }
     }
 
+    val connectionHealth: String get() = supervisor.health
+    fun refreshConnectionPermissions() = supervisor.permissionsChanged()
     fun scan() {
         resetAgentProbe()
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }

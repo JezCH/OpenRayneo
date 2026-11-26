@@ -34,14 +34,19 @@ internal class ConnectionSupervisor(
     private var bleOnly = false
     private var failures = 0
     private var closed = false
+    private var watchScheduled = false
+    private var watching = false
+    private var connectedAt = 0L
+    private val history = ConnectionHealth(context)
+    val health: String get() = history.summary()
     private val cooldowns = longArrayOf(1_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000)
-    private val retry = Runnable { startWatch() }
+    private val retry = Runnable { watchScheduled = false; startWatch() }
     private val adapterChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (closed || intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
-                    main.removeCallbacks(retry); transport.stopPresenceWatch()
+                    main.removeCallbacks(retry); watchScheduled = false; watching = false; transport.stopPresenceWatch()
                     if (waiting) publish(LinkState(LinkPhase.DISCONNECTED, "안경 미연결 · 블루투스 꺼짐", state.lastFailure, true))
                 }
                 BluetoothAdapter.STATE_ON -> if (waiting && target != null && !automatic) {
@@ -65,7 +70,7 @@ internal class ConnectionSupervisor(
     }
     fun cancelRetries() {
         target = null; waiting = false; automatic = false; failures = 0
-        main.removeCallbacks(retry); transport.stopPresenceWatch()
+        main.removeCallbacks(retry); watchScheduled = false; watching = false; transport.stopPresenceWatch()
     }
     fun disconnect() { cancelRetries(); transport.disconnect() }
     fun close() {
@@ -82,10 +87,13 @@ internal class ConnectionSupervisor(
         val detail = if (adapterEnabled()) "안경 미연결 · 자동 재연결 대기" else "안경 미연결 · 블루투스 또는 근처 기기 권한 확인"
         publish(LinkState(LinkPhase.DISCONNECTED, detail, reason, reconnectWaiting = true))
         main.removeCallbacks(retry)
-        if (adapterEnabled()) main.postDelayed(retry, delay)
+        watchScheduled = false; watching = false
+        if (adapterEnabled()) { watchScheduled = true; main.postDelayed(retry, delay) }
     }
     private fun retryWatch(reason: String) {
         if (closed || target == null) return
+        watching = false
+        history.event("자동 복구 실패", reason)
         report(reason)
         failures = (failures + 1).coerceAtMost(cooldowns.lastIndex)
         scheduleWatch(cooldowns[failures], reason)
@@ -93,30 +101,45 @@ internal class ConnectionSupervisor(
     private fun startWatch() {
         val expected = target ?: return
         if (closed || !waiting || automatic || !adapterEnabled()) return
+        watching = true
         runCatching {
             transport.watchPresence(expected, { device ->
                 if (!closed && waiting && target === expected && !automatic) {
-                    waiting = false; automatic = true
+                    watching = false; waiting = false; automatic = true
+                    target = device // Preserve the latest observed BLE address for future recovery.
                     runCatching { transport.connect(device, automatic = true) }
                         .onFailure { transport.abortConnection(it.message ?: "자동 연결 실패") }
                 }
             }, ::retryWatch)
         }.onFailure { retryWatch(it.message ?: "자동 감지 실패") }
     }
+    fun permissionsChanged() {
+        if (closed || !waiting || automatic || target == null) return
+        if (!adapterEnabled()) {
+            main.removeCallbacks(retry); watchScheduled = false; watching = false; transport.stopPresenceWatch()
+        } else if (!watchScheduled && !watching) scheduleWatch(1_000)
+    }
     override fun onDevice(device: RayneoConnection.Device) = discovered(device)
     override fun onState(text: String, ready: Boolean, busy: Boolean) {
         val wasReady = state.phase == LinkPhase.FULL
         if (ready) {
+            val recovered = automatic
             waiting = false; automatic = false; failures = 0; main.removeCallbacks(retry)
+            watchScheduled = false; watching = false
+            if (!bleOnly && !wasReady) { connectedAt = android.os.SystemClock.elapsedRealtime(); history.event(if (recovered) "자동 재연결 성공" else "연결 성공") }
             target = target?.copy(classicAddress = transport.resolvedClassicAddress ?: target?.classicAddress)
             publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
             return
         }
         if (!busy && target?.classicAddress != null && (wasReady || automatic)) {
-            if (wasReady) { failures = 0; scheduleWatch(1_000, text) }
+            if (wasReady) {
+                history.event("연결 끊김", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000))
+                failures = 0; scheduleWatch(1_000, text)
+            }
             else retryWatch(text)
             return
         }
+        if (wasReady && !busy) history.event("연결 종료", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000))
         if (waiting) return // Late callbacks cannot replace the retained failure.
         val phase = if (busy) {
             if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
