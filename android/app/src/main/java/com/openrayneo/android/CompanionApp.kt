@@ -64,6 +64,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                         Text(
                             when (route) {
                                 "settings" -> "설정"
+                                "app-update" -> "앱 업데이트"
                                 "model" -> "휴대폰 모델"
                                 "computer" -> "컴퓨터 연결"
                                 "diagnostics" -> "기기 및 진단"
@@ -161,6 +162,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     )
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
+                "app-update" -> if (AppUpdate.supported) AppUpdateScreen(model) else Text("이 앱은 자체 업데이트 대상이 아닙니다.")
                 "diagnostics" -> DiagnosticsScreen(model, actions)
                 "voice-settings" -> VoiceSettingsScreen(model, actions)
                 "voice-profiles" -> VoiceProfilesScreen(model)
