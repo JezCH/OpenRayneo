@@ -11,3 +11,7 @@ OpenRayneo uses the following unchanged pretrained models and Android/macOS runt
 Assets: `voice-models/campplus-zh-16k.onnx`, `silero-vad.onnx`, `segmentation.int8.onnx`. Runtime uses one CPU thread per model. All feature extraction and matching happen on the device; model files do not contain user voiceprints. Voiceprints use the separate model identifier `campplus-zh-16k-common/sherpa-2.0.1`.
 
 The downloaded model names are pinned. The upstream release tags containing model exports are mutable, so this build process records the source URLs rather than claiming immutable byte-for-byte reproducibility. No additional file hashes are used.
+
+## Android bundled speech recognition
+
+The installation APK additionally packages the existing unmodified SenseVoice, Korean streaming Zipformer, Nemotron 3.5 ASR streaming int8 and Korean tiny Zipformer KWS weights via `scripts/prepare-android-bundled-speech.py`. Each model contains its actual source revision, license, model card/notices (where supplied by upstream) and file digests under `assets/bundled-speech/asr/`. The weights remain build outputs rather than Git files. SenseVoice uses the FunASR Model License v1.1, Nemotron the NVIDIA OpenMDW 1.1 license, Korean Zipformer and kairess KWS Apache-2.0. No network transfer of speech is introduced by bundling. Translation weights and cloud services are separate from these speech recognition models.

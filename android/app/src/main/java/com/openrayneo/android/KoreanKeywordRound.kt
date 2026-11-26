@@ -9,7 +9,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Public Korean tiny Zipformer KWS (kairess/ko-kws-zipformer-tiny, Apache-2.0).
- * Uses the existing explicit model download and storage path. No audio goes to the model host. */
+ * Bundled in the APK with the other local ASR models. No audio goes to the model host. */
 internal object KoreanKeywordModels {
     val model = LocalModel("한국어 경량 호출", "약 9.3MB", "asr/ko-kws-zipformer-tiny",
         "ko-kws-zipformer-tiny",
@@ -19,7 +19,7 @@ internal object KoreanKeywordModels {
         { dir -> dir }, {})
 
     fun spotter(context: Context, options: KoreanWakeOptions): KeywordSpotter {
-        val dir = checkNotNull(model.location(context)) { "경량 호출 모델을 먼저 내려받으세요" }
+        val dir = model.resolveForUse(context)
         val modelFile = File(dir, "bpe.model")
         require(modelFile.length() in 1..1_000_000)
         val tokens = File(dir, "tokens.txt")

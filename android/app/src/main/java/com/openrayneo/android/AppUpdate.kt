@@ -25,7 +25,7 @@ internal object AppUpdate {
     private const val LIST = "https://api.github.com/repos/JezCH/OpenRayneo/releases?per_page=30"
     private const val APK = "OpenRayneo-validation.apk"
     private const val MANIFEST = "update-manifest.json"
-    private const val MAX_APK = 500L * 1024 * 1024
+    private const val MAX_APK = 1900L * 1024 * 1024
     private const val MAX_JSON = 2L * 1024 * 1024
     private val tagPattern = Regex("validation-v([1-9][0-9]{0,9})")
     private val digestPattern = Regex("[0-9a-f]{64}")
@@ -33,7 +33,7 @@ internal object AppUpdate {
         "objects.githubusercontent.com", "github-releases.githubusercontent.com")
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
-        .callTimeout(15, TimeUnit.MINUTES).build()
+        .callTimeout(60, TimeUnit.MINUTES).build()
     val supported get() = BuildConfig.APPLICATION_ID == PACKAGE
 
     data class Candidate(val code: Long, val name: String, val notes: String, val url: String,
