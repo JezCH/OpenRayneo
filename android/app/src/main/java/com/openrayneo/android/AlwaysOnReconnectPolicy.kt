@@ -18,6 +18,13 @@ internal class AlwaysOnReconnectPolicy {
         if (armed && eligible) phase = Phase.WAITING_STOP
         else cancel()
     }
+    /** The original daily record may be paused for a native wake. Only its existing
+     *  reconnect consent may transfer; do not grant consent to a new capture. */
+    fun suspendedLinkLost(eligible: Boolean, consent: Boolean, recordRunning: Boolean) {
+        if (pending) return
+        if (eligible && consent) phase = if (recordRunning) Phase.WAITING_STOP else Phase.WAITING_LINK
+        else cancel()
+    }
     fun captureStopped() { if (armed) cancel() }
     fun recordStopped() { if (phase == Phase.WAITING_STOP) phase = Phase.WAITING_LINK }
     fun take(linkReady: Boolean, idle: Boolean): Boolean {
