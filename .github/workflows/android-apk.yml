@@ -8,6 +8,7 @@ on:
       - "scripts/prepare-android-voice.sh"
       - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
+      - "scripts/validation-update-manifest.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
@@ -18,6 +19,7 @@ on:
       - "scripts/prepare-android-voice.sh"
       - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
+      - "scripts/validation-update-manifest.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
@@ -32,6 +34,10 @@ on:
         description: "Installed validation APK certificate SHA-256 (64 hex characters)"
         type: string
         required: false
+      publish_validation:
+        description: "Explicitly publish the verified validation APK to public GitHub Releases"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -192,6 +198,7 @@ jobs:
           cp "$RUNNER_TEMP/openrayneo-badging.txt" "$RUNNER_TEMP/openrayneo-validation-update/"
           cp "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "$RUNNER_TEMP/openrayneo-validation-update/"
           cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-validation-update/"
+          python3 scripts/validation-update-manifest.py "$RUNNER_TEMP/openrayneo-validation-update"
       - uses: actions/upload-artifact@v4
         if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'validation'
         with:
@@ -219,3 +226,49 @@ jobs:
           upload android/app/build/outputs/apk/release/app-release.apk "openrayneo-$version-$short.apk"
           upload "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "openrayneo-dsh-$short.tgz"
           upload .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "mozilla-native-8eada038-r2-$short.sources.tar.gz"
+
+  publish-validation:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.target == 'validation' && inputs.publish_validation == true
+    needs: apk
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: validation-release-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openrayneo-validation-update-${{ github.sha }}
+          path: verified
+      - name: Publish complete validation pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd verified
+          code=$(jq -er '.versionCode | select(type == "number" and . > 0)' update-manifest.json)
+          signer=$(jq -er '.signerSha256 | select(test("^[0-9a-f]{64}$"))' update-manifest.json)
+          tag="validation-v$code"
+          test "$(jq -r .commitSha update-manifest.json)" = "$GITHUB_SHA"
+          test "$(sha256sum OpenRayneo-validation.apk | cut -d' ' -f1)" = "$(jq -r .apkSha256 update-manifest.json)"
+          test "$(stat -c %s OpenRayneo-validation.apk)" = "$(jq -r .apkSize update-manifest.json)"
+          existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.tag_name | test("^validation-v[0-9]+$")) | .tag_name')
+          if printf '%s\n' "$existing" | grep -Fxq "$tag"; then
+            echo "::error::This release already exists; inspect it rather than overwriting it."; exit 1
+          fi
+          refs=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$tag" --jq '.[].ref')
+          if printf '%s\n' "$refs" | grep -Fxq "refs/tags/$tag"; then
+            echo "::error::The version tag already exists; inspect it before publication."; exit 1
+          fi
+          published=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and (.tag_name | test("^validation-v[0-9]+$"))) | .tag_name')
+          last=$(printf '%s\n' "$published" | sed -n 's/^validation-v\([0-9]*\)$/\1/p' | sort -n | tail -1)
+          if [ -n "$last" ]; then
+            test "$code" -gt "$last" || { echo "::error::Validation version must increase relative to the published channel."; exit 1; }
+            gh release download "validation-v$last" --pattern update-manifest.json --output "$RUNNER_TEMP/previous-validation.json"
+            test "$(jq -r .signerSha256 "$RUNNER_TEMP/previous-validation.json")" = "$signer" || { echo "::error::Previous release signer differs."; exit 1; }
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "OpenRayneo validation $code" --generate-notes --draft --prerelease
+          gh release upload "$tag" OpenRayneo-validation.apk update-manifest.json openrayneo-certs.txt openrayneo-badging.txt openrayneo-dsh-*.tgz mozilla-native-8eada038-r2.sources.tar.gz
+          gh release edit "$tag" --draft=false
