@@ -27,7 +27,7 @@ private fun SystemRow.attention() = status.phase in setOf(Phase.BLOCKED, Phase.E
 private fun SystemRow.working() = status.phase in setOf(Phase.ACTIVE, Phase.BUSY)
 private fun connection(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "서비스 대기")
     else SystemStatusPolicy.link(s.glasses.link.phase.name, s.glasses.link.reconnectWaiting, s.glasses.disconnecting)
-private fun recording(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "미확인") else with(s.conversation) {
+internal fun recording(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "미확인") else with(s.conversation) {
     SystemStatusPolicy.capture(running, stopping, reprocessing, liveTranscriptOnly, s.alwaysOnResumePending,
         s.audioLevels.coordinatorState().phase.name, mode == ConversationMode.ENROLL)
 }
@@ -133,7 +133,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("자동 기능", "휴대폰 알림", allowed(s.appNotificationsEnabled, linked && model.notificationAllowed && s.notificationConnected, blocked = s.focusMode), "알림 접근 및 리스너 연결", "phone-notifications", s.appNotificationsEnabled)
         addRow("자동 기능", "백그라운드 서비스", active(s.foregroundService), "Android 지속 알림 서비스", "device")
         addRow("자동 기능", "기록 동기화", allowed(s.recordSync.enabled,true), "연결 서버 활성 여부 · 전송 성공 별도", "agent-api", s.recordSync.enabled)
-        addRow("유지관리", "번역 모델 준비", if(s.mediaTranslation.preparing || s.offlinePreparing) status(Phase.BUSY,"준비 중") else off, "필요할 때 내장 모델 준비", "translation")
+        addRow("유지관리", "번역 모델 준비", if(s.mediaTranslation.preparing || s.offlinePreparing) status(Phase.BUSY,"준비 중") else off, "필요할 때 내장 모델 준비", if(s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL || s.offlinePreparing) "translation" else "media-captions")
         addRow("유지관리", "기록 이전", if(!s.available) unknown else if(s.migration.busy) status(Phase.BUSY,"이전 중") else off, "기존 앱 기록 가져오기", "record-migration")
         if(AppUpdate.supported) addRow("유지관리", "앱 업데이트", when {
             AppUpdateInstall.sessionId != null -> status(Phase.BUSY,"설치 준비")
@@ -157,6 +157,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val rec = recording(s)
     val capture = when {
         phoneInput != null -> phoneInput
+        !s.available -> "기록 미확인"
         s.mediaCaption.busy -> "영상 자막"
         s.wakeActive || s.wakePending -> "호출 대기"
         s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending -> rec.label
@@ -172,6 +173,8 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
                 color = if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase),
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("AI " + receiver(s).label, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = statusColor(receiver(s).phase), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val pending = s.approvals.size + s.agentReviews.size
+            if (pending > 0) Text("승인 $pending", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
             Icon(Icons.Outlined.ChevronRight, "시스템 현황 열기")
         }
     }

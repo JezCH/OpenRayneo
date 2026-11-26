@@ -1866,6 +1866,7 @@ internal class BridgeService : Service() {
         migration.transfer(includeAudio)
     }
     private fun notifyUI() {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { notifyUI() }; return }
         if (initialized && !destroyed) {
             updateNotification()
             observers.toList().forEach { it() }

@@ -109,10 +109,10 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         else if (!state.modelReady) TextButton(onClick = { open("voice-settings") }) { Text("음성 상태 확인") }
                     }
                 } else {
-                    Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
+                    Text(if (state.reprocessing) "저장된 원본 재전사 중 · 새 녹음 아님" else recording(s).label + " · " + state.mode.title + " · 오디오 ${state.decodedSeconds.toInt()}초 수신")
                     if (state.activeRecord?.transcriptOnly == true) Note("기기 내장 전사 · 원본 음성 미보존")
                     if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
-                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
+                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else if (state.reprocessing) "재전사 중지" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

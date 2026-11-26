@@ -118,11 +118,18 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
             error = s.chatContinuityError.takeIf { it.isNotBlank() }, readyDetail = "저장된 일반 대화 " + s.chatContinuity.turns.size + "턴",
             setupDetail = "AI 연결 필요"), "공유·기억 관리", { navigate(1) })
         HorizontalDivider()
-        FeatureStateRow("일상·회의 기록", FeatureStatusPolicy.resolve(true, linked && c.modelReady,
-            active = c.running && !c.stopping && !c.reprocessing, stopping = c.stopping,
-            waiting = s.alwaysOnResumePending, blocker = if (!c.running && captureBusy && !s.alwaysOnResumePending) "다른 기능 사용 중" else null,
-            error = c.error, setupDetail = if (!linked) "안경 연결 필요" else "음성 모델 준비 필요",
-            activeDetail = c.mode.title + " · " + c.status, waitingDetail = "동일 안경 재연결 대기",
+        val recordStatus = recording(s)
+        FeatureStateRow("일상·회의 기록", if (c.running || c.stopping || s.alwaysOnResumePending)
+            FeatureStatusPolicy.Status(when (recordStatus.phase) {
+                SystemStatusPolicy.Phase.ACTIVE -> FeatureStatusPolicy.Phase.ACTIVE
+                SystemStatusPolicy.Phase.BUSY -> FeatureStatusPolicy.Phase.STOPPING
+                SystemStatusPolicy.Phase.ERROR -> FeatureStatusPolicy.Phase.ERROR
+                SystemStatusPolicy.Phase.BLOCKED -> FeatureStatusPolicy.Phase.BLOCKED
+                else -> FeatureStatusPolicy.Phase.WAITING
+            }, recordStatus.label)
+        else FeatureStatusPolicy.resolve(true, linked && speechReady,
+            blocker = if (captureBusy) "다른 기능 사용 중" else null, error = c.error,
+            setupDetail = if (!linked) "안경 연결 필요" else "음성 설정 확인",
             readyDetail = "직접 시작할 때만 기록"), "기록 관리", { navigate(2) })
         HorizontalDivider()
         FeatureStateRow("휴대폰 알림", FeatureStatusPolicy.resolve(s.appNotificationsEnabled, linked && model.notificationAllowed && s.notificationConnected,

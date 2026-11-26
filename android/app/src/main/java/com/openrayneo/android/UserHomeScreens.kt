@@ -26,9 +26,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     var hintRequested by remember { mutableStateOf(false) }
     var resume by remember { mutableStateOf(false) }
     val activity = when {
-        s.alwaysOnResumePending -> "기록 재개 대기"
-        c.stopping -> "기록 저장 중"
-        c.running -> c.mode.title + " 기록 중"
+        s.alwaysOnResumePending || c.stopping || c.running -> recording(s).label
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
         s.mediaCaption.busy -> "미디어 자막 · " + s.mediaCaption.detail
@@ -75,7 +73,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     else -> "기기 내장 모델 확보됨"
                 })
                 if (!c.modelReady) Note("기록 엔진 초기화 대기")
-                if (model.config.optBoolean("ambientWakeEnabled") && c.running && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
+                if (model.config.optBoolean("ambientWakeEnabled") && c.running && !c.reprocessing && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("AI 연결", style = MaterialTheme.typography.labelLarge)
@@ -89,7 +87,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 }
                 if (c.running || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
-                        modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "저장 중…" else "기록 중지") }
+                        modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "마무리 중…" else if (c.reprocessing) "재전사 중지" else "기록 중지") }
                 } else if (s.wakeActive || s.wakePending) {
                     ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }, modifier = Modifier.fillMaxWidth()) { Text("한국어 호출 중지") }
                 } else if (s.mediaCaption.busy) {
