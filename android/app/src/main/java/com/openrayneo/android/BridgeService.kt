@@ -1116,7 +1116,7 @@ internal class BridgeService : Service() {
     fun releaseMediaTranslation() = translator.mediaTranslation.release()
 
     /** Main-thread preflight, also used by the media screen and after Android consent. */
-    fun checkMediaCaption(options: MediaCaptionOptions) {
+    fun checkMediaCaption(options: MediaCaptionOptions, requirePrepared: Boolean = true) {
         check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
             "안경 미디어 자막 연결 필요: " + state.link.detail + (state.link.lastFailure?.let { " · 최근 원인: $it" } ?: "")
         }
@@ -1129,7 +1129,7 @@ internal class BridgeService : Service() {
         }
         check(!translator.mediaTranslation.state.preparing) { "번역 모델 준비가 끝난 후 시작하세요" }
         translator.mediaCaptionConfig(options.language)
-        if (MediaTranslationRoute.required(options.language, options.translateToKorean))
+        if (requirePrepared && MediaTranslationRoute.required(options.language, options.translateToKorean))
             check(translator.mediaTranslation.state.readyFor(options.language)) { "내장 한국어 번역 모델을 먼저 준비하세요" }
         if (options.scope == MediaCaptionScope.YOUTUBE) MediaPlaybackCaptureService.youtubeUid(this)
     }
