@@ -12,6 +12,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     private val restored: (String, String, JSONObject) -> Unit, private val changed: () -> Unit,
     private val tool: (String, JSONObject, () -> Boolean, (Result<JSONObject>) -> Unit) -> Unit,
     private val finalAnswer: (String, String) -> Unit) {
+    companion object { const val CHAT_TIMEOUT_MS = 180_000L }
     private val main = Handler(Looper.getMainLooper())
     private var generation = 0
     private var requestId: String? = null
@@ -42,7 +43,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
             }))
         }
         try { requestId = harness.submit(text, policy, kind = kind, input = input,
-            hintLifetimeMs = if (allowTools) 0L else ProactiveHintPolicy.MAX_AGE_MS) { result ->
+            hintLifetimeMs = if (allowTools) 0L else if (ordinaryChat) CHAT_TIMEOUT_MS else ProactiveHintPolicy.MAX_AGE_MS) { result ->
             if (session == generation) {
                 requestId = null; running = false
                 result.fold({ reply ->
