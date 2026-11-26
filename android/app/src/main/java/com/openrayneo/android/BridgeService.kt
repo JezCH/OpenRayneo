@@ -655,7 +655,10 @@ internal class BridgeService : Service() {
                 resumeAlwaysOn = null
                 cancelVoiceAlwaysOnStart()
             }
-            agent.harness.cancel("route"); agent.harness.cancel("hint")
+            // Only cancel requests owned by the recording that ended; phone questions,
+            // explicit record analysis and independent diagnostics must survive.
+            agent.harness.cancel("route"); agent.harness.cancelPassiveHints()
+            if (source == ConversationSource.NATIVE) cancelNativeChat()
             if (source == ConversationSource.REALTIME) {
                 if (conversationOwnsDisplay) dispatch(GlassesEvent.PauseDisplay)
                 conversationOwnsDisplay = false
@@ -1557,7 +1560,7 @@ internal class BridgeService : Service() {
         conversations.resetAgentConversation()
         cancelVoiceAlwaysOnStart()
         cancelRealtimeStream()
-        agent.harness.cancel("hint")
+        agent.harness.cancelPassiveHints()
         agent.harness.cancelConversation(previous)
         clearAgent(resetContext = false)
     }
@@ -1708,7 +1711,7 @@ internal class BridgeService : Service() {
     private var followUpExtraction: String? = null
     fun extractFollowUps(recordId: String, revision: Int, page: Int, completion: (Result<Int>) -> Unit) {
         check(!destroyed && !conversations.state.running && followUpExtraction == null) { "현재 기록 또는 후보 추출을 먼저 마치세요" }
-        check(agentServer.state.enabled) { "DSH Go 및 외부 Agent를 먼저 연결하세요" }
+        check(agentServer.state.enabled && agentServer.state.pollRecent) { "DSH Go 및 외부 Agent가 수신 대기 중인지 확인하세요" }
         val repository = conversations.repository
         val record = repository.referenceSnapshot().firstOrNull { it.id == recordId && it.revision == revision }
             ?: error("원본 기록이 변경되었습니다. 다시 확인하세요")
