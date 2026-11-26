@@ -220,6 +220,7 @@ internal class BridgeService : Service() {
             voiceAudio.stop(); conversations.voiceRoundBoundary(); voiceAudio.start(1); conversations.nextRound()
         }, { ended ->
             if (ended) {
+                cancelNativeChat()
                 voiceAlwaysOnStart.nativeEnded(conversations.state.activeRecord?.id)
                 conversations.stop()
             } else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
@@ -900,9 +901,11 @@ internal class BridgeService : Service() {
             } == true
             if (task.isBlank() || !unmixed) { respond("업무 내용을 겹치지 않게 다시 말씀해 주세요."); return true }
             // Preserve the existing durable task and per-write approval contract.
-            agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
-                result.fold({ answer -> deliverExternalVoice(task, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
-            }
+            try {
+                agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
+                    result.fold({ answer -> deliverExternalVoice(task, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
+                }
+            } catch (error: Exception) { respond("업무 요청 전송 실패") }
             return true
         }
         input.put("purpose", "explicit_question").put("question", request.text).put("nativeChat", true)
@@ -1363,7 +1366,7 @@ internal class BridgeService : Service() {
         agent.harness.cancelConversation(previous)
         clearAgent()
     }
-    fun clearAgent() { invalidateAnswer(AnswerSource.MOBILE_AGENT); agent.clear() }
+    fun clearAgent() { cancelNativeChat(clearHistory = true); invalidateAnswer(AnswerSource.MOBILE_AGENT); agent.clear() }
     fun connectCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.connect() }
     fun closeCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.close() }
     fun newCodexConversation() {
