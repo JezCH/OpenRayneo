@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -72,8 +73,8 @@ internal object SpeechRounds {
 }
 
 /**
- * A model downloaded once from Hugging Face (into the shared folder when all-files access is granted, else app
- * storage) or copied there by the user; loaded while rounds use it and freed after a
+ * A model bundled in the APK, or an existing downloaded/copied model. Resolve the file-backed
+ * native runtime on its worker without network or storage permission; loaded while rounds use it and freed after a
  * minute idle. All loading, decoding and releasing happens on [LocalModels.executor].
  */
 internal class LocalModel<T>(val title: String, val size: String, private val folderName: String,
@@ -93,8 +94,67 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
     /** The copied folder (needs all-files access) wins over the in-app download. */
     fun location(context: Context): File? =
         sharedFolder.takeIf { Environment.isExternalStorageManager() && complete(it) } ?: folder(context).takeIf(::complete)
-    fun installed(context: Context) = location(context) != null
+    private fun assetRoot() = "bundled-speech/$folderName"
+    private fun manifest(context: Context): JSONObject? = runCatching {
+        context.assets.open("${assetRoot()}/manifest.json").bufferedReader().use { JSONObject(it.readText()) }
+    }.getOrNull()?.takeIf { manifest ->
+        val entries = manifest.optJSONObject("files") ?: return@takeIf false
+        files.all { (name, _) -> entries.optJSONObject(name)?.optLong("size", 0L)?.let { it > 0 } == true }
+    }
+    fun bundled(context: Context) = manifest(context) != null
+    fun installed(context: Context) = bundled(context) || location(context) != null
     fun shared(context: Context) = location(context) == sharedFolder
+
+    private fun fileDigest(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
+
+    /** Worker only. Reuse matching prior files, otherwise copy signed APK assets into private
+     * non-backup storage. No network, permission request, or user action is needed. */
+    fun resolveForUse(context: Context): File {
+        val manifest = manifest(context) ?: return checkNotNull(location(context)) { "$title 모델이 없습니다. 설치 APK를 확인하세요." }
+        val entries = manifest.getJSONObject("files")
+        val revision = manifest.getString("revision")
+        val destination = File(context.noBackupFilesDir, "bundled-speech/$folderName")
+        val marker = File(destination, ".revision")
+        fun matches(dir: File, verifyHash: Boolean): Boolean = files.all { (name, _) ->
+            val entry = entries.getJSONObject(name)
+            val file = File(dir, name)
+            file.isFile && file.length() == entry.getLong("size") &&
+                (!verifyHash || fileDigest(file) == entry.getString("sha256"))
+        }
+        if (marker.isFile && marker.readText() == revision && matches(destination, false)) return destination
+        // Prefer existing byte-identical downloaded files; never overwrite or delete them.
+        location(context)?.let { old ->
+            if (runCatching { matches(old, true) }.getOrDefault(false)) return old
+        }
+        check(destination.isDirectory || destination.mkdirs()) { "내장 음성 모델 저장 폴더를 만들 수 없습니다" }
+        val needed = files.sumOf { (name, _) ->
+            val entry = entries.getJSONObject(name)
+            if (runCatching { val file = File(destination, name); file.isFile && file.length() == entry.getLong("size") &&
+                    fileDigest(file) == entry.getString("sha256") }.getOrDefault(false)) 0L else entry.getLong("size")
+        }
+        check(needed == 0L || destination.usableSpace > needed + 16L * 1024 * 1024) { "내장 음성 모델을 준비할 저장 공간이 부족합니다" }
+        files.forEach { (name, _) ->
+            val entry = entries.getJSONObject(name)
+            val target = File(destination, name)
+            if (!target.isFile || target.length() != entry.getLong("size") || fileDigest(target) != entry.getString("sha256")) {
+                val part = File.createTempFile("voice-", ".part", destination)
+                try {
+                    context.assets.open("${assetRoot()}/$name").use { input -> part.outputStream().use { input.copyTo(it) } }
+                    check(part.length() == entry.getLong("size") && fileDigest(part) == entry.getString("sha256")) { "내장 음성 모델 무결성 오류: $name" }
+                    check(part.renameTo(target)) { "내장 음성 모델 저장 실패: $name" }
+                } finally { part.delete() }
+            }
+        }
+        marker.writeText(revision)
+        return destination
+    }
     val fileNames get() = files.map { it.first }
 
     /** In-app copy that can move to the shared folder (all-files access granted, shared copy not complete yet). */
@@ -102,6 +162,7 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
 
     /** Downloads into the shared folder when all-files access is granted (a backup that survives reinstalls), else app storage. */
     fun download(context: Context) {
+        if (bundled(context)) { message = "$title 설치 APK에 포함됨 · 별도 다운로드 불필요"; return }
         if (downloading) return
         downloading = true; progress = 0f; message = "내려받는 중…"
         Thread {
@@ -177,8 +238,8 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
     fun settle(context: Context, resident: Boolean) {
         idle?.cancel(false); idle = null
         if (resident) {
-            if (loaded == null) location(context)?.let { dir ->
-                try { loaded = load(dir); message = "$title 모델을 메모리에 올려 둠" }
+            if (loaded == null && installed(context)) {
+                try { loaded = load(resolveForUse(context)); message = "$title 모델을 메모리에 올려 둠" }
                 catch (error: Exception) { message = "$title 모델 불러오기 실패: ${error.message ?: error.javaClass.simpleName}" }
             }
         } else if (users == 0) { loaded?.let(free); loaded = null }
@@ -188,7 +249,7 @@ internal class LocalModel<T>(val title: String, val size: String, private val fo
     fun acquire(context: Context): T {
         idle?.cancel(false); idle = null
         val model = loaded ?: run {
-            val dir = checkNotNull(location(context)) { "기기 ASR 모델($title)이 없습니다. 음성 설정에서 내려받거나 폴더에 복사하세요" }
+            val dir = resolveForUse(context)
             load(dir).also { loaded = it }
         }
         users++

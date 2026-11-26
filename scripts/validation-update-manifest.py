@@ -22,6 +22,7 @@ assert abis[1].strip() == "'arm64-v8a'", "Wrong ABI"
 signer = signers[0].lower()
 assert signer == os.environ["OPENRAYNEO_EXPECTED_SIGNER"], "Wrong certificate"
 assert re.fullmatch(r"[0-9a-f]{40}", os.environ["GITHUB_SHA"]), "Invalid commit"
+assert 0 < apk.stat().st_size <= 1900 * 1024 * 1024, "APK exceeds supported update size"
 with apk.open("rb") as stream:
     digest = hashlib.file_digest(stream, "sha256").hexdigest()
 manifest = {

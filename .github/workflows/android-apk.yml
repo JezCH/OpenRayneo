@@ -8,6 +8,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/prepare-android-bundled-speech.py"
       - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "scripts/validation-update-manifest.py"
@@ -164,6 +165,7 @@ jobs:
             release) apk=android/app/build/outputs/apk/release/app-release.apk; package=com.openrayneo.android ;;
             *) exit 1 ;;
           esac
+          python3 scripts/prepare-android-bundled-speech.py verify "$apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/openrayneo-certs.txt"
           actual_signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
           test "$actual_signer" = "$OPENRAYNEO_RESTORED_SIGNER" || { echo "::error::APK did not use restored signing key."; exit 1; }

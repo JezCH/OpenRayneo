@@ -58,6 +58,7 @@ android {
     sourceSets.getByName("main").assets.srcDir("../../ThirdParty/SherpaOnnx")
     sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/mozilla/jni"))
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/mozilla/assets"))
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/bundled-speech-assets"))
 }
 
 val prepareVoiceModels by tasks.registering(Exec::class) {
@@ -67,6 +68,19 @@ val prepareVoiceModels by tasks.registering(Exec::class) {
         file("src/main/assets/voice-models/segmentation.int8.onnx"))
 }
 tasks.named("preBuild") { dependsOn(prepareVoiceModels) }
+
+// All four existing speech models are shipped in every installation APK, not fetched by the phone.
+val prepareBundledSpeech by tasks.registering(Exec::class) {
+    val script = rootProject.file("../scripts/prepare-android-bundled-speech.py")
+    val output = layout.buildDirectory.dir("generated/bundled-speech-assets")
+    inputs.file(script)
+    inputs.file(rootProject.file("../ThirdParty/SherpaOnnx/LICENSE"))
+    outputs.dir(output)
+    commandLine("python3", script.absolutePath, "prepare", output.get().asFile.absolutePath)
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(prepareBundledSpeech)
+}
 
 // Build exact upstream native source; translation weights are downloaded by the user.
 val mozillaAbis = providers.gradleProperty("openrayneo.abis").orElse("arm64-v8a")

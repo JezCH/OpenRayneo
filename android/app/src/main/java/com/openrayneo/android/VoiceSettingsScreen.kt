@@ -91,7 +91,11 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             var access by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
             var recheck by remember { mutableIntStateOf(0) }
             val installed = remember(local, local.downloading, access, recheck) { local.installed(context) }
-            if (installed) Text("${local.title} 모델 준비됨" + if (local.shared(context)) " (공용 폴더 사용)" else " (앱 내부 저장소, 재설치 시 삭제됨)")
+            if (installed) Text("${local.title} 모델 준비됨" + when {
+                local.bundled(context) -> " (설치 APK 내장 · 다운로드 불필요)"
+                local.shared(context) -> " (공용 폴더 사용)"
+                else -> " (앱 내부 저장소)"
+            })
             else ToolButton(onClick = { local.download(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
                 Text(if (local.downloading) "${(local.progress * 100).toInt()}% 진행 중…"
                     else "${local.title} 모델 내려받기 (${local.size}, Wi-Fi 권장" + if (access) ", 공용 폴더에 저장)" else ")")
