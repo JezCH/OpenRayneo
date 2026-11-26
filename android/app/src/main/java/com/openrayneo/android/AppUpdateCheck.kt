@@ -60,7 +60,7 @@ internal class AppUpdateCheck(context: Context) {
         DateFormat.getDateFormat(app).format(java.util.Date(lastCheckedAt)) + " " +
             DateFormat.getTimeFormat(app).format(java.util.Date(lastCheckedAt))
 
-    fun setAutomatic(enabled: Boolean) {
+    fun changeAutomatic(enabled: Boolean) {
         automatic = enabled
         prefs.edit().putBoolean("automatic", enabled).apply()
         if (enabled) refresh(false)

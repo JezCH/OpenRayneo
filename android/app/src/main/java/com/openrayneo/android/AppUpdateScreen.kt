@@ -118,7 +118,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         Text("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Switch(checked = updates.automatic, onCheckedChange = updates::setAutomatic,
+            Switch(checked = updates.automatic, onCheckedChange = updates::changeAutomatic,
                 enabled = !busy && AppUpdateInstall.sessionId == null)
             Column { Text("자동 업데이트 확인"); Text("앱 실행·복귀 시, 6시간 간격", style = MaterialTheme.typography.bodySmall) }
         }
