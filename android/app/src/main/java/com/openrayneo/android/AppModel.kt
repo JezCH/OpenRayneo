@@ -173,7 +173,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if (wantsScan && bluetoothAllowed) {
                     wantsScan = false
                     scan()
-                }
+                } else if (bluetoothAllowed) bridge?.restoreLastConnection()
             }
 
             override fun onServiceDisconnected(name: ComponentName) {
@@ -287,6 +287,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
         bridge?.refreshConnectionPermissions()
+        if (bluetoothAllowed && !wantsScan) bridge?.restoreLastConnection()
         NavigationNotifications.refresh(context, foreground = true)
     }
 
@@ -325,10 +326,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         values["ttsOutput"]?.let { require(it in setOf("headphones", "media")) { "지원하는 음성 출력 방식을 선택하세요" } }
         values["ttsRate"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.5f } == true) { "음성 속도는 0.75~1.5배로 설정하세요" } }
         values["ttsPitch"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.25f } == true) { "음성 높이는 0.75~1.25배로 설정하세요" } }
-        val mobileChanged =
-            listOf("modelUrl", "modelName", "modelKey", "mobileAgentBackend").any {
-                old.optString(it) != updated.optString(it)
-            }
+        // The summary/translation endpoint is independent of the DSH conversation.
+        // Changing it must not erase explicit chat history or cancel an unrelated task.
+        val mobileChanged = old.optString("mobileAgentBackend") != updated.optString("mobileAgentBackend")
         val computerChanged =
             listOf("codexUrl", "codexToken", "codexCwd").any {
                 old.optString(it) != updated.optString(it)
@@ -340,7 +340,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             if (bridge != null) service().clearAgent() else ChatContinuityStore.open(context).clear()
         }
         settings.save(stored)
-        if (listOf("ambientWakeEnabled", "ambientWakeContext", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "fastRealtimeHints", "nativeAutoAnswer", "modelUrl", "modelName", "modelKey", "mobileAgentBackend", "answerLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.resetAmbientWake()
+        if (listOf("ambientWakeEnabled", "ambientWakeContext", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "fastRealtimeHints", "nativeAutoAnswer", "mobileAgentBackend", "answerLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.resetAmbientWake()
         if (listOf("voiceAlwaysOnStart", "nativeAutoAnswer", "audioRetention", "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.cancelVoiceAlwaysOnStart()
         if (old.optString("fastRealtimeHints") != updated.optString("fastRealtimeHints")) bridge?.cancelRealtimeStream()
         if (listOf("audioRetention", "asrEngine").any { old.optString(it) != updated.optString(it) }) bridge?.cancelAlwaysOnRecovery()
