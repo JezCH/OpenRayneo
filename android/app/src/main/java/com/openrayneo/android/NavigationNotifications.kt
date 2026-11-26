@@ -32,6 +32,9 @@ internal object NavigationFeed {
     }
     fun resetObservations() = observations.clear()
     val activeNavigationCount get() = observations.values.count { it.second != Observation.NON_NAVIGATION }
+    fun activeNavigationKey(key: String) = observations[key]?.let { (pkg, observation) ->
+        isNavigationSource(pkg) && observation != Observation.NON_NAVIGATION
+    } == true
     val evidence get() = sources.keys.map { pkg ->
         val seen = observations.values.filter { it.first == pkg }
         SourceEvidence(pkg, seen.size, seen.count { it.second == Observation.RECOGNIZED },

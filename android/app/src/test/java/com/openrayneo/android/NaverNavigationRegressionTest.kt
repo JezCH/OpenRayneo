@@ -11,6 +11,8 @@ class NaverNavigationRegressionTest {
             "안경 길 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_HUD,
             "안경 내비게이션 종료!" to NaverVoiceCommand.Control.STOP_HUD,
             "안경 안내 꺼 줘" to NaverVoiceCommand.Control.STOP_HUD,
+            "안경 길 안내 시작해 줘" to NaverVoiceCommand.Control.START_HUD,
+            "안경 길 안내 재개해 줘" to NaverVoiceCommand.Control.START_HUD,
             "길찾기 취소해 줘" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 요청 취소" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 상태 알려 줘?" to NaverVoiceCommand.Control.STATUS,
@@ -72,6 +74,23 @@ class NaverNavigationRegressionTest {
         assertFalse(stopped.state.navigation.enabled)
         assertTrue(stopped.effects.any { it is GlassesEffect.StopFollowing })
         assertEquals(DisplayIntent.Idle, GlassesCoordinator.reduce(stopped.state, resume).state.intent)
+    }
+
+    @Test fun automaticAttachmentAndRestorationPolicy() {
+        val p = NavigationVoicePolicy
+        val D = NavigationVoicePolicy.Decision.FOLLOW
+        assertEquals(D, p.decide(10, 20, true, 1, 1, true))
+        assertEquals(NavigationVoicePolicy.Decision.WAIT, p.decide(10, 20, true, 1, 1, false))
+        assertEquals(NavigationVoicePolicy.Decision.BUSY, p.decide(20, 20, true, 1, 1, false))
+        assertEquals(NavigationVoicePolicy.Decision.EXPIRED, p.decide(20, 20, true, 0, 0, true))
+        assertEquals(NavigationVoicePolicy.Decision.AMBIGUOUS, p.decide(10, 20, true, 2, 1, true))
+        assertEquals(NavigationVoicePolicy.Decision.UNAVAILABLE, p.decide(10, 20, false, 1, 1, true))
+        assertTrue(p.canRestore(true, true, true, true, true, true, true, false))
+        for (i in 0..7) {
+            val args = MutableList(8) { it != 7 }
+            args[i] = !args[i]
+            assertFalse(p.canRestore(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]))
+        }
     }
 
     @Test fun verifiedUniqueCoordinatesOnly() {
