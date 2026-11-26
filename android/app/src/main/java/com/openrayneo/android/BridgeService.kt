@@ -923,7 +923,7 @@ internal class BridgeService : Service() {
         } == true
         val continuityTicket = if (unmixed) chatContinuity.ticket(request.text) else null
         input.put("purpose", "explicit_question").put("question", request.text).put("nativeChat", true)
-            .put("history", continuityTicket?.let { ChatContinuityStore.json(it.turns) } ?: org.json.JSONArray(nativeChatHistory.map { (q, a) ->
+            .put("history", continuityTicket?.let { ChatContinuityStore.json(it.turns) } ?: org.json.JSONArray((if (chatContinuity.state.enabled) emptyList() else nativeChatHistory).map { (q, a) ->
                 JSONObject().put("question", q).put("answer", a)
             }))
         try {
@@ -936,12 +936,15 @@ internal class BridgeService : Service() {
                 val reply = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
                 if (reply == null) { respond("AI 응답 실패 또는 만료"); return@submit }
                 chatContinuity.remember(continuityTicket, "glasses", request.text, reply)
-                nativeChatHistory.add(request.text.take(1000) to reply.take(1800))
-                while (nativeChatHistory.size > 4) nativeChatHistory.removeAt(0)
+                if (!chatContinuity.state.enabled) {
+                    nativeChatHistory.add(request.text.take(1000) to reply.take(1800))
+                    while (nativeChatHistory.size > 4) nativeChatHistory.removeAt(0)
+                }
                 deliverExternalVoice(request.text, reply, input)
                 notifyUI()
             }
-        } catch (error: Exception) { nativeChatRequest = null; respond("AI 질문 전송 실패") }
+            notifyUI()
+        } catch (error: Exception) { nativeChatRequest = null; respond("AI 질문 전송 실패"); notifyUI() }
         return true
     }
     private fun isRealtimeStreamCurrent(input: JSONObject): Boolean {
