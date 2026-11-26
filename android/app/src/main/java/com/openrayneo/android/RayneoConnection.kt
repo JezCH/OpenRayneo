@@ -64,7 +64,7 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var bleRetry: Runnable? = null
     private var bleWriteTimeout: Runnable? = null
     private val busyDelays = longArrayOf(80, 160, 320, 640)
-    private var generation = 0
+    @Volatile private var generation = 0
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionStage = "연결 대기 중"
     private val timeout = Runnable { fail("연결 시간 초과: $connectionStage") }
@@ -344,7 +344,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                     if (frame.acknowledgement) {
                         if (bleOnly) log("BLE 전송 확인 수신: seq=${frame.sequence}")
                     } else {
-                        if (frame.flags and 1 != 0) {
+                        if (frame.requiresAcknowledgement) {
                             enqueueBleFrame(ProtocolCodec.acknowledgement(frame), null)
                         }
                         if (frame.protocol == 0x10) processPairing(frame)
@@ -476,6 +476,21 @@ internal class RayneoConnection(private val context: Context, private val listen
                     val count = connection.inputStream.read(buffer)
                     check(count >= 0) { "안경이 데이터 스트림을 닫음" }
                     val frames = decoder.append(buffer.copyOf(count))
+                    // Match upstream transport semantics: reply on the same SPP stream
+                    // to frames requesting receipts. ACK frames themselves never get ACKed.
+                    val acks = ProtocolCodec.transportAcknowledgements(frames)
+                    if (acks.isNotEmpty()) io.execute {
+                        if (session != generation || socket !== connection) return@execute
+                        try {
+                            acks.forEach { connection.outputStream.write(it) }
+                            connection.outputStream.flush()
+                        } catch (error: Exception) {
+                            main.post {
+                                if (session == generation && socket === connection)
+                                    fail("SPP 확인 응답 전송 실패: ${error.message}")
+                            }
+                        }
+                    }
                     main.post {
                         if (session == generation) frames.forEach {
                             if (!it.acknowledgement) listener.onFrame(it, "SPP")

@@ -28,6 +28,7 @@ internal class ConnectionHealth(private val context: Context) {
             reason.startsWith("BLE 쓰기 응답") -> "BLE 쓰기 시간 초과"
             reason.startsWith("데이터 연결 종료") -> "SPP 수신 종료"
             reason.startsWith("데이터 전송 실패") -> "SPP 송신 실패"
+            reason.startsWith("SPP 확인 응답") -> "SPP 확인 응답 전송 실패"
             reason.startsWith("SPP") -> "SPP 연결 실패"
             reason.startsWith("연결 시간 초과") -> "연결 협상 시간 초과"
             reason.startsWith("자동 감지") -> "BLE 자동 감지 실패"

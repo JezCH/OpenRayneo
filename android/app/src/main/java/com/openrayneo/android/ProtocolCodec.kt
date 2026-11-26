@@ -6,7 +6,9 @@ import java.io.ByteArrayOutputStream
 
 internal object ProtocolCodec {
     data class Frame(val protocol: Int, val sequence: Int, val payload: ByteArray,
-                     val flags: Int = 0, val acknowledgement: Boolean = false)
+                     val flags: Int = 0, val acknowledgement: Boolean = false) {
+        val requiresAcknowledgement: Boolean get() = !acknowledgement && (flags and 1 != 0)
+    }
 
     fun crc16(bytes: ByteArray): Int {
         var crc = 0
@@ -25,6 +27,9 @@ internal object ProtocolCodec {
     }
 
     fun acknowledgement(frame: Frame) = frame(frame.protocol, frame.sequence, byteArrayOf(), acknowledgement = true)
+
+    fun transportAcknowledgements(frames: List<Frame>): List<ByteArray> =
+        frames.filter { it.requiresAcknowledgement }.map(::acknowledgement)
 
     fun pairing(sequence: Int, command: Int, fields: List<Pair<Int, ByteArray>>): ByteArray {
         val tlvs = ByteArrayOutputStream()
