@@ -96,8 +96,8 @@ jobs:
         run: |
           signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
           if [ "$signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
-            echo "::error::APK signer differs from installed #84 lineage. Distribution blocked; recover the original key rather than uninstalling."
-            exit 1
+            echo "::warning::APK signer differs from installed #84 lineage. In-place upgrade blocked; recover the original key rather than uninstalling."
+            echo "OPENRAYNEO_UPGRADE_BLOCKED=true" >> "$GITHUB_ENV"
           fi
 
       - name: Build side-by-side validation APK
@@ -121,8 +121,24 @@ jobs:
         working-directory: integrations/dsh-go
         run: npm pack --pack-destination "$RUNNER_TEMP"
 
+      - name: Prepare isolated validation APK
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED == 'true'
+        run: |
+          grep -q "^package: name='com.openrayneo.android.validation'" "$RUNNER_TEMP/openrayneo-validation-badging.txt"
+          mkdir -p "$RUNNER_TEMP/openrayneo-validation-only"
+          cp android/app/build/outputs/apk/validation/app-validation.apk "$RUNNER_TEMP/openrayneo-validation-only/OpenRayneo-validation.apk"
+          cp "$RUNNER_TEMP/openrayneo-validation-certs.txt" "$RUNNER_TEMP/openrayneo-validation-only/"
+          printf '%s\n' 'Separate installation only. Keep the original app installed. Existing app data is not automatically transferred.' > "$RUNNER_TEMP/openrayneo-validation-only/README.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED == 'true'
+        with:
+          name: openrayneo-validation-only-${{ github.sha }}
+          path: ${{ runner.temp }}/openrayneo-validation-only/
+          if-no-files-found: error
+
       - name: Assemble verified installation bundle
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED != 'true'
         run: |
           python3 scripts/build-install-bundle.py \
             --apk android/app/build/outputs/apk/release/app-release.apk \
@@ -137,7 +153,7 @@ jobs:
             --out "$RUNNER_TEMP/openrayneo-install"
 
       - uses: actions/upload-artifact@v4
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED != 'true'
         with:
           name: openrayneo-android-${{ github.sha }}
           path: ${{ runner.temp }}/openrayneo-install/
@@ -146,7 +162,7 @@ jobs:
       # Optional: upload APK and plugin to a Nextcloud "file drop" (upload-only) public share.
       # Store the share link (https://host/s/TOKEN) as repository secret NEXTCLOUD_DROP_URL.
       - name: Upload to Nextcloud
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED != 'true'
         env:
           DROP_URL: ${{ secrets.NEXTCLOUD_DROP_URL }}
         run: |
