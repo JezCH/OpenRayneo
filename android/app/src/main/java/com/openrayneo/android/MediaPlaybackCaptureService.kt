@@ -166,9 +166,16 @@ internal class MediaPlaybackCaptureService : Service() {
             while (!stopping) {
                 val count = record.read(pcm, 0, pcm.size, AudioRecord.READ_NON_BLOCKING)
                 if (count < 0) error("내부 재생음 읽기 오류 ($count)")
-                if (count == 0) { Thread.sleep(10); continue }
                 if (stopping) break
                 val now = SystemClock.elapsedRealtime()
+                if (count == 0) {
+                    if (now - lastReport >= 500) {
+                        lastReport = now
+                        val total = samples; val lost = dropped; val first = firstPcm; val heard = nonzero
+                        main.post { if (!finished) owner.mediaCaptureStats(session, total, lost, 0.0, first, heard) }
+                    }
+                    Thread.sleep(10); continue
+                }
                 if (firstPcm == null) firstPcm = now - started
                 samples += count
                 var energy = 0.0

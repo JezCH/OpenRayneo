@@ -169,7 +169,8 @@ internal class RayneoConnection(private val context: Context, private val listen
     }
 
     fun connect(device: Device, bleOnly: Boolean = false, automatic: Boolean = false) {
-        disconnect()
+        // Internal cleanup must not publish a second, false disconnect during a connection attempt.
+        resetConnection()
         automaticConnection = automatic
         this.bleOnly = bleOnly
         expectedAddress = device.classicAddress
@@ -525,7 +526,9 @@ internal class RayneoConnection(private val context: Context, private val listen
             .onFailure { log("BLE 스캔 정리 실패: ${it.message ?: it.javaClass.simpleName}") }
     }
 
-    fun disconnect() {
+    fun disconnect() { resetConnection(); state("연결 끊김") }
+
+    private fun resetConnection() {
         generation++
         main.removeCallbacks(timeout)
         stopObservingBond()
@@ -537,8 +540,8 @@ internal class RayneoConnection(private val context: Context, private val listen
         blePayloadSize = 20
         val oldGatt = gatt
         gatt = null
-        oldGatt?.disconnect()
-        oldGatt?.close()
+        runCatching { oldGatt?.disconnect() }
+        runCatching { oldGatt?.close() }
         val oldSocket = socket
         socket = null
         runCatching { oldSocket?.close() }
@@ -546,12 +549,13 @@ internal class RayneoConnection(private val context: Context, private val listen
         pairInfo = null
         receiveCharacteristic = null
         identityGate.reset()
-        state("연결 끊김")
     }
 
     fun close() { disconnect(); io.shutdownNow() }
 
-    private fun fail(message: String) { disconnect(); state(message) }
+    // Publish the actual failure once, atomically with teardown, so the supervisor can retain it.
+    fun abortConnection(message: String) = fail(message)
+    private fun fail(message: String) { resetConnection(); state(message) }
     private fun guarded(action: () -> Unit) {
         try { action() } catch (error: Exception) { fail(error.message ?: error.javaClass.simpleName) }
     }

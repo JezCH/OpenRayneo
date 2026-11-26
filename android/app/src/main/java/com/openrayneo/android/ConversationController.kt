@@ -39,7 +39,7 @@ internal class ConversationController(private val context: Context, private val 
     private fun resourceConstraint(): String? = when {
         power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE -> "기기 온도가 높음"
         power.isPowerSaveMode -> "시스템 절전 모드"
-        battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1..10 && !battery.isCharging -> "배터리 10% 미만"
+        battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1..10 && !battery.isCharging -> "휴대폰 배터리 10% 이하 · 충전 필요"
         else -> null
     }
     private val main = Handler(Looper.getMainLooper())
@@ -151,7 +151,13 @@ internal class ConversationController(private val context: Context, private val 
         if (only) {
             check(SpeechRounds.model(cfg) != null) { "원본 음성 미보존 모드는 기기 내장 ASR을 선택해야 합니다" }
             check(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
-            check(resourceConstraint() == null) { "절전·발열·배터리 상태를 확인한 후 시작하세요" }
+            resourceConstraint()?.let { reason ->
+                error("원본 미보존 기록 시작 불가: $reason. " + when {
+                    power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE -> "휴대폰이 식은 후 다시 시작하세요."
+                    power.isPowerSaveMode -> "휴대폰 절전 모드를 해제한 후 다시 시작하세요."
+                    else -> "휴대폰을 충전한 후 다시 시작하세요."
+                })
+            }
         }
         transcriptOnly = only; transcriptInterrupted = false
         val token = ++generation

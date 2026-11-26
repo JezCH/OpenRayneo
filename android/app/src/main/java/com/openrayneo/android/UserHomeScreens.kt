@@ -45,7 +45,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                     Column(Modifier.weight(1f)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "안경 연결됨" else s.glasses.link.detail)
+                        Note(if (linked) "완전 연결 · BLE 인증 + SPP" else s.glasses.link.detail)
+                        if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
                         if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
                     }
                     TextButton(onClick = { if (linked) navigate(4) else connect() }) { Text(if (linked) "관리" else "연결") }
@@ -89,8 +90,10 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (!s.agentServer.enabled) TextButton(onClick = { open("agent-api") }) { Text("AI 연결 설정") }
+                if (!linked) TextButton(onClick = { open("diagnostics") }) { Text("연결 상태와 오류 확인") }
             }
         }
+        item { FeatureTile("유튜브·미디어 자막", "이어폰 재생음 직접 수집 · 원문/한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FeatureTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, Modifier.weight(1f)) { navigate(1) }
@@ -111,7 +114,6 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 FeatureTile("실시간 번역", "한국어 ↔ 영어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
             }
         }
-        item { FeatureTile("미디어 번역·자막", "이어폰 재생음 · 내장 한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         if (model.recommendedPending) item { RecommendedSettingsCard(model) }
         item { HomeFeatureDashboard(model, navigate, open, connect) }
         item {
@@ -175,8 +177,8 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
         item { FeatureTile("한국어 호출", "종일 호출 · 호출어 설정", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
-        item { FeatureTile("미디어 번역·자막", "YouTube·내부 재생음 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
-        item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
+        item { FeatureTile("유튜브·미디어 자막", "휴대폰 내부 재생음 · 원문/한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
+        item { FeatureTile("주변 대화 자막", "안경 마이크 · 유튜브 내부 재생음 아님", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {
             Text("타이머 · 스톱워치", style = MaterialTheme.typography.titleMedium)
@@ -259,7 +261,7 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
 }
 
 @Composable
-internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit) {
+internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, mediaCaptions: () -> Unit) {
     val s = model.state
     val context = model.getApplication<android.app.Application>()
     val config = model.config
@@ -271,7 +273,9 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("실시간 자막", style = MaterialTheme.typography.headlineSmall)
+            Text("주변 대화 자막", style = MaterialTheme.typography.headlineSmall)
+            Note("유튜브나 이어폰의 내부 재생음을 자막으로 보려면 아래 미디어 자막을 사용하세요.")
+            ToolOutlinedButton(onClick = mediaCaptions) { Text("유튜브·미디어 자막 열기") }
             Note(s.captionStatus)
             Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
             if (s.captionActive) ToolButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("자막 종료") }

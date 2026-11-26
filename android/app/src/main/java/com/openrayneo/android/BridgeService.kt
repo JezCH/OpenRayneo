@@ -356,7 +356,7 @@ internal class BridgeService : Service() {
                 // On link loss the intent would otherwise survive and reopen an orphan window after reconnecting.
                 if (mediaCaptionState.busy) {
                     if (mediaCaptionState.phase != MediaCapturePhase.STOPPING && (!state.mediaCaptionMode || state.link.phase != LinkPhase.FULL || state.disconnecting || state.ownership != DisplayOwnership.APP || state.error != null))
-                        stopMediaCaption(state.error ?: "안경 표시 또는 연결 변경으로 미디어 자막 종료")
+                        stopMediaCaption(state.error ?: state.link.lastFailure ?: "안경 표시 또는 연결 변경으로 미디어 자막 종료: " + state.link.detail)
                 } else if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP ||
                     (state.captionMode && (state.error != null || state.audio.phase == AudioPhase.FAILED)))) {
                     translator.stop(); events.add(GlassesEvent.PauseDisplay)
@@ -419,13 +419,11 @@ internal class BridgeService : Service() {
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         resetAgentProbe()
-        check(!ready && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
+        check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "연결 시도가 끝나거나 취소된 후 다시 연결하세요" }
         resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
-        runCatching { supervisor.connect(device, bleOnly) }.onFailure {
-            supervisor.disconnect(); onLog(it.message ?: "연결 실패")
-        }
+        supervisor.connect(device, bleOnly)
     }
     fun disconnect() {
         resetAgentProbe()
@@ -1073,7 +1071,9 @@ internal class BridgeService : Service() {
 
     /** Main-thread preflight, also used by the media screen and after Android consent. */
     fun checkMediaCaption(options: MediaCaptionOptions) {
-        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+            "안경 미디어 자막 연결 필요: " + state.link.detail + (state.link.lastFailure?.let { " · 최근 원인: $it" } ?: "")
+        }
         check(!mediaCaptionState.busy && state.intent == DisplayIntent.Idle && state.session == null &&
             state.ownership == DisplayOwnership.APP && !state.navigation.enabled && audioOwner == null &&
             !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
@@ -1132,7 +1132,12 @@ internal class BridgeService : Service() {
         if (mediaCaptionState.id != id || mediaCaptionState.phase != MediaCapturePhase.CAPTURING) return
         mediaCaptionState = mediaCaptionState.copy(samples = samples, dropped = dropped, rms = rms,
             firstPcmMs = firstPcmMs, heardNonzero = heard,
-            detail = if (!heard && samples >= 48_000) "무음 또는 재생 앱의 캡처 제한" else "휴대폰 내부 재생음 수집 중")
+            detail = when {
+                samples == 0L -> "내부 재생음 PCM 수신 대기"
+                !heard && samples >= 48_000 -> "무음 또는 재생 앱의 캡처 제한"
+                heard && samples == dropped -> "재생음 감지 · 음성 인식 입력 대기"
+                else -> "휴대폰 내부 재생음 수집 중"
+            })
         notifyUI()
     }
 

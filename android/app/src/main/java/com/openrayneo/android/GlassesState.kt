@@ -16,7 +16,8 @@ internal sealed interface DisplayIntent {
 }
 internal enum class DisplayOwnership { APP, YIELDED }
 internal enum class LinkPhase { DISCONNECTED, SCANNING, CONNECTING, BLE_ONLY, FULL, RETRY_WAIT, CLOSING }
-internal data class LinkState(val phase: LinkPhase = LinkPhase.DISCONNECTED, val detail: String = "안경 연결 대기 중")
+internal data class LinkState(val phase: LinkPhase = LinkPhase.DISCONNECTED, val detail: String = "안경 연결 대기 중",
+                              val lastFailure: String? = null, val reconnectWaiting: Boolean = false)
 internal enum class PageMode { NAVIGATION, PROMPT }
 internal enum class PagePhase { STARTING, LAYOUT, SETTLING, READY, CLOSING }
 internal data class PageContent(val key: String, val text: String, val answer: String? = null)

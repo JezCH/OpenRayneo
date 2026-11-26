@@ -31,7 +31,6 @@ internal class ConnectionSupervisor(
     private var target: RayneoConnection.Device? = null
     private var waiting = false
     private var automatic = false
-    private var starting = false
     private var bleOnly = false
     private var failures = 0
     private var closed = false
@@ -43,6 +42,7 @@ internal class ConnectionSupervisor(
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
                     main.removeCallbacks(retry); transport.stopPresenceWatch()
+                    if (waiting) publish(LinkState(LinkPhase.DISCONNECTED, "안경 미연결 · 블루투스 꺼짐", state.lastFailure, true))
                 }
                 BluetoothAdapter.STATE_ON -> if (waiting && target != null && !automatic) {
                     failures = 0; scheduleWatch(1_000)
@@ -60,8 +60,8 @@ internal class ConnectionSupervisor(
     fun connect(device: RayneoConnection.Device, diagnostic: Boolean) {
         cancelRetries(); bleOnly = diagnostic
         if (!diagnostic) target = device
-        starting = true
-        try { transport.connect(device, diagnostic) } finally { starting = false }
+        try { transport.connect(device, diagnostic) }
+        catch (failure: Exception) { transport.abortConnection(failure.message ?: "초기 연결 실패") }
     }
     fun cancelRetries() {
         target = null; waiting = false; automatic = false; failures = 0
@@ -76,10 +76,11 @@ internal class ConnectionSupervisor(
     fun recoveryPermissions(): Boolean = context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
         context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
     private fun adapterEnabled(): Boolean = recoveryPermissions() && context.getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
-    private fun scheduleWatch(delay: Long) {
+    private fun scheduleWatch(delay: Long, reason: String? = state.lastFailure) {
         if (closed || target?.classicAddress == null) return
         waiting = true; automatic = false
-        publish(LinkState(LinkPhase.DISCONNECTED, "안경 대기 중 · 다시 가까워지면 자동 연결"))
+        val detail = if (adapterEnabled()) "안경 미연결 · 자동 재연결 대기" else "안경 미연결 · 블루투스 또는 근처 기기 권한 확인"
+        publish(LinkState(LinkPhase.DISCONNECTED, detail, reason, reconnectWaiting = true))
         main.removeCallbacks(retry)
         if (adapterEnabled()) main.postDelayed(retry, delay)
     }
@@ -87,7 +88,7 @@ internal class ConnectionSupervisor(
         if (closed || target == null) return
         report(reason)
         failures = (failures + 1).coerceAtMost(cooldowns.lastIndex)
-        scheduleWatch(cooldowns[failures])
+        scheduleWatch(cooldowns[failures], reason)
     }
     private fun startWatch() {
         val expected = target ?: return
@@ -95,11 +96,9 @@ internal class ConnectionSupervisor(
         runCatching {
             transport.watchPresence(expected, { device ->
                 if (!closed && waiting && target === expected && !automatic) {
-                    waiting = false; automatic = true; starting = true
-                    val result = runCatching { transport.connect(device, automatic = true) }
-                    if (result.isFailure) runCatching { transport.disconnect() }
-                    starting = false
-                    if (result.isFailure) retryWatch(result.exceptionOrNull()?.message ?: "자동 연결 실패")
+                    waiting = false; automatic = true
+                    runCatching { transport.connect(device, automatic = true) }
+                        .onFailure { transport.abortConnection(it.message ?: "자동 연결 실패") }
                 }
             }, ::retryWatch)
         }.onFailure { retryWatch(it.message ?: "자동 감지 실패") }
@@ -113,17 +112,16 @@ internal class ConnectionSupervisor(
             publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
             return
         }
-        if (starting && automatic && !busy) return
-        if (!starting && !busy && target?.classicAddress != null && (wasReady || automatic)) {
-            if (wasReady) { failures = 0; scheduleWatch(1_000) }
+        if (!busy && target?.classicAddress != null && (wasReady || automatic)) {
+            if (wasReady) { failures = 0; scheduleWatch(1_000, text) }
             else retryWatch(text)
             return
         }
-        if (waiting && !starting) return // Transport may report both disconnect and the underlying error.
+        if (waiting) return // Late callbacks cannot replace the retained failure.
         val phase = if (busy) {
             if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
         } else LinkPhase.DISCONNECTED
-        publish(LinkState(phase, text))
+        publish(LinkState(phase, text, if (busy) state.lastFailure else text.takeUnless { it == "연결 끊김" }))
     }
     override fun onFrame(frame: ProtocolCodec.Frame, source: String) = received(frame, source)
     override fun onLog(text: String) = report(text)
