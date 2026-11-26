@@ -57,6 +57,9 @@ internal object AutomaticMemoryPolicy {
         require(limit in 1..MemoryReferencePolicy.MAX_RESULTS)
         val phrase = normalize(query).replace(whitespace, " ")
         val terms = terms(query)
+        val compactPhrase = phrase.replace(" ", "")
+        val flexiblePhrase = if (compactPhrase.length in 4..32 && phrase.all { it in '가'..'힣' || it == ' ' })
+            Regex(compactPhrase.map { Regex.escape(it.toString()) }.joinToString("[ \\t]*")) else null
         if (phrase.isBlank() || (automatic && terms.isEmpty())) return MemoryReferencePolicy.Result(emptyList(), false)
         // Bound working storage to the returned limit + one, including duplicate filtering.
         val best = PriorityQueue<Candidate>(limit + 1, ranking.reversed())
@@ -64,16 +67,18 @@ internal object AutomaticMemoryPolicy {
             if (source.recordId.isBlank() || source.segmentId.isBlank() || source.text.isBlank()) continue
             val text = normalize(source.text)
             val exact = text.replace(whitespace, " ").contains(phrase)
+            val spaced = !exact && flexiblePhrase?.containsMatchIn(text) == true
             val words = tokenPattern.findAll(text).toList()
             val matches = terms.mapNotNull { match(it, text, words) }
-            if (!exact && matches.isEmpty()) continue
+            if (!exact && !spaced && matches.isEmpty()) continue
             // One short term alone is too weak for unattended suggestions; manual search is explicit.
-            if (automatic && !exact && matches.size == 1 && matches[0].length < 3) continue
+            if (automatic && !spaced && (matches.isEmpty() || (matches.size == 1 && matches[0].length < 3))) continue
             val strongest = matches.maxWithOrNull(compareBy<Match> { it.strength }.thenBy { it.length })
-            val score = (if (exact) 1000 else 0) + matches.size * 100 + matches.sumOf { it.strength * 10 + it.length.coerceAtMost(12) }
+            val score = (if (exact) 1000 else if (spaced) 800 else 0) + matches.size * 100 + matches.sumOf { it.strength * 10 + it.length.coerceAtMost(12) }
             // Resolve the location against the original raw string (NFC can change offsets).
             val raw = source.text
             val rawIndex = raw.indexOf(query.trim(), ignoreCase = true).takeIf { it >= 0 }
+                ?: flexiblePhrase?.find(raw)?.range?.first
                 ?: terms.mapNotNull { t -> match(t, text, words)?.let { m -> t to m } }
                     .sortedWith(compareByDescending<Pair<Term, Match>> { it.second.strength }.thenByDescending { it.second.length })
                     .firstNotNullOfOrNull { (t, _) ->
