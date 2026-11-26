@@ -60,8 +60,9 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                         if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
                         if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
                     }
-                    TextButton(onClick = { if (linked) navigate(4) else connect() }) { Text(if (linked) "관리" else "연결") }
+                    TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
                 }
+                if (s.glasses.link.reconnectWaiting) ConnectionReleaseControls(model)
             }
         }
         item {
@@ -255,6 +256,25 @@ internal fun TranslationToolScreen(model: AppModel) {
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }
 
+/** Explicitly yield our transport; never infer or change another app's connection. */
+@Composable
+internal fun ConnectionReleaseControls(model: AppModel) {
+    val s = model.state
+    val link = s.glasses.link
+    val releasing = s.glasses.disconnecting || link.phase == LinkPhase.CLOSING
+    val canRelease = link.reconnectWaiting || link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT)
+    Note("두 앱은 함께 설치할 수 있지만 안경의 동시 제어는 검증되지 않았습니다. 전환할 때는 현재 앱의 안경 연결과 자동 재연결을 먼저 종료하세요.")
+    if (releasing) Note("검증 앱 연결 해제 중 · 완료 후 공식 앱을 여세요.")
+    else if (canRelease) {
+        ToolOutlinedButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) {
+            Text(if (link.reconnectWaiting) "자동 재연결 중지 · 연결 반환" else "연결 해제 · 공식 앱 사용")
+        }
+        Note("실행하면 검증 앱의 안경 연결과 기록 자동 복구가 종료됩니다. 페어링, 계정, 저장된 기록은 유지됩니다.")
+    } else if (s.available && link.phase == LinkPhase.DISCONNECTED) {
+        Note("검증 앱은 안경 연결 및 자동 재연결 대기 상태가 아닙니다. 공식 앱에서 연결할 수 있습니다. 검증 앱으로 돌아올 때는 공식 앱의 안경 연결을 먼저 끊으세요.")
+    } else Note("연결 상태 확인 중")
+}
+
 @Composable
 internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String) -> Unit) {
     val s = model.state
@@ -264,10 +284,13 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
             GlassesArtwork(Modifier.fillMaxWidth().height(90.dp), MaterialTheme.colorScheme.primary)
             Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
             Note(if (linked) "연결됨 · 휴대폰 직접 연결" else s.glasses.link.detail)
-            val managing = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
-            ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리 · 해제 및 전환" else "안경 연결") }
+            val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
+            ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
         } }
-        item { FeatureLink("연결 해제 및 공식 앱 전환", "기존 페어링 및 기록 유지", Icons.Outlined.Visibility) { open("display-controls") } }
+        item { ContentCard {
+            Text("공식 앱과 전환", style = MaterialTheme.typography.titleMedium)
+            ConnectionReleaseControls(model)
+        } }
         item { FeatureLink("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") } }
         item { FeatureLink("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") } }
         item { FeatureLink("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") } }
