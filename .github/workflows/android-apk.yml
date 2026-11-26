@@ -6,6 +6,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
@@ -15,6 +16,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
@@ -48,12 +50,16 @@ jobs:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            mkdir -p ~/.android
-            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-            # Fail early if the JDK cannot read the key the Android Gradle Plugin will use.
-            keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
+            set -o pipefail
+            umask 077
+            signing_file="$RUNNER_TEMP/openrayneo-distribution.keystore"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$signing_file"
+            restored_signer=$(keytool -exportcert -keystore "$signing_file" -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')
+            echo "Restored signing certificate SHA-256: $restored_signer"
+            echo "OPENRAYNEO_RESTORED_SIGNER=$restored_signer" >> "$GITHUB_ENV"
+            echo "OPENRAYNEO_SIGNING_KEYSTORE=$signing_file" >> "$GITHUB_ENV"
             echo "OPENRAYNEO_FIXED_SIGNING=true" >> "$GITHUB_ENV"
-            echo "Using provided signing keystore"
+            echo "Using explicitly selected distribution keystore"
           else
             echo "::error::Fixed signing key missing. Distribution blocked; configure ANDROID_DEBUG_KEYSTORE_B64 before publishing."
             exit 1
@@ -88,6 +94,8 @@ jobs:
         run: |
           set -o pipefail
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
+          actual_signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
+          test "$actual_signer" = "$OPENRAYNEO_RESTORED_SIGNER" || { echo "::error::APK did not use restored signing key."; exit 1; }
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/openrayneo-badging.txt"
 
       # Fork continuity pin: only the public certificate fingerprint, never the private key.
@@ -110,6 +118,8 @@ jobs:
         run: |
           set -o pipefail
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/validation/app-validation.apk | tee "$RUNNER_TEMP/openrayneo-validation-certs.txt"
+          actual_signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-validation-certs.txt")
+          test "$actual_signer" = "$OPENRAYNEO_RESTORED_SIGNER" || { echo "::error::Validation APK did not use restored signing key."; exit 1; }
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/validation/app-validation.apk > "$RUNNER_TEMP/openrayneo-validation-badging.txt"
 
       - name: Check DSH plugin policies
@@ -128,6 +138,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/openrayneo-validation-only"
           cp android/app/build/outputs/apk/validation/app-validation.apk "$RUNNER_TEMP/openrayneo-validation-only/OpenRayneo-validation.apk"
           cp "$RUNNER_TEMP/openrayneo-validation-certs.txt" "$RUNNER_TEMP/openrayneo-validation-only/"
+          cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-validation-only/"
           printf '%s\n' 'Separate installation only. Keep the original app installed. Existing app data is not automatically transferred.' > "$RUNNER_TEMP/openrayneo-validation-only/README.txt"
 
       - uses: actions/upload-artifact@v4
@@ -151,6 +162,10 @@ jobs:
             --commit "$GITHUB_SHA" --run "$GITHUB_RUN_NUMBER" \
             --fixed-signing-key "${OPENRAYNEO_FIXED_SIGNING:-false}" \
             --out "$RUNNER_TEMP/openrayneo-install"
+
+      - name: Include exact Mozilla corresponding source
+        if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED != 'true'
+        run: cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-install/"
 
       - uses: actions/upload-artifact@v4
         if: env.DISTRIBUTE_APK == 'true' && env.OPENRAYNEO_UPGRADE_BLOCKED != 'true'
@@ -179,3 +194,4 @@ jobs:
           upload android/app/build/outputs/apk/release/app-release.apk "openrayneo-$version-$short.apk"
           upload android/app/build/outputs/apk/validation/app-validation.apk "openrayneo-$version-$short-validation.apk"
           upload "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "openrayneo-dsh-$short.tgz"
+          upload .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "mozilla-native-8eada038-r2-$short.sources.tar.gz"

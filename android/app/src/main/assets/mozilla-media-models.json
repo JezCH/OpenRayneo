@@ -1,0 +1,124 @@
+{
+  "source": "Ngoroth/offline-translator-android v0.2.0 / Mozilla models MPL-2.0",
+  "baseUrl": "https://storage.googleapis.com/moz-fx-translations-data--303e-prod-translations-data",
+  "routes": [
+    {
+      "source": "zh-Hans",
+      "target": "en",
+      "architecture": "base-memory",
+      "version": "3.1",
+      "directory": "models/zh-en/cjk_retrain_base-memory_cNY_yaJCStGwnTeXgW8A5w/exported/",
+      "files": [
+        [
+          "lexicalShortlist",
+          "lex.50.50.zhen.s2t.bin",
+          4822158,
+          9219192,
+          "8524dd4c93ffd7f0ae7be32f77a7c14fea7cdbbebe34ea6ad0ec368d5ddd8b13",
+          "1763760574915337",
+          "5e139673-82d6-4119-ad77-dcc18417fac0"
+        ],
+        [
+          "model",
+          "model.zhen.intgemm.alphas.bin",
+          32726806,
+          43977787,
+          "5cd149601802fc8a18124a1c1306144dbbedc058630c4ddb2d53aa76fa9c7c06",
+          "1763760582212042",
+          "3dcd25bc-763b-42fe-8979-b96ced36ab33"
+        ],
+        [
+          "vocab",
+          "vocab.zhen.spm",
+          738862,
+          1359697,
+          "dff594318ab7d8b7b60b844ab98ebe6b932ae8045fab15235404c787715965b3",
+          "1763760566568862",
+          "6e8dfb15-d62a-4e47-9881-52f2d8c6e757"
+        ]
+      ]
+    },
+    {
+      "source": "en",
+      "target": "ko",
+      "architecture": "base-memory",
+      "version": "3.1",
+      "directory": "models/en-ko/cjk_retrain_base-memory_GP50C3MpQ9apCWZOW-f3PA/exported/",
+      "files": [
+        [
+          "lexicalShortlist",
+          "lex.50.50.enko.s2t.bin",
+          3471311,
+          6449612,
+          "96efba97d4bb93ab362e5569bea0f115184d2f68d63b67305ee663c18e32fbeb",
+          "1764960082093728",
+          "9a540824-33be-4a81-8b71-33517bcf2da9"
+        ],
+        [
+          "model",
+          "model.enko.intgemm.alphas.bin",
+          33738001,
+          43849787,
+          "ffe5ef2ce3f2e944055e35310bab186f6a70d533a0ee4394adf716a0e383afbb",
+          "1764960081168212",
+          "2c8fabf8-7724-45d3-a590-f58ca8b0cb14"
+        ],
+        [
+          "srcVocab",
+          "srcvocab.enko.spm",
+          402480,
+          791280,
+          "8d4e3141868efd410eb86c2b60d41aa6bc6b46e4c4b2c0b85e3792493c69d802",
+          "1764960081449572",
+          "c3c58473-ee59-45d7-b17b-541375ff7540"
+        ],
+        [
+          "trgVocab",
+          "trgvocab.enko.spm",
+          412614,
+          815353,
+          "2ece21b28dd7022d36127d17423a74dabf544787dfc1cf614f7b565f93a4a1d3",
+          "1764960082173703",
+          "288658f5-f356-49f8-b6f8-2f912bcf601d"
+        ]
+      ]
+    },
+    {
+      "source": "ja",
+      "target": "en",
+      "architecture": "base-memory",
+      "version": "3.1",
+      "directory": "models/ja-en/cjk_retrain_base-memory_NLRJLD_pQFyrvgKtbie2nA/exported/",
+      "files": [
+        [
+          "lexicalShortlist",
+          "lex.50.50.jaen.s2t.bin",
+          4819610,
+          9348172,
+          "525f412f0d210536c2933c78ae395fa0bf2b5ee6cc5dda61ebc2e79410ebaee4",
+          "1763760480138730",
+          "bc580bcb-264f-42cb-940e-4ace66b320c7"
+        ],
+        [
+          "model",
+          "model.jaen.intgemm.alphas.bin",
+          32577435,
+          43977787,
+          "3a603e20bfe1be86071913f9e23ab5129075bc0a8490151020ac4821e4f17302",
+          "1763760486489681",
+          "cfa3fd50-8bd4-4770-bae4-8e7e640aa9e3"
+        ],
+        [
+          "vocab",
+          "vocab.jaen.spm",
+          746616,
+          1443222,
+          "5cb217758bae05877bb3f0c2f612e4e7c1e4cb03c10db11f4a47098d7ae62919",
+          "1763760478570200",
+          "f921a605-3891-4f85-abad-0fda6863ced9"
+        ]
+      ]
+    }
+  ],
+  "rawAttachments": {}
+}
