@@ -8,7 +8,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.provider.ContactsContract
-import android.speech.RecognizerIntent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,7 +26,57 @@ internal class MainActivity : ComponentActivity() {
         val id = exportRecord; exportRecord = null
         if (uri != null && id != null) model.exportRecording(id, uri)
     }
-    private var voiceSource = AnswerSource.MOBILE_AGENT
+    private var dictation by mutableStateOf<PhoneDictation?>(null)
+    private var pendingVoice: AnswerSource? = null
+    private var visible = false
+    private val voicePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            pendingVoice = null
+            model.notice = "휴대폰 음성 입력에는 마이크 권한이 필요합니다."
+        } else if (visible) startPendingVoice()
+    }
+    private fun voiceBusy(): Boolean {
+        val s = model.state
+        return s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
+            s.nativeWakeAvailable || s.wakeActive || s.wakePending || s.translationActive ||
+            s.captionActive || s.mediaCaption.busy || s.mediaTranslation.preparing || s.speechPlaying ||
+            s.teleprompter.smartFollow || s.migration.busy
+    }
+    private fun requestVoice(source: AnswerSource) = model.attempt {
+        check(dictation == null && pendingVoice == null && pendingMediaCaption == null) { "다른 음성 요청이 진행 중입니다." }
+        check(!voiceBusy()) { "다른 음성 기능을 종료한 뒤 입력하세요." }
+        pendingVoice = source
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            startPendingVoice()
+        else voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    private fun startPendingVoice() {
+        if (!visible || checkSelfPermission(Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val source = pendingVoice ?: return
+        pendingVoice = null
+        model.attempt {
+            check(!voiceBusy() && dictation == null && pendingMediaCaption == null) { "다른 음성 기능이 시작되었습니다." }
+            val language = KoreanLanguage.phoneInput(model.config.optString("phoneSpeechLanguage")).substringBefore('-')
+            lateinit var session: PhoneDictation
+            session = PhoneDictation(applicationContext, language) { result ->
+                if (dictation !== session) return@PhoneDictation
+                dictation = null
+                result.fold({ text ->
+                    if (text.isBlank()) model.notice = "인식된 음성이 없습니다."
+                    else if (source == AnswerSource.MOBILE_AGENT)
+                        model.phoneDraft = listOf(model.phoneDraft, text).filter { it.isNotBlank() }.joinToString(" ")
+                    else model.computerDraft = listOf(model.computerDraft, text).filter { it.isNotBlank() }.joinToString(" ")
+                }, { error -> model.error = error.message ?: "휴대폰 음성 입력 실패" })
+            }
+            dictation = session
+            session.start()
+        }
+    }
+    private fun cancelVoice() {
+        val session = dictation
+        dictation = null
+        session?.cancel()
+    }
     private val contact = registerForActivityResult(ActivityResultContracts.PickContact()) { uri ->
         if (uri != null) model.attempt {
             contentResolver.query(uri, arrayOf(ContactsContract.Contacts.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -82,24 +135,8 @@ internal class MainActivity : ComponentActivity() {
         } catch (failure: Exception) { pendingMediaCaption = null; throw failure }
     }
 
-    private val speech =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK) {
-                val text =
-                    result.data
-                        ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                        ?.firstOrNull()
-                        .orEmpty()
-                if (voiceSource == AnswerSource.MOBILE_AGENT) model.phoneDraft = text
-                else model.computerDraft = text
-            }
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        voiceSource =
-            savedInstanceState?.getString("voiceSource")?.let(AnswerSource::valueOf)
-                ?: AnswerSource.MOBILE_AGENT
         enableEdgeToEdge()
         setContent {
             CompanionTheme(model.appearance) {
@@ -159,35 +196,45 @@ internal class MainActivity : ComponentActivity() {
                             importFile.launch(arrayOf("application/json", "text/plain"))
                         },
                         mediaCaption = ::requestMediaCaption,
-                        voice = { source ->
-                            model.attempt {
-                                voiceSource = source
-                                speech.launch(
-                                    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                                        .putExtra(
-                                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                                        )
-                                        .putExtra(RecognizerIntent.EXTRA_LANGUAGE, KoreanLanguage.phoneInput(model.config.optString("phoneSpeechLanguage")))
-                                        .putExtra(RecognizerIntent.EXTRA_PROMPT, "AI에게 질문할 내용을 말하세요")
-                                )
-                            }
-                        },
+                        voice = ::requestVoice,
                     ),
                 )
+                val activeVoice = dictation
+                val busy = voiceBusy()
+                LaunchedEffect(activeVoice, busy) {
+                    if (activeVoice != null && busy && dictation === activeVoice) {
+                        cancelVoice()
+                        model.notice = "다른 음성 기능이 시작되어 휴대폰 입력을 취소했습니다."
+                    }
+                }
+                activeVoice?.let { session ->
+                    AlertDialog(onDismissRequest = ::cancelVoice,
+                        title = { Text("휴대폰 음성 입력") },
+                        text = { Text(session.status + "\n\n" + session.preview.ifBlank { "인식 내용이 여기에 표시됩니다. AI로 자동 전송하지 않습니다." }) },
+                        confirmButton = { TextButton(enabled = session.listening, onClick = session::finish) { Text("입력 완료") } },
+                        dismissButton = { TextButton(onClick = ::cancelVoice) { Text("취소") } })
+                }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
+        visible = true
+        startPendingVoice()
         model.refreshPermissions()
         model.updateCheck.refresh(false)
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("voiceSource", voiceSource.name)
-        super.onSaveInstanceState(outState)
+    override fun onPause() {
+        visible = false
+        cancelVoice()
+        super.onPause()
+    }
+    override fun onDestroy() {
+        pendingVoice = null
+        cancelVoice()
+        super.onDestroy()
     }
 }
 
