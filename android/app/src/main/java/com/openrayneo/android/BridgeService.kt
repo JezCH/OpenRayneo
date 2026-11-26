@@ -1300,10 +1300,11 @@ internal class BridgeService : Service() {
     }
     fun searchQuestionMemory(query: String, topicId: String? = null, completion: (Result<MemoryReferencePolicy.Result>) -> Unit) {
         check(!destroyed && !migration.state.busy) { "기록 이전을 먼저 종료하세요" }
-        val scope = MemoryReferencePolicy.Scope(query = query.trim(), limit = MemoryReferencePolicy.MAX_RESULTS)
+        val phrase = query.trim()
+        require(phrase.isNotBlank() && phrase.length <= 160)
         val snapshot = questionMemorySnapshot(topicId)
         memoryReferenceWorker.execute {
-            val result = runCatching { MemoryReferenceSearch.search(scope, snapshot) }
+            val result = runCatching { MemoryReferenceSearch.related(phrase, snapshot) }
             main.post { if (!destroyed) completion(result) }
         }
     }
