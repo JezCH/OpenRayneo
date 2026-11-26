@@ -50,7 +50,10 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
                hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null, complete: (Result<String>) -> Unit): String {
         require(input?.optBoolean("backfill") != true) { "과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다" }
-        require(hintLifetimeMs in 0L..ProactiveHintPolicy.MAX_AGE_MS && (hintLifetimeMs == 0L || kind == "hint"))
+        // Ordinary explicit chat may need a longer reasoning window; passive hints still expire in 60s.
+        val ordinaryChat = kind == "hint" && input?.optString("purpose") == "explicit_question" && input.optJSONArray("history") != null
+        val maxLifetime = if (ordinaryChat) MobileAgent.CHAT_TIMEOUT_MS else ProactiveHintPolicy.MAX_AGE_MS
+        require(hintLifetimeMs in 0L..maxLifetime && (hintLifetimeMs == 0L || kind == "hint"))
         require(preview == null || (hintLifetimeMs > 0L && input?.optBoolean("streamHint") == true))
         val id = UUID.randomUUID().toString()
         if (input?.optString("recordId")?.isNotBlank() == true) input.put("derivedId", id)

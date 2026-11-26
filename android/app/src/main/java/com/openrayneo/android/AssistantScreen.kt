@@ -35,6 +35,7 @@ import org.json.JSONObject
 @Composable
 internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
+    var executeTask by remember { mutableStateOf(false) }
     var memoryQuestion by remember { mutableStateOf(false) }
     var autoMemory by remember { mutableStateOf(false) }
     val suggestMemory = model.config.optString("memorySuggestOnSend") == "true"
@@ -256,7 +257,14 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (mobile) TextButton(onClick = { autoMemory = false; memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
+                if (mobile) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
+                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running)
+                    }
+                    if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
+                    else TextButton(onClick = { autoMemory = false; memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
+                }
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -265,7 +273,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         draft,
                         { if (mobile) model.phoneDraft = it else model.computerDraft = it },
                         Modifier.weight(1f),
-                        placeholder = { Text(if (mobile) "질문하거나 작업을 요청하세요…" else "컴퓨터에 맡길 작업…") },
+                        placeholder = { Text(if (mobile) (if (executeTask) "실행할 업무를 입력하세요…" else "AI에게 질문하세요…") else "컴퓨터에 맡길 작업…") },
                         maxLines = 5,
                         shape = MaterialTheme.shapes.large,
                     )
@@ -280,8 +288,11 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilledIconButton(
                             onClick = {
                                 followLatest = true
-                                if (mobile && suggestMemory && draft.length <= 2000) { autoMemory = true; memoryQuestion = true }
-                                else model.send(source)
+                                if (mobile && !executeTask && suggestMemory && draft.length <= 2000) { autoMemory = true; memoryQuestion = true }
+                                else {
+                                    model.send(source, executeTask = mobile && executeTask)
+                                    executeTask = false
+                                }
                             },
                             enabled = inputReady && draft.isNotBlank(),
                             modifier = Modifier.size(48.dp),
@@ -306,7 +317,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
-                        if (mobile) "로컬 Agent로 보내기" else "컴퓨터 Codex로 보내기",
+                        if (mobile) (if (executeTask) "업무 Agent로 보내기" else "도구 없는 AI 대화") else "컴퓨터 Codex로 보내기",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
