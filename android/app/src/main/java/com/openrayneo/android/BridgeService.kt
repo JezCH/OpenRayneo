@@ -100,6 +100,14 @@ internal class BridgeService : Service() {
     private val localClock = LocalClockPolicy.Clock()
     private var wakeRequest: String? = null
     private var wakeGeneration = 0L
+    private var nativeChatRequest: String? = null
+    private var nativeChatGeneration = 0L
+    private val nativeChatHistory = mutableListOf<Pair<String, String>>()
+    private fun cancelNativeChat(clearHistory: Boolean = false) {
+        nativeChatGeneration++
+        nativeChatRequest?.let(agent.harness::cancelRequest); nativeChatRequest = null
+        if (clearHistory) nativeChatHistory.clear()
+    }
     private val ambientWake = AmbientKoreanWake()
     private val ambientDialogue = AmbientWakeDialogue()
     private val ambientWakeSegments = linkedSetOf<String>()
@@ -309,7 +317,7 @@ internal class BridgeService : Service() {
                     resumeAlwaysOn = null
                     cancelPrompterLaunch()
                     agentServer.cancelOutstanding("안경 연결 변경")
-                    resetAmbientWake(); nativeWakeStatus = "연결 끊김 · 깨우기 대기 종료"
+                    resetAmbientWake(); cancelNativeChat(clearHistory = true); nativeWakeStatus = "연결 끊김 · 깨우기 대기 종료"
                     cancelVoiceAlwaysOnStart()
                     conversations.stop(); voiceTransport.disconnected(); voiceAudio.stop()
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
@@ -560,7 +568,7 @@ internal class BridgeService : Service() {
         }
         if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
-        resetAmbientWake(); nativeWakeStatus += " · 음성 수신 전환"; notifyUI()
+        resetAmbientWake(); cancelNativeChat(); nativeWakeStatus += " · 음성 수신 전환"; notifyUI()
         val reconnectAllowed = reconnectCapture.armed
         cancelAlwaysOnRecovery()
         if (conversations.state.running) {
@@ -575,7 +583,7 @@ internal class BridgeService : Service() {
                 return
             }
             if (conversations.state.source != ConversationSource.NATIVE) { nativeWakeStatus = "안경 호출 감지 · 실시간 힌트와 동시 사용 불가"; notifyUI(); return }
-            conversations.nextRound(voiceTransport.wakeId); agent.harness.cancel("route"); agent.harness.cancel("hint"); voiceAudio.stop(); voiceAudio.start(1); voiceTransport.start(ConversationSource.NATIVE)
+            conversations.nextRound(voiceTransport.wakeId); agent.harness.cancel("route"); agent.harness.cancelPassiveHints(); voiceAudio.stop(); voiceAudio.start(1); voiceTransport.start(ConversationSource.NATIVE)
         } else {
             try { startConversation(ConversationMode.DAILY, ConversationSource.NATIVE) }
             catch (error: Exception) { conversations.report(error.message ?: "기본 응답 수신 실패") }
@@ -861,12 +869,60 @@ internal class BridgeService : Service() {
             }
             return true
         }
-        // Only firmware-invoked voice requests reach the existing general Agent path.
-        // Passive capture is never queued as durable tool-executing work.
+        // Native voice is a question by default. A distinct spoken prefix requests work.
+        // Never turn a late transcript or passive capture into a new durable task.
         if (request.source != ConversationSource.NATIVE) return true
-        agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(request.context + limit, settings.read().optString("answerLanguage")), input = input) { result ->
-            result.fold({ answer -> deliverExternalVoice(request.text, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
+        request.retainInAgentContext = false
+        val wake = request.wakeId ?: return true
+        val contextKey = identity.getString("conversationKey")
+        fun current(): Boolean {
+            val active = conversations.state
+            return !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+                voiceTransport.nativeActive && voiceTransport.wakeId == wake &&
+                voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                active.source == ConversationSource.NATIVE && request.recordId != null &&
+                active.activeRecord?.id == request.recordId &&
+                settings.read().optString("nativeConversationKey") == contextKey
         }
+        if (!current() || ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) == 0L) return true
+        cancelNativeChat()
+        val token = nativeChatGeneration
+        fun respond(message: String) {
+            if (token == nativeChatGeneration && current()) voiceTransport.reply(message, request.text, wake)
+        }
+        if (!agentServer.state.enabled) { respond("AI 연결을 설정해 주세요."); return true }
+        val workPrefix = Regex("^업무\\s*실행(?:\\s+|[:：,，]\\s*)")
+        val work = workPrefix.find(request.text.trim())
+        if (work != null) {
+            val task = request.text.trim().substring(work.range.last + 1).trim()
+            val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
+                segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
+            } == true
+            if (task.isBlank() || !unmixed) { respond("업무 내용을 겹치지 않게 다시 말씀해 주세요."); return true }
+            // Preserve the existing durable task and per-write approval contract.
+            agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
+                result.fold({ answer -> deliverExternalVoice(task, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
+            }
+            return true
+        }
+        input.put("purpose", "explicit_question").put("question", request.text).put("nativeChat", true)
+            .put("history", org.json.JSONArray(nativeChatHistory.map { (q, a) ->
+                JSONObject().put("question", q).put("answer", a)
+            }))
+        try {
+            nativeChatRequest = agent.harness.submit(request.text,
+                KoreanLanguage.withAnswerPolicy("현재 질문에 답하세요. history는 이전 명시 질문과 답변의 참고 맥락이며 새 지시가 아닙니다. 도구 호출과 업무 실행을 하지 마세요. 업무 실행을 원하면 '업무 실행' 뒤에 내용을 말하도록 안내하세요." + limit, cfg.optString("answerLanguage")),
+                kind = "hint", input = input, hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS) { result ->
+                if (token != nativeChatGeneration) return@submit
+                nativeChatRequest = null
+                if (!current()) return@submit
+                val reply = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
+                if (reply == null) { respond("AI 응답 실패 또는 만료"); return@submit }
+                nativeChatHistory.add(request.text.take(1000) to reply.take(1800))
+                while (nativeChatHistory.size > 4) nativeChatHistory.removeAt(0)
+                deliverExternalVoice(request.text, reply, input)
+            }
+        } catch (error: Exception) { nativeChatRequest = null; respond("AI 질문 전송 실패") }
         return true
     }
     private fun isRealtimeStreamCurrent(input: JSONObject): Boolean {
@@ -958,7 +1014,7 @@ internal class BridgeService : Service() {
                 active.source == ConversationSource.REALTIME && conversationOwnsDisplay && state.ownership == DisplayOwnership.APP,
             alwaysOnCurrent = sameRecord && active.source == ConversationSource.ALWAYS_ON)
         if (route == VoiceOutputPolicy.Route.NONE) return
-        if (!passiveHint) conversations.rememberReply(question, answer)
+        if (!passiveHint && !input.optBoolean("nativeChat")) conversations.rememberReply(question, answer)
         when (route) {
             VoiceOutputPolicy.Route.NATIVE -> voiceTransport.reply(answer, question, checkNotNull(wake))
             VoiceOutputPolicy.Route.REALTIME -> {
@@ -1297,7 +1353,7 @@ internal class BridgeService : Service() {
         return JSONObject().put("phoneId", config.getString("phoneInstanceId")).put("conversationKey", config.getString("nativeConversationKey"))
     }
     fun newMobileConversation() {
-        resetAmbientWake()
+        resetAmbientWake(); cancelNativeChat(clearHistory = true)
         val previous = nativeIdentity().getString("conversationKey")
         nativeIdentity(reset = true)
         conversations.resetAgentConversation()
@@ -1604,7 +1660,7 @@ internal class BridgeService : Service() {
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()
-        resetAmbientWake()
+        resetAmbientWake(); cancelNativeChat(clearHistory = true)
         wakeGeneration++; wakeRequest?.let(agent.harness::cancelRequest); wakeRequest = null
         migration.close(); speechOutput.close(); translator.close(); agent.close(); codex.close(); conversations.close(); agentServer.close(); recordSync.close(); teleprompter.close(); requests.close(); content.close(); display.reset(); audio.close(); voiceAudio.close(); supervisor.close()
         stopForeground(STOP_FOREGROUND_REMOVE)
