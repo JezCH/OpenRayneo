@@ -67,19 +67,20 @@ internal class BridgeService : Service() {
     var recordingVisibilityStatus = "연결 후 전송 대기"; private set
     var capabilityStatus = "현재 연결의 협상 요청 미수신"; private set
     private var capabilitySequence = 0x6900
+    private var capabilityRevision = 0L
     private fun handleCapability(frame: ProtocolCodec.Frame) {
         if (frame.protocol != 0x06 || frame.payload.size !in 1..8192 ||
             state.link.phase != LinkPhase.FULL || state.disconnecting || destroyed) return
         val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
         if (body.deviceInt("type") != 1) return
-        val revision = hostVisibilityRevision
+        val revision = ++capabilityRevision
         capabilityStatus = "안경 협상 요청 수신 · 지원 목록 응답 중"
         runCatching {
             connection.sendFrame(ProtocolCodec.emptyCapabilityReply(capabilitySequence++ and 65535)) { result ->
                 // Connection transport invalidates completions after disconnect. A
                 // visibility change alone must not turn a capability reply into success.
                 if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
-                    revision != hostVisibilityRevision) return@sendFrame
+                    revision != capabilityRevision) return@sendFrame
                 capabilityStatus = if (result.isSuccess) "빈 지원 목록 응답 전송됨 · 적용 미확인" else "협상 응답 전송 실패"
                 notifyUI()
             }
@@ -285,7 +286,10 @@ internal class BridgeService : Service() {
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {
-                if (frame.protocol == 0x06) handleCapability(frame)
+                if (frame.protocol == 0x06) {
+                    handleCapability(frame)
+                    return@runCatching
+                }
                 // A native assistant event before this connection is authenticated
                 // cannot become a valid current-link wake.
                 if (frame.protocol == 0x0d && state.link.phase != LinkPhase.FULL) return@runCatching
@@ -454,6 +458,7 @@ internal class BridgeService : Service() {
                     hostVisibilityRevision++
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
+                    capabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
                     cancelKoreanWake()
                     cancelNavigationSwitch()

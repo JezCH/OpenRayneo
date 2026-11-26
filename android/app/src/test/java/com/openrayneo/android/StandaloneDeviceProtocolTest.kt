@@ -15,6 +15,11 @@ class StandaloneDeviceProtocolTest {
         assertFalse(NativeRecorderState.IDLE.occupied)
         assertFalse(NativeRecorderState.UNKNOWN.occupied)
     }
+    @Test fun firmwareVersionRequestUsesEmptyFieldsExactlyAsUpstream() {
+        val f = ProtocolCodec.StreamDecoder().append(ProtocolCodec.display(0x09, 1, 1, "", byteArrayOf())).single()
+        assertEquals(0x09, f.protocol)
+        assertArrayEquals(byteArrayOf(8, 1, 16, 1, 26, 0, 34, 0), f.payload)
+    }
     @Test fun capabilityAndRecordingVisibilityUseSeparateWireContracts() {
         val capability = ProtocolCodec.StreamDecoder().append(ProtocolCodec.emptyCapabilityReply(0x6900)).single()
         assertEquals(6, capability.protocol)

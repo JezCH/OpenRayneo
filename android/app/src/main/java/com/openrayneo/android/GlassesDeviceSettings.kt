@@ -10,7 +10,9 @@ internal data class DeviceSettingsState(val status: JSONObject = JSONObject(), v
     val initialization: DeviceInitialization = DeviceInitialization())
 internal fun JSONObject.deviceInt(key: String): Int? = (opt(key) as? Number)?.toInt()
 internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = opt(key)) {
-    is Boolean -> value; is Number -> value.toInt() == 1; else -> null
+    is Boolean -> value
+    is Number -> when (value.toDouble()) { 0.0 -> false; 1.0 -> true; else -> null }
+    else -> null
 }
 internal class GlassesDeviceSettings(private val requests: GlassesRequests, private val changed: () -> Unit) {
     @Volatile var state = DeviceSettingsState(); private set
@@ -49,18 +51,21 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             val readback = DeviceReadback.from(meaningfulStatus, settings?.length()?.let { it > 0 } == true)
             // Query only: never start, stop, resume, import, or delete the
             // device's native recording. Firmware 0x09 type 1 is read-only.
-            val recorder = runCatching {
+            // observeRecorder receives the actual reports in arrival order on
+            // the main thread; never overwrite a newer report with an older
+            // query result when the remaining initialization finishes.
+            runCatching {
                 requests.request(0x0e, 5, JSONObject().put("uuid", "").put("action", 1)) { type, body ->
                     type == 5 && body.optInt("action", -1) == 2 &&
                         NativeRecorderState.from(body.deviceInt("state")) != NativeRecorderState.UNKNOWN
-                }?.let { NativeRecorderState.from(it.deviceInt("state")) }
-            }.getOrNull() ?: NativeRecorderState.UNKNOWN
+                }
+            }
             val version = runCatching {
-                requests.request(0x09, 1, JSONObject()) { type, body ->
+                requests.request(0x09, 1, null) { type, body ->
                     type == 1 && body.opt("OsVersion") is String && body.optString("OsVersion").isNotBlank()
                 }?.optString("OsVersion")?.takeIf { it.length in 1..128 }
             }.getOrNull()
-            Triple(readback, clock, recorder to version)
+            Triple(readback, clock, version)
         }) { result ->
             if (token == revision) {
                 val actual = result.getOrNull()
@@ -69,8 +74,8 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
                 state = state.copy(busy = false, readback = readback, notice = readback.label,
                     initialization = DeviceInitialization(true,
                         if (initialize) actual?.second ?: false else previous.clockSent,
-                        actual?.third?.second ?: previous.firmwareVersion,
-                        actual?.third?.first ?: NativeRecorderState.UNKNOWN))
+                        actual?.third ?: previous.firmwareVersion,
+                        previous.recorder))
                 changed()
                 completed()
             }
