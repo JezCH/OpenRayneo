@@ -43,16 +43,23 @@ class StandaloneDeviceProtocolTest {
         assertEquals(2.toByte(), ProtocolCodec.pairingIntent(true))
     }
     @Test fun manualExistingBondUsesReconnectAndFreshRegistrationRemainsSeparate() {
-        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(false, true, true))
-        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(true, true, true))
-        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, false, false))
-        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, true, false))
-        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, false, true))
-        assertTrue(runCatching { ProtocolCodec.pairingIntentForLink(true, true, false) }.isFailure)
-        assertTrue(runCatching { ProtocolCodec.pairingIntentForLink(true, false, true) }.isFailure)
+        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(false, true))
+        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(true, true))
+        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, false))
+        assertTrue(runCatching { ProtocolCodec.pairingIntentForLink(true, false) }.isFailure)
         assertEquals(2, ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 1, 2)))
         assertEquals(1, ProtocolCodec.pairingStatus(byteArrayOf(22, 0, 1, 1)))
         assertNull(ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 2, 2)))
+    }
+    @Test fun bleControlAllowsOnlyReadAndExplicitWakeEnable() {
+        assertTrue(ProtocolCodec.allowedBleLauncher(4, "request_general_settings", 0, 0, ""))
+        assertTrue(ProtocolCodec.allowedBleLauncher(16, "set_ai_state", 1, 0, ""))
+        assertTrue(ProtocolCodec.allowedBleLauncher(16, "set_ai_voice_wakeup", 1, 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(16, "set_ai_voice_wakeup", 0, 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(16, "set_ai_voice_wakeup", "1", 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(5, "privacy_config", 1, 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(16, "set_ai_state", 1, 0, "unexpected"))
+        assertFalse(ProtocolCodec.allowedBleLauncher(4, "request_general_settings", 1, 0, ""))
     }
     @Test fun hostVisibilityUsesDocumentedRawCommand() {
         for (visible in listOf(true, false)) {

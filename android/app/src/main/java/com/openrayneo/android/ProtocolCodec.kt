@@ -35,11 +35,12 @@ internal object ProtocolCodec {
     fun pairingIntent(previouslyAuthenticatedRecovery: Boolean): Byte =
         if (previouslyAuthenticatedRecovery) 2 else 1
 
-    /** Existing binding plus current system bond selects reconnect even on manual connect.
-     * Automatic recovery never silently registers a new identity. */
-    fun pairingIntentForLink(automatic: Boolean, systemBonded: Boolean, hasBinding: Boolean): Byte {
-        check(!automatic || (systemBonded && hasBinding)) { "기존 등록 상태가 확인되지 않아 자동 연결 중단" }
-        return pairingIntent(systemBonded && hasBinding)
+    /** Existing system pairing selects reconnect even on manual connect.
+     * A zero/absent vendor identity is not proof of missing registration. Do not
+     * regress the previously authenticated guest reconnect or silently re-register. */
+    fun pairingIntentForLink(automatic: Boolean, systemBonded: Boolean): Byte {
+        check(!automatic || systemBonded) { "기존 시스템 페어링이 없어 자동 연결 중단" }
+        return pairingIntent(systemBonded)
     }
 
     fun pairingStatus(payload: ByteArray): Int? =
@@ -61,14 +62,16 @@ internal object ProtocolCodec {
             val body = org.json.JSONObject(message.json ?: return@runCatching false)
             val payload = body.optJSONObject("payload") ?: return@runCatching false
             val cmd = body.optString("cmd")
-            when (message.type) {
-                4 -> cmd == "request_general_settings"
-                16 -> cmd in setOf("set_ai_state", "set_ai_voice_wakeup") && payload.opt("mode") == 1 &&
-                    payload.opt("value") == 0 && payload.opt("data") == ""
-                else -> false
-            }
+            allowedBleLauncher(message.type, cmd, payload.opt("mode"), payload.opt("value"), payload.opt("data"))
         }.getOrDefault(false)
     }
+
+    fun allowedBleLauncher(type: Int, command: String, mode: Any?, value: Any?, data: Any?): Boolean =
+        when (type) {
+            4 -> command == "request_general_settings" && mode == 0 && value == 0 && data == ""
+            16 -> command in setOf("set_ai_state", "set_ai_voice_wakeup") && mode == 1 && value == 0 && data == ""
+            else -> false
+        }
 
     /** Documented raw host visibility command 31; not a TLV or business ACK. */
     fun hostVisibility(sequence: Int, visible: Boolean): ByteArray =

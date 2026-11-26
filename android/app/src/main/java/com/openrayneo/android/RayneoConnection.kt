@@ -305,7 +305,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                 val systemBonded = adapter.getRemoteDevice(address).bondState == BluetoothDevice.BOND_BONDED
                 // Keep existing binding; do not replace credentials or remove a bond.
                 identity = if (hasBinding) bound else androidIdentity()
-                connectionPairValue = ProtocolCodec.pairingIntentForLink(automaticConnection, systemBonded, hasBinding)
+                connectionPairValue = ProtocolCodec.pairingIntentForLink(automaticConnection, systemBonded)
                 log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (hasBinding) "안경 바인딩" else "이 앱의 Android ID"}; 시스템 페어링=$systemBonded; 연결 모드=$connectionPairValue")
                 val receive = checkNotNull(receiveCharacteristic) { "안경 수신 서비스를 찾을 수 없음" }
                 check(connection.setCharacteristicNotification(receive, true)) { "BLE 알림을 켤 수 없음" }
