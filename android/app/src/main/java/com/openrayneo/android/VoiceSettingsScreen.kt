@@ -179,7 +179,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Checkbox(transcriptOnly, { transcriptOnly = it; drafts["audioRetention"] = if (it) "transcript_only" else "raw_audio" })
             Text("새 대화 기록: 원본 음성을 저장하지 않고 전사만 보존")
         }
-        Note("미보존 모드는 기기 내장 ASR이 준비된 경우에만 시작합니다. 완료된 전사와 화자 특징·기억은 기존처럼 보존되며 설정한 Agent·요약 서비스에 텍스트가 전달될 수 있습니다. 처리 오류·절전·발열 등으로 누락된 음성은 복구할 수 없습니다. 기존 저장 음성 및 진행 중 기록은 변경하지 않습니다. 번역·목소리 등록에는 별도 처리 경로가 적용됩니다.")
+        Note("미보존 모드는 기기 내장 ASR이 준비된 경우에만 시작합니다. 완료된 전사와 화자 특징·기억은 기존처럼 보존되며 설정한 Agent·요약 서비스에 텍스트가 전달될 수 있습니다. 휴대폰 절전 모드만으로 직접 시작한 전사를 차단하지 않습니다. 심각한 발열·배터리 부족·처리 오류로 중단되면 누락된 음성은 복구할 수 없습니다. 기존 저장 음성 및 진행 중 기록은 변경하지 않습니다. 번역·목소리 등록에는 별도 처리 경로가 적용됩니다.")
         VoiceField(model, "answerClearSeconds", "실시간 힌트 답변 후 화면 지우기까지 초 (0이면 유지)", "0")
         VoiceField(model, "answerMaxChars", "안경 답변 최대 글자 수 (0이면 제한 없음)", DEFAULT_ANSWER_MAX_CHARS.toString())
         Note("답변이 안경 화면 아래로 잘리면 숫자를 줄이세요. Agent에게 이 길이 안에서 답하도록 요청합니다.")
