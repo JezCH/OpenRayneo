@@ -498,7 +498,7 @@ internal class BridgeService : Service() {
         requireCaptureFree()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
         val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
-        check(!entry.experimental || entry.safeInstruction != null) { "최신 한국어 길 안내의 방향과 거리를 확인하지 못했습니다." }
+        check(navigation.connected && entry.safeInstruction != null) { "알림 리스너 연결 및 최신 길 안내 방향·거리를 확인하세요." }
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         if (conversations.state.running) conversations.stop()

@@ -229,14 +229,22 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         ModalBottomSheet(onDismissRequest = { devices = false }) { DevicePicker(model, actions) }
     if (sources)
         ModalBottomSheet(onDismissRequest = { sources = false }) {
+            var sourceTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    sourceTime = System.currentTimeMillis()
+                    delay(1_000)
+                }
+            }
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
                 Text("내비게이션 알림 소스", style = MaterialTheme.typography.headlineSmall)
                 Note("회전 방향과 거리가 포함된 알림을 선택하세요. '내비게이션 중' 메시지만으로는 방향을 알 수 없습니다.", Modifier.padding(vertical = 12.dp))
                 if (s.navigationEntries.isEmpty()) Note("아직 길 안내 알림을 받지 못했습니다")
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(s.navigationEntries, key = { it.key }) { entry ->
+                        val current = entry.safeInstruction != null && (!entry.experimental || (sourceTime - entry.updatedAt) in 0..15_000L)
                         OutlinedCard(
-                            enabled = entry.safeInstruction != null && s.notificationConnected,
+                            enabled = current && s.notificationConnected,
                             onClick = {
                                 if (s.conversation.running || s.alwaysOnResumePending) {
                                     pendingNavigation = entry.key
@@ -262,7 +270,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                                             s.glasses.navigation.enabled
                                     )
                                         "따라가는 중"
-                                    else if (entry.safeInstruction == null) "최신 갱신 대기" else "이 알림 따라가기",
+                                    else if (!current) "최신 갱신 대기" else "이 알림 따라가기",
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -673,7 +681,7 @@ private fun NavigationScreen(
                     supportingContent = {
                         Text(
                             if (s.navigationEntries.isEmpty()) "길 안내 알림 대기 중"
-                            else "${s.navigationEntries.count { it.safeInstruction != null }}개 최신 안내 · 탭하여 선택"
+                            else "${s.navigationEntries.count { it.safeInstruction != null && (!it.experimental || (time - it.updatedAt) in 0..15_000L) }}개 최신 안내 · 탭하여 선택"
                         )
                     },
                     leadingContent = { Icon(Icons.Outlined.NotificationsNone, null) },
@@ -688,7 +696,7 @@ private fun NavigationScreen(
                 Note("알림 분류·방향/거리만 확인하며, 해석할 수 없는 알림의 원문은 저장하지 않습니다.")
                 NavigationFeed.sources.filterKeys { it in model.installedMaps }.forEach { (pkg, label) ->
                     val evidence = s.navigationEvidence.firstOrNull { it.packageName == pkg }
-                    val recent = s.navigationEntries.any { it.packageName == pkg && it.safeInstruction != null }
+                    val recent = s.navigationEntries.any { it.packageName == pkg && it.safeInstruction != null && (!it.experimental || (time - it.updatedAt) in 0..15_000L) }
                     Text(label, style = MaterialTheme.typography.labelLarge)
                     Note(when {
                         !model.notificationAllowed -> "알림 접근 권한 필요"
