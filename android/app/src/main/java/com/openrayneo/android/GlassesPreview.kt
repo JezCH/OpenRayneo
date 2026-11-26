@@ -97,6 +97,9 @@ internal fun GlassesOutputPreview(state: GlassesState) {
             content == null -> "첫 화면 전송 대기"
             session.content != content -> "업데이트 중 · 아래는 마지막으로 전송된 내용"
             session.mode == PageMode.NAVIGATION -> "내비게이션 · 전송된 내용"
+            state.mediaCaptionMode -> "미디어 자막 · 전송된 내용 (실제 안경 확인 필요)"
+            state.captionMode -> "주변 대화 자막 · 전송된 내용"
+            state.intent == DisplayIntent.Translation -> "실시간 번역 · 전송된 내용"
             else -> "실시간 힌트 · 전송된 내용"
         }
     Surface(

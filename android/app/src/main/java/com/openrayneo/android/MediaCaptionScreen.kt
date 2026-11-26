@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) -> Unit, voiceSettings: () -> Unit) {
+internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) -> Unit, voiceSettings: () -> Unit, connect: () -> Unit) {
     val s = model.state
     val capture = s.mediaCaption
     val mt = s.mediaTranslation
@@ -25,7 +25,12 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
     val labels = listOf("en" to "영어", "ja" to "일본어", "zh" to "중국어", "ko" to "한국어")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("휴대폰 미디어 번역·자막", style = MaterialTheme.typography.headlineSmall)
+            Text("유튜브·미디어 자막", style = MaterialTheme.typography.headlineSmall)
+            Note("안경 연결: " + s.glasses.link.detail)
+            if (s.glasses.link.phase != LinkPhase.FULL || s.glasses.disconnecting) {
+                s.glasses.link.lastFailure?.let { Note("최근 원인: $it") }
+                ToolOutlinedButton(onClick = connect) { Text("안경 연결 확인") }
+            }
             Note("이어폰으로 원본 소리를 듣는 동안 휴대폰 재생음을 로컬 ASR로 인식합니다. 내장 번역 모델 준비 후 한국어 자막을 표시하며 별도 서버나 API Key가 필요하지 않습니다.")
             Note(capture.detail)
             if (capture.busy) {
@@ -40,7 +45,10 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                     Note(mt.detail)
                     Note("번역 완료 ${mt.completed}문장 · 지연으로 생략 ${mt.skipped}문장 · 마지막 번역 " + (mt.lastMs?.let { "$it ms" } ?: "대기"))
                 }
-                Note(s.glasses.displayDescription)
+                Note("ASR 입력 수락: " + ((capture.samples - capture.dropped).coerceAtLeast(0) / 16000) + "초")
+                Note("음성 인식: " + s.mediaAsrStatus + " · 확정 문장 " + s.mediaFinalCount + "개")
+                Note("HUD: " + s.glasses.displayDescription)
+                if (capture.heardNonzero && s.mediaFinalCount == 0L) Note("소리는 들어오고 있지만 아직 확정 문장이 없습니다. 원문 언어와 설치된 음성 모델을 확인하세요.")
                 ToolButton(onClick = { model.attempt { model.service().stopMediaCaption() } },
                     enabled = capture.phase != MediaCapturePhase.STOPPING, modifier = Modifier.fillMaxWidth()) { Text("미디어 자막 종료") }
             } else {
@@ -81,6 +89,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                 }
                 if (mt.phase == LocalMediaTranslationPhase.READY && !mt.preparing)
                     TextButton(onClick = { model.attempt { model.service().releaseMediaTranslation() } }) { Text("번역 모델 메모리 해제") }
+                if (capture.phase == MediaCapturePhase.ERROR) Note("최근 종료: " + capture.detail + " · 수집 " + capture.samples + "샘플 · 확정 문장 " + s.mediaFinalCount + "개")
                 if (problem != null) Note(problem)
                 ToolButton(onClick = { start(options) }, enabled = problem == null && s.available && !mt.preparing,
                     modifier = Modifier.fillMaxWidth()) { Text("시스템 승인 후 자막 시작") }

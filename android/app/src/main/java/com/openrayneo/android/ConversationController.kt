@@ -36,10 +36,12 @@ internal class ConversationController(private val context: Context, private val 
     private val power = context.getSystemService(android.os.PowerManager::class.java)
     private val battery = context.getSystemService(android.os.BatteryManager::class.java)
     private var resourcePauseReason: String? = null
-    private fun resourceConstraint(): String? = when {
+    // Battery Saver is a background scheduling policy, not a hard ban on user-started live transcription.
+    // Never silently switch transcript-only sessions to raw recording. Thermal/low-battery limits remain.
+    private fun resourceConstraint(liveTranscriptOnly: Boolean = false): String? = when {
         power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE -> "기기 온도가 높음"
-        power.isPowerSaveMode -> "시스템 절전 모드"
-        battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1..10 && !battery.isCharging -> "배터리 10% 미만"
+        power.isPowerSaveMode && !liveTranscriptOnly -> "시스템 절전 모드"
+        battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1..10 && !battery.isCharging -> "휴대폰 배터리 10% 이하 · 충전 필요"
         else -> null
     }
     private val main = Handler(Looper.getMainLooper())
@@ -107,7 +109,8 @@ internal class ConversationController(private val context: Context, private val 
     private val maintenance = object : Runnable {
         override fun run() {
             if (state.running && !closing) {
-                val constraint = if (savingAudio || replaying || transcriptOnly) resourceConstraint() else null
+                val constraint = if (savingAudio || replaying || transcriptOnly)
+                    resourceConstraint(liveTranscriptOnly = transcriptOnly && !replaying) else null
                 if (constraint != null && replaying) { replayFailed = true; deferredProcessing = true; stop() }
                 else if (constraint != null && transcriptOnly) {
                     pauseLive(constraint)
@@ -151,7 +154,11 @@ internal class ConversationController(private val context: Context, private val 
         if (only) {
             check(SpeechRounds.model(cfg) != null) { "원본 음성 미보존 모드는 기기 내장 ASR을 선택해야 합니다" }
             check(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
-            check(resourceConstraint() == null) { "절전·발열·배터리 상태를 확인한 후 시작하세요" }
+            resourceConstraint(liveTranscriptOnly = true)?.let { reason ->
+                error("기기 보호로 기록 시작 불가: $reason. " +
+                    if (power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE)
+                        "휴대폰이 식은 후 다시 시작하세요." else "휴대폰을 충전한 후 다시 시작하세요.")
+            }
         }
         transcriptOnly = only; transcriptInterrupted = false
         val token = ++generation
@@ -165,7 +172,7 @@ internal class ConversationController(private val context: Context, private val 
             config = cfg; samples = 0; captureChannels = 0; roundBaseMS = 0; roundId = wakeId
             selfGate = selfGateFor(source, mode, cfg)
             liveBackfill = false; replaying = false; replayFailed = false; tail?.close(); tail = null; cancelASR()
-            resourcePauseReason = if (mode == ConversationMode.ENROLL) null else resourceConstraint()
+            resourcePauseReason = if (mode == ConversationMode.ENROLL) null else resourceConstraint(liveTranscriptOnly = only)
             deferredProcessing = mode != ConversationMode.ENROLL && (!SpeechRounds.ready(context, cfg) || resourcePauseReason != null)
             pendingSentences.clear(); pendingAgent.clear(); dispatching = false; manualSpeakers.clear(); laneStarts.clear(); inputThrough.clear()
             resamplers = List(2) { ConversationAudio() }; enrollmentTarget = target
@@ -175,7 +182,7 @@ internal class ConversationController(private val context: Context, private val 
             savingAudio = mode != ConversationMode.ENROLL && !only
             if (mode != ConversationMode.ENROLL) record = repository.save(record!!)
             main.post { if (token == generation && state.running && !closing) {
-                if (only && deferredProcessing) fail("기기 내장 전사를 시작할 수 없습니다", token)
+                if (only && deferredProcessing) fail(resourcePauseReason?.let { "기기 보호로 전사 시작 불가: $it" } ?: "기기 내장 전사를 시작할 수 없습니다", token)
                 else try { capture(source, true) } catch (error: Exception) { fail(error.message ?: "음성 수신 시작 실패", token) }
             } }
         }

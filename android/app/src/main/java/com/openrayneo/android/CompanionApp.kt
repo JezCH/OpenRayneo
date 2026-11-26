@@ -76,8 +76,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "navigation" -> "길 안내"
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
-                                "captions" -> "실시간 자막"
-                                "media-captions" -> "미디어 번역·자막"
+                                "captions" -> "주변 대화 자막"
+                                "media-captions" -> "유튜브·미디어 자막"
                                 "korean-wake" -> "한국어 호출"
                                 "korean-glyphs" -> "한글 표시 검사"
                                 "phone-notifications" -> "휴대폰 알림"
@@ -170,8 +170,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
-                "media-captions" -> MediaCaptionScreen(model, actions.mediaCaption, { openRoute("voice-settings", "media-captions") })
-                "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") })
+                "media-captions" -> MediaCaptionScreen(model, actions.mediaCaption, { openRoute("voice-settings", "media-captions") }, { devices = true })
+                "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") }, { openRoute("media-captions", "captions") })
                 "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") }, { openRoute("device-settings", "korean-wake") })
                 "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
@@ -464,6 +464,8 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
         Text("안경 연결하기", style = MaterialTheme.typography.headlineSmall)
         Note("안경을 깨운 뒤 공식 RayNeo 앱 및 다른 OpenRayneo를 시스템 앱 정보에서 강제 종료하세요. 연결 충돌이 계속되면 해당 앱의 근처 기기 권한을 일시적으로 끄고 다시 시도하세요. 계정 바인딩 해제, 블루투스 페어링 삭제, 앱 데이터 삭제 및 안경 초기화는 하지 마세요.")
         Text(s.glasses.link.detail, color = MaterialTheme.colorScheme.primary)
+        s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
+        if (s.glasses.link.reconnectWaiting) Note("현재 안경은 미연결 상태입니다. 자동 재연결을 기다리거나 아래에서 다시 스캔하세요.")
         if (!model.bluetoothAllowed) {
             ToolButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
                 Text("근처 기기 허용 후 스캔")

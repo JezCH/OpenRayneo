@@ -43,6 +43,7 @@ internal class LiveTranslator(
     private var mediaFinalSource = ""
     private var mediaFinalTarget = ""
     private var mediaRenderedSequence = 0L
+    var mediaFinalCount = 0L; private set
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -117,6 +118,7 @@ internal class LiveTranslator(
         mediaTranslate = translateMedia
         mediaLanguage = mediaSourceLanguage
         mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
+        if (mediaId != null) mediaFinalCount = 0
         synchronized(this) {
             mediaSessionId = mediaId
             captionOnly = captions
@@ -270,6 +272,7 @@ internal class LiveTranslator(
 
     private fun finished(token: Int, text: String) {
         if (token != generation || !active) return
+        if (mediaSessionId != null && text.isNotBlank()) { mediaFinalCount++; changed() }
         heard()
         // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
         if (mediaSessionId == null && misheard(text)) return
