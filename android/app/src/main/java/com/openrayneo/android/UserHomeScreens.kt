@@ -18,8 +18,10 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     val s = model.state
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val c = s.conversation
-    val otherMode = s.translationActive || s.teleprompter.active != null || s.teleprompter.busy ||
-        s.glasses.navigation.enabled || s.glasses.session != null || s.glasses.intent != DisplayIntent.Idle
+    val otherMode = s.translationActive || s.captionActive || s.mediaCaption.busy || s.wakeActive || s.wakePending ||
+        s.nativeWakeAvailable || s.teleprompter.active != null || s.teleprompter.busy || s.migration.busy ||
+        s.phoneRunning || s.computerRunning || s.glasses.navigation.enabled || s.glasses.session != null ||
+        s.glasses.intent != DisplayIntent.Idle
     var requested by remember { mutableStateOf<ConversationMode?>(null) }
     var hintRequested by remember { mutableStateOf(false) }
     var resume by remember { mutableStateOf(false) }
@@ -34,6 +36,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
         s.teleprompter.busy -> "프롬프터 준비 중"
+        s.migration.busy -> "기록 이전 중"
+        s.nativeWakeAvailable -> "안경 기본 호출 처리 중"
         s.glasses.navigation.enabled -> "길 안내 중"
         s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
         else -> "대기 중"
@@ -82,10 +86,16 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("자막 종료") }
                 } else if (s.translationActive) {
                     ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }, modifier = Modifier.fillMaxWidth()) { Text("번역 종료") }
-                } else if (s.teleprompter.active != null) {
+                } else if (s.teleprompter.active != null || s.teleprompter.busy) {
                     ToolButton(onClick = { open("teleprompter") }, modifier = Modifier.fillMaxWidth()) { Text("프롬프터 제어") }
                 } else if (s.glasses.navigation.enabled) {
                     ToolButton(onClick = { open("navigation") }, modifier = Modifier.fillMaxWidth()) { Text("길 안내 제어") }
+                } else if (s.phoneRunning || s.computerRunning) {
+                    ToolButton(onClick = { navigate(1) }, modifier = Modifier.fillMaxWidth()) { Text("AI 작업 확인") }
+                } else if (s.migration.busy) {
+                    ToolButton(onClick = { open("record-migration") }, modifier = Modifier.fillMaxWidth()) { Text("기록 이전 확인") }
+                } else if (s.nativeWakeAvailable) {
+                    ToolButton(onClick = { open("korean-wake") }, modifier = Modifier.fillMaxWidth()) { Text("호출 상태 확인") }
                 } else {
                     ToolButton(onClick = {
                         if (!linked) connect()
@@ -187,11 +197,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
         item { FeatureTile("유튜브·미디어 자막", "휴대폰 내부 재생음 · 원문/한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         item { FeatureTile("주변 대화 자막", "안경 마이크 · 유튜브 내부 재생음 아님", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
-        item { ContentCard {
-            Text("타이머 · 스톱워치", style = MaterialTheme.typography.titleMedium)
-            Note("현재는 안경 음성 깨우기 명령으로 사용합니다. 예: 안경 타이머 5분 시작해줘. 중요 안전 알람으로 사용하지 마세요.")
-            TextButton(onClick = { open("voice-settings") }) { Text("음성 도구 설정 및 사용법") }
-        } }
+        item { FeatureTile("타이머 · 스톱워치", "기존 휴대폰 타이머 · 직접 조작 및 상태 확인", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("local-clock") } }
         item { FeatureTile("안경 출력 확인", "화면 미리보기 · 지우기 · 오디오", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
     }
 }
@@ -256,8 +262,10 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
             GlassesArtwork(Modifier.fillMaxWidth().height(90.dp), MaterialTheme.colorScheme.primary)
             Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
             Note(if (linked) "연결됨 · 휴대폰 직접 연결" else s.glasses.link.detail)
-            ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) { Text(if (linked) "연결 관리" else "안경 연결") }
+            val managing = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
+            ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리 · 해제 및 전환" else "안경 연결") }
         } }
+        item { FeatureTile("연결 해제 및 공식 앱 전환", "기존 페어링 및 기록 유지", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
         item { FeatureTile("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings, Modifier.fillMaxWidth()) { open("device-settings") } }
         item { FeatureTile("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone, Modifier.fillMaxWidth()) { open("phone-notifications") } }
         item { FeatureTile("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }

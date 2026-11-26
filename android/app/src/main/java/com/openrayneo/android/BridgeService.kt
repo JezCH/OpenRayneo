@@ -683,6 +683,22 @@ internal class BridgeService : Service() {
         connection.sendNotification(title, body)
         return true
     }
+    fun clockReadout(): Pair<String, String> {
+        val now = SystemClock.elapsedRealtime()
+        return localClock.execute(LocalClockPolicy.Command(LocalClockPolicy.Kind.TIMER_READ), now) to
+            localClock.execute(LocalClockPolicy.Command(LocalClockPolicy.Kind.WATCH_READ), now)
+    }
+    fun controlLocalClock(command: LocalClockPolicy.Command): String {
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+            "안경을 완전히 연결한 상태에서 사용할 수 있습니다."
+        }
+        pollLocalClock()
+        val wasRunning = localClock.timerRunning
+        val answer = localClock.execute(command, SystemClock.elapsedRealtime())
+        if (!wasRunning && localClock.timerRunning) runCatching { getSystemService(NotificationManager::class.java).cancel(7918) }
+        updateNotification(); notifyUI()
+        return answer
+    }
     private fun pollLocalClock() {
         if (destroyed || !localClock.poll(SystemClock.elapsedRealtime())) return
         val title = "타이머 완료"
