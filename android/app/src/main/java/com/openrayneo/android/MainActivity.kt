@@ -21,6 +21,19 @@ import org.json.JSONObject
 
 internal class MainActivity : ComponentActivity() {
     private val model: AppModel by viewModels()
+    private var statusOpenRequest by mutableIntStateOf(0)
+    private fun acceptStatusIntent(incoming: Intent) {
+        if (incoming.action == ACTION_OPEN_STATUS) {
+            // Navigation only. MainActivity is exported; never perform privileged actions here.
+            setIntent(Intent(incoming).setAction(null))
+            statusOpenRequest++
+        }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptStatusIntent(intent)
+    }
     private var exportRecord: String? = null
     private val exportAudio = registerForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
         val id = exportRecord; exportRecord = null
@@ -137,6 +150,7 @@ internal class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        acceptStatusIntent(intent)
         enableEdgeToEdge()
         setContent {
             CompanionTheme(model.appearance) {
@@ -198,6 +212,7 @@ internal class MainActivity : ComponentActivity() {
                         mediaCaption = ::requestMediaCaption,
                         voice = ::requestVoice,
                     ),
+                    statusOpenRequest = statusOpenRequest,
                     phoneInput = dictation?.let { session ->
                         if (session.listening) "마이크 입력 중" else session.status
                     },
@@ -240,6 +255,8 @@ internal class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
+
+internal const val ACTION_OPEN_STATUS = "com.openrayneo.android.OPEN_SYSTEM_STATUS"
 
 internal data class UiActions(
     val bluetoothPermission: () -> Unit,

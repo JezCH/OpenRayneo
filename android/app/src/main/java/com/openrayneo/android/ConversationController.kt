@@ -56,6 +56,7 @@ internal class ConversationController(private val context: Context, private val 
     val modePolicy = VoiceModePolicy(context)
     @Volatile var state = ConversationState(people = repository.people, records = repository.records); private set
     @Volatile private var generation = 0
+    val activityGeneration get() = generation
     @Volatile private var closing = false
     @Volatile private var deferredProcessing = false
     @Volatile private var savingAudio = false

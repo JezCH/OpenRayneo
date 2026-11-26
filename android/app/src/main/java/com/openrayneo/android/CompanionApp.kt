@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.collect
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: String? = null) {
+internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: String? = null, statusOpenRequest: Int = 0) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var routeStack by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val route = routeStack.lastOrNull().orEmpty()
@@ -41,6 +41,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
     var pendingNavigation by remember { mutableStateOf<String?>(null) }
     var devices by rememberSaveable { mutableStateOf(false) }
     var sources by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(statusOpenRequest) {
+        if (statusOpenRequest > 0) {
+            devices = false
+            sources = false
+            pendingNavigation = null
+            openRoute("system-status")
+        }
+    }
     val snackbars = remember { SnackbarHostState() }
     val pages = rememberSaveableStateHolder()
     val s = model.state
