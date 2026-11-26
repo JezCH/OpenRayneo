@@ -62,7 +62,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
         model.config.optString("memorySuggestionDays"), model.config.optString("memorySuggestionLimit")) {
         suggestionCount = 0
-        if (mobile && !executeTask && suggestMemory && !running && s.available && !s.migration.busy && draft.trim().length in 4..2000) {
+        if (mobile && !executeTask && suggestMemory && !running && s.available && !s.migration.busy && draft.trim().length >= 4 && draft.length <= 2000) {
             delay(800)
             suggestionCount = suspendCancellableCoroutine<Int> { continuation ->
                 try {
@@ -325,7 +325,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     }
                     if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
                     if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
-                    else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy) {
+                    else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy && draft.length <= 2000) {
                         Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
                     }
                 }
