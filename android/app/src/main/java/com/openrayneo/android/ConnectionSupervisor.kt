@@ -121,7 +121,12 @@ internal class ConnectionSupervisor(
         val phase = if (busy) {
             if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING
         } else LinkPhase.DISCONNECTED
-        publish(LinkState(phase, text, if (busy) state.lastFailure else text.takeUnless { it == "연결 끊김" }))
+        val failure = when {
+            busy -> state.lastFailure
+            text == "연결 끊김" || text.startsWith("스캔 완료") -> null
+            else -> text
+        }
+        publish(LinkState(phase, text, failure))
     }
     override fun onFrame(frame: ProtocolCodec.Frame, source: String) = received(frame, source)
     override fun onLog(text: String) = report(text)
