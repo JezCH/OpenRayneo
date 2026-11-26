@@ -520,7 +520,7 @@ internal class BridgeService : Service() {
                           resumeOnReconnect: Boolean = false) {
         check(!migration.state.busy) { "기록 이전을 먼저 종료하세요" }
         requirePrompterFree()
-        check(!translator.active) { "실시간 번역·자막을 먼저 종료하세요" }
+        check(!translator.active && !mediaCaptionState.busy) { "실시간 번역·자막을 먼저 종료하세요" }
         check(voiceTransport.source == null && (source == ConversationSource.NATIVE) == voiceTransport.nativeActive) {
             "현재 안경 음성 세션을 먼저 종료하세요"
         }
@@ -1066,7 +1066,7 @@ internal class BridgeService : Service() {
         check(!mediaCaptionState.busy && state.intent == DisplayIntent.Idle && state.session == null &&
             state.ownership == DisplayOwnership.APP && !state.navigation.enabled && audioOwner == null &&
             !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
-            voiceTransport.source == null && !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy && !prompterReserved &&
+            voiceTransport.source == null && !voiceTransport.nativeActive && !translator.active && !prompterReserved &&
             !agent.running && !codex.running && !speechOutput.speaking && !migration.state.busy) {
             "현재 기록·안경 화면·AI 작업을 먼저 종료하세요"
         }
@@ -1161,7 +1161,7 @@ internal class BridgeService : Service() {
         check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
             voiceTransport.source == null && audioOwner == null &&
             !conversations.state.running && !conversations.state.stopping && !reconnectCapture.pending &&
-            !voiceTransport.nativeActive && !translator.active && !prompterReserved &&
+            !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy && !prompterReserved &&
             !agent.running && !codex.running) { "진행 중인 기록·화면·AI 작업을 먼저 종료하세요" }
         val config = settings.read()
         translator.captionConfig(config)
