@@ -33,6 +33,15 @@ internal object MemoryReferenceSearch {
             } }
         return MemoryReferencePolicy.search(scope, sources)
     }
+    fun related(query: String, records: List<ConversationRecord>): MemoryReferencePolicy.Result {
+        require(query.isNotBlank() && query.length <= 160)
+        val sources = records.asSequence().filter { it.mode != ConversationMode.ENROLL }
+            .flatMap { row -> row.segments.asSequence().map { segment ->
+                MemoryReferencePolicy.Source(row.id, row.revision, segment.id, row.timeOf(segment), row.endTimeOf(segment),
+                    segment.text, segment.personId, segment.stable, segment.mixed, segment.identityBasis, segment.timeBasis, row.transcriptIncomplete)
+            } }
+        return AutomaticMemoryPolicy.related(query, MemoryReferencePolicy.MAX_RESULTS, sources)
+    }
     fun automatic(question: String, options: AutomaticMemoryPolicy.Options, now: Long, records: List<ConversationRecord>): MemoryReferencePolicy.Result {
         val sources = records.asSequence().filter { it.endedAt != null && !it.processingPending && !it.audioPending && it.mode != ConversationMode.ENROLL }
             .flatMap { row -> row.segments.asSequence().map { segment ->
