@@ -23,7 +23,7 @@ MODELS = [
     ("asr/nemotron-3.5-streaming-560ms-int8", "apbaxel/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-int8",
      ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
      "NVIDIA Open Model Development and Weight License 1.1",
-     "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/main/OpenMDW-1.1.txt"),
+     "https://raw.githubusercontent.com/OpenMDW/OpenMDW/main/1.1/LICENSE.OpenMDW-1.1"),
     ("asr/ko-kws-zipformer-tiny", "kairess/ko-kws-zipformer-tiny",
      ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt", "bpe.model"],
      "Apache-2.0", None),
