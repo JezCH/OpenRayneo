@@ -52,6 +52,7 @@ internal class LiveTranslator(
     private val translations = Executors.newSingleThreadExecutor()
     private var config = JSONObject()
     @Volatile private var generation = 0
+    val activityGeneration get() = generation
     @Volatile private var roundEpoch = 0
     private var asr: SpeechRound? = null
     private var resampler = ConversationAudio()

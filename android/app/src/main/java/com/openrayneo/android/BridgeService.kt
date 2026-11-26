@@ -139,6 +139,38 @@ internal class BridgeService : Service() {
     private val reconnectCapture = AlwaysOnReconnectPolicy()
     val alwaysOnResumePending: Boolean get() = reconnectCapture.pending
     private var notificationText = ""
+    private var notificationCaptureKey: String? = null
+    private data class CaptureStop(val key: String, val label: String, val kind: String)
+    // Keys use service instance and the actual session generation/id, never a transcript.
+    private fun captureStop(): CaptureStop? {
+        val c = conversations.state
+        if (c.running && !c.stopping) return CaptureStop(
+            "record-${conversations.activityGeneration}", if(c.reprocessing) "재전사 중지" else "기록 중지", "record")
+        val media = mediaCaptionState
+        if (media.busy && media.phase != MediaCapturePhase.STOPPING && media.id != null)
+            return CaptureStop("media-${media.id}", "영상 자막 종료", "media")
+        if (wakePending && wakeRequest != null)
+            return CaptureStop("wake-$wakeGeneration", "호출 중지", "wake")
+        if (translator.active && !media.busy) return CaptureStop(
+            "translation-${translator.activityGeneration}", if(translator.wakeActive) "호출 중지" else "통역·자막 종료",
+            if(translator.wakeActive) "wake" else "translation")
+        return null
+    }
+    private fun captureActionKey(target: CaptureStop) = "$serviceInstance/${target.key}"
+    private fun handleNotificationCaptureStop(intent: Intent) {
+        if (!foreground || stopAfterDisconnect || destroyed) return
+        val target = captureStop() ?: return
+        // Immutable PendingIntent with a unique data URI. Old notification actions cannot
+        // stop a newly started capture or a different service instance.
+        if (intent.data?.toString() != "openrayneo-status://stop/" + captureActionKey(target)) return
+        when(target.kind) {
+            "record" -> stopConversation()
+            "media" -> stopMediaCaption()
+            "wake" -> cancelKoreanWake()
+            "translation" -> stopTranslation()
+        }
+        notifyUI()
+    }
     private var notificationReadStatus = ""
     private val navigationObserver: () -> Unit = {
         if (notificationReadStatus != navigation.listenerState.detail) {
@@ -299,6 +331,8 @@ internal class BridgeService : Service() {
             dispatch(GlassesEvent.StopNavigation)
             stopAfterDisconnect = true
             disconnect()
+        } else if (intent?.action == "STOP_STATUS_CAPTURE") {
+            if (foreground) handleNotificationCaptureStop(intent) else stopSelf(startId)
         } else if (intent?.action == "CANCEL_LOCAL_TIMER") {
             if (foreground) {
                 pollLocalClock()
@@ -307,6 +341,7 @@ internal class BridgeService : Service() {
             } else stopSelf()
         } else {
             notificationText = summary()
+            notificationCaptureKey = captureStop()?.let(::captureActionKey)
             startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 if (PhoneLocation.allowed(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
             foreground = true
@@ -1901,14 +1936,22 @@ internal class BridgeService : Service() {
             "AI " + SystemStatusPolicy.receiver(agentServer.state.enabled, agentServer.state.pollRecent).label).joinToString(" · ")
     }
     private fun notification(): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java)
+            .setAction(ACTION_OPEN_STATUS).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, BridgeService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
         val builder = Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("OpenRayneo").setContentText(summary()).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setShowWhen(false).setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setStyle(Notification.BigTextStyle().bigText(summary()))
-            .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build())
+        captureStop()?.let { target ->
+            val cancel = PendingIntent.getService(this, 7920, Intent(this, BridgeService::class.java)
+                .setAction("STOP_STATUS_CAPTURE").setData(android.net.Uri.parse("openrayneo-status://stop/" + captureActionKey(target))),
+                PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(Notification.Action.Builder(null, target.label, cancel).build())
+        }
+        builder.addAction(Notification.Action.Builder(null, "서비스 중지", stop).build())
         if (localClock.timerRunning) {
             val cancel = PendingIntent.getService(this, 7919, Intent(this, BridgeService::class.java).setAction("CANCEL_LOCAL_TIMER"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             builder.addAction(Notification.Action.Builder(null, "타이머 취소", cancel).build())
@@ -1918,7 +1961,12 @@ internal class BridgeService : Service() {
     private fun updateNotification() {
         if (!initialized || !foreground || stopAfterDisconnect) return
         val text = summary()
-        if (text != notificationText) { notificationText = text; getSystemService(NotificationManager::class.java).notify(1, notification()) }
+        val key = captureStop()?.let(::captureActionKey)
+        if (text != notificationText || key != notificationCaptureKey) {
+            notificationText = text
+            notificationCaptureKey = key
+            getSystemService(NotificationManager::class.java).notify(1, notification())
+        }
     }
     override fun onDestroy() {
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
