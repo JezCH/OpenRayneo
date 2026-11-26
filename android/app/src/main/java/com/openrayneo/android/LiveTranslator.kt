@@ -35,6 +35,7 @@ internal class LiveTranslator(
     @Volatile var mediaSessionId: String? = null; private set
     private var wakeWindow: KoreanWakeWindow? = null
     private var wakeAction: ((String) -> Unit)? = null
+    private var keywordWakeOptions: KoreanWakeOptions? = null
     val wakeActive get() = active && wakeWindow != null
     val offline = OfflineTranslation(main, changed)
     val mediaTranslation = MediaLocalTranslation(context, main, changed)
@@ -112,7 +113,9 @@ internal class LiveTranslator(
         MediaTranslationRoute.required(options.language, options.translateToKorean), options.language)
 
     private fun startSpeech(speech: JSONObject, captions: Boolean, local: Boolean, mediaId: String? = null,
-                            translateMedia: Boolean = false, mediaSourceLanguage: String = "en") {
+                            translateMedia: Boolean = false, mediaSourceLanguage: String = "en",
+                            wakeOptions: KoreanWakeOptions? = null, wakeCallback: ((String) -> Unit)? = null,
+                            keywordWake: Boolean = false) {
         stop()
         mediaTranslate = translateMedia
         mediaLanguage = mediaSourceLanguage
@@ -128,18 +131,22 @@ internal class LiveTranslator(
         }
         history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
         if (mediaTranslate) mediaTranslation.begin(checkNotNull(mediaId), mediaLanguage)
+        if (wakeOptions != null) {
+            wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime(), wakeOptions)
+            wakeAction = wakeCallback
+            keywordWakeOptions = wakeOptions.takeIf { keywordWake }
+        }
         status = listening()
         openASR()
         changed()
     }
 
-    fun startWake(settings: JSONObject, action: (String) -> Unit) {
-        val korean = JSONObject(settings.toString()).put("asrLanguage", "ko")
+    fun startWake(settings: JSONObject, keyword: Boolean = false, action: (String) -> Unit) {
+        val korean = captionConfig(JSONObject(settings.toString()).put("asrLanguage", "ko"))
         val options = KoreanWakeOptions.from(settings.optString("wakePhrases"), settings.optString("wakeSeconds"), settings.optString("wakeFollowSeconds"))
-        start(korean, captions = true)
-        wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime(), options)
-        wakeAction = action
-        status = "한국어 호출 대기 · " + options.phrases.joinToString(" / ")
+        if (keyword) require(KoreanKeywordModels.model.installed(context)) { "경량 호출 모델을 먼저 내려받으세요" }
+        startSpeech(korean, true, false, wakeOptions = options, wakeCallback = action, keywordWake = keyword)
+        status = if (keyword) "경량 호출 모델 준비 중" else "한국어 호출 대기 · " + options.phrases.joinToString(" / ")
         show("한국어 호출 대기", options.phrases.first() + ", 질문하세요")
         changed()
     }
@@ -163,7 +170,7 @@ internal class LiveTranslator(
         offline.cancel()
         if (oldMedia != null) mediaTranslation.end(oldMedia)
         mediaTranslate = false; mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
-        wakeWindow = null; wakeAction = null
+        wakeWindow = null; wakeAction = null; keywordWakeOptions = null
         history.clear(); sourceLine = ""; targetLine = ""
         if (wasActive || reason != null) { status = reason ?: if (captionOnly) "실시간 자막 꺼짐" else OFF; changed() }
     }
@@ -206,7 +213,12 @@ internal class LiveTranslator(
             if (!active) return
             token = generation
             resampler = ConversationAudio()
-            round = SpeechRounds.create(context, config,
+            val keyword = keywordWakeOptions
+            round = if (keyword != null) KoreanKeywordRound(context, config, keyword,
+                { text, _, _, _, _ -> main.post { finished(token, text) } },
+                { message -> main.post { asrEnded(token, message) } },
+                { message -> main.post { if (token == generation && wakeActive) { status = message; changed() } } })
+            else SpeechRounds.create(context, config,
                 { text, _, _, _, _ -> main.post { finished(token, text) } },
                 { message -> main.post { asrEnded(token, message) } },
                 { main.post { asrEnded(token, null) } },
@@ -220,6 +232,9 @@ internal class LiveTranslator(
         synchronized(this) {
             if (token != generation || !active) return
             asr?.cancel(); asr = null
+        }
+        if (keywordWakeOptions != null) {
+            stop(message ?: "경량 호출 종료"); gaveUp(); return
         }
         // A normal end (null) just reopens; errors back off and give up after repeated failures without speech.
         if (message != null) failures++
@@ -270,7 +285,7 @@ internal class LiveTranslator(
 
     private fun finished(token: Int, text: String) {
         if (token != generation || !active) return
-        heard()
+        if (keywordWakeOptions == null) heard()
         // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
         if (mediaSessionId == null && misheard(text)) return
         wakeWindow?.let { window ->

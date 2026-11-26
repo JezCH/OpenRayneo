@@ -1169,8 +1169,8 @@ internal class BridgeService : Service() {
         notifyUI()
     }
 
-    fun startKoreanWake(allowAI: Boolean) = startCaptionMode(true, allowAI)
-    private fun startCaptionMode(wake: Boolean, allowAI: Boolean) {
+    fun startKoreanWake(allowAI: Boolean, keyword: Boolean = false) = startCaptionMode(true, allowAI, keyword)
+    private fun startCaptionMode(wake: Boolean, allowAI: Boolean, keyword: Boolean = false) {
         check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
             voiceTransport.source == null && audioOwner == null &&
@@ -1187,7 +1187,7 @@ internal class BridgeService : Service() {
         if (wake) {
             val options = KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds"))
             wakeResult = "호출 대기 · ${options.listenSeconds}초 · " + options.phrases.joinToString(" / ")
-            translator.startWake(config) { question -> handleKoreanWake(question, allowAI) }
+            translator.startWake(config, keyword) { question -> handleKoreanWake(question, allowAI) }
         } else translator.start(config, captions = true)
         dispatch(GlassesEvent.StartCaption)
         if (wake && translator.wakeActive) dispatch(GlassesEvent.TranslationText(TranslationView("한국어 호출 대기", KoreanWakeOptions.from(config.optString("wakePhrases"), config.optString("wakeSeconds"), config.optString("wakeFollowSeconds")).phrases.first() + ", 질문하세요")))
