@@ -89,13 +89,19 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
     fun begin(id: String, language: String) {
         check(!closed && state.readyFor(language) && activeSession == null) { "내장 번역 모델을 먼저 준비하세요" }
         activeSession = id
-        publish(state.copy(completed = 0, skipped = 0, lastMs = null, detail = "한국어 번역 대기"))
+        publish(state.copy(completed = 0, skipped = 0, lastMs = null, detail = if (language == MediaTranslationRoute.BILINGUAL) "내장 한영 통역 대기" else "한국어 번역 대기"))
     }
 
     /** Main thread. Never retain more than one waiting final, and do not publish an old lease. */
     fun submit(id: String, language: String, text: String, callback: (Result<String>) -> Unit): Boolean {
+        require(language != MediaTranslationRoute.BILINGUAL)
+        return enqueue(id, language, MediaTranslationRoute.steps(language), text, callback)
+    }
+    fun submitBilingual(id: String, fromKorean: Boolean, text: String, callback: (Result<String>) -> Unit): Boolean =
+        enqueue(id, MediaTranslationRoute.BILINGUAL, listOf(if (fromKorean) "ko-en" else "en-ko"), text, callback)
+    private fun enqueue(id: String, language: String, steps: List<String>, text: String, callback: (Result<String>) -> Unit): Boolean {
         if (closed || activeSession != id || !state.readyFor(language) || text.isBlank()) return false
-        val job = Job(id, MediaTranslationRoute.steps(language), text, callback)
+        val job = Job(id, steps, text, callback)
         val skipped: Boolean
         var schedule = false
         synchronized(lock) {
@@ -138,7 +144,7 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
                     publish(state.copy(phase = LocalMediaTranslationPhase.ERROR, detail = "내장 번역 오류 · 원문 표시 유지, 모델 다시 준비 필요"))
                 }
                 if (activeSession != job.id || cancelled) return@post
-                if (result.isSuccess) publish(state.copy(completed = state.completed + 1, lastMs = elapsed, detail = "기기 내장 한국어 번역"))
+                if (result.isSuccess) publish(state.copy(completed = state.completed + 1, lastMs = elapsed, detail = if (state.language == MediaTranslationRoute.BILINGUAL) "기기 내장 한영 통역" else "기기 내장 한국어 번역"))
                 job.callback(result)
             }
         }

@@ -39,6 +39,7 @@ internal class LiveTranslator(
     val wakeActive get() = active && wakeWindow != null
     val offline = OfflineTranslation(main, changed)
     val mediaTranslation = MediaLocalTranslation(context, main, changed)
+    private var conversationTranslationId: String? = null
     private var mediaTranslate = false
     private var mediaLanguage = "en"
     private var mediaFinalSource = ""
@@ -64,9 +65,13 @@ internal class LiveTranslator(
     private var restartTask: Runnable? = null
 
     /** Throws with a user-facing message when ASR or the translation model is not configured. */
-    fun validate(settings: JSONObject, local: Boolean = false) {
-        val speech = if (local) offlineSpeech(settings) else SpeechRounds.bilingual(context, settings)
+    fun validate(settings: JSONObject, local: Boolean = false, bundled: Boolean = false, requirePrepared: Boolean = true) {
+        val speech = if (local || bundled) offlineSpeech(settings) else SpeechRounds.bilingual(context, settings)
         require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
+        if (bundled) {
+            if (requirePrepared) require(mediaTranslation.state.readyFor(MediaTranslationRoute.BILINGUAL)) { "내장 한영 통역 엔진 준비 중" }
+            return
+        }
         if (local) { require(offline.readyFor(settings)) { "먼저 휴대폰 로컬 번역 모델 연결을 시험하세요" }; return }
         require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
             "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
@@ -91,12 +96,12 @@ internal class LiveTranslator(
     }
 
     /** Must be called on the main thread. No cloud fallback in caption mode. */
-    fun start(settings: JSONObject, captions: Boolean = false, local: Boolean = false) {
+    fun start(settings: JSONObject, captions: Boolean = false, local: Boolean = false, bundled: Boolean = false) {
         val speech = if (captions) captionConfig(settings) else {
-            validate(settings, local)
-            if (local) offlineSpeech(settings) else JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
+            validate(settings, local, bundled)
+            if (local || bundled) offlineSpeech(settings) else JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
         }
-        startSpeech(speech, captions, local)
+        startSpeech(speech, captions, local, bundledBilingual = bundled && !captions)
     }
 
     /** Reuse the installed ASR; never change the user's everyday ASR settings or fall back to cloud. */
@@ -117,8 +122,9 @@ internal class LiveTranslator(
     private fun startSpeech(speech: JSONObject, captions: Boolean, local: Boolean, mediaId: String? = null,
                             translateMedia: Boolean = false, mediaSourceLanguage: String = "en",
                             wakeOptions: KoreanWakeOptions? = null, wakeCallback: ((String) -> Unit)? = null,
-                            keywordWake: Boolean = false) {
+                            keywordWake: Boolean = false, bundledBilingual: Boolean = false) {
         stop()
+        conversationTranslationId = if (bundledBilingual) java.util.UUID.randomUUID().toString() else null
         mediaTranslate = translateMedia
         mediaLanguage = mediaSourceLanguage
         mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
@@ -134,6 +140,7 @@ internal class LiveTranslator(
         }
         history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
         if (mediaTranslate) mediaTranslation.begin(checkNotNull(mediaId), mediaLanguage)
+        conversationTranslationId?.let { mediaTranslation.begin(it, MediaTranslationRoute.BILINGUAL) }
         if (wakeOptions != null) {
             wakeWindow = KoreanWakeWindow(android.os.SystemClock.elapsedRealtime(), wakeOptions)
             wakeAction = wakeCallback
@@ -172,6 +179,8 @@ internal class LiveTranslator(
         call?.cancel()
         offline.cancel()
         if (oldMedia != null) mediaTranslation.end(oldMedia)
+        conversationTranslationId?.let(mediaTranslation::end)
+        conversationTranslationId = null
         mediaTranslate = false; mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
         wakeWindow = null; wakeAction = null; keywordWakeOptions = null
         history.clear(); sourceLine = ""; targetLine = ""
@@ -267,6 +276,7 @@ internal class LiveTranslator(
         mediaTranslate -> "휴대폰 재생음 · 내장 한국어 번역"
         mediaSessionId != null -> "휴대폰 재생음 · 로컬 원문 자막"
         captionOnly -> "듣는 중 · 로컬 자막"
+        conversationTranslationId != null -> if (mediaTranslation.state.phase == LocalMediaTranslationPhase.ERROR) "내장 통역 오류 · 원문 표시" else "듣는 중 · 내장 한영 통역"
         offlineMode -> "듣는 중 · 오프라인 한영 번역"
         else -> LISTENING
     }
@@ -333,6 +343,17 @@ internal class LiveTranslator(
         val to = if (from == "Korean") "English" else "Korean"
         sourceLine = text; targetLine = "…"
         render()
+        val localId = conversationTranslationId
+        if (localId != null) {
+            val accepted = mediaTranslation.submitBilingual(localId, isKorean(text), text) { result ->
+                if (token != generation || !active || conversationTranslationId != localId || sequence != latestFinal) return@submitBilingual
+                sourceLine = text
+                targetLine = result.getOrNull()?.takeIf { it.isNotBlank() }?.let { clip(it, TARGET_LIMIT) } ?: "(내장 통역 실패)"
+                status = listening(); render(); changed()
+            }
+            if (!accepted) { targetLine = "(내장 통역 실패)"; status = listening(); render(); changed() }
+            return
+        }
         if (offlineMode) {
             offline.translate(text, to) { result ->
                 if (token != generation || !active || sequence != latestFinal) return@translate

@@ -209,7 +209,12 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
 internal fun TranslationToolScreen(model: AppModel) {
     val s = model.state
     var confirm by remember { mutableStateOf(false) }
-    var local by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf("bundled") }
+    val bundled = mode == "bundled"
+    val local = mode == "external"
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pendingStart by remember { mutableStateOf(false) }
+    val mt = s.mediaTranslation
     var address by remember { mutableStateOf(model.config.optString("offlineTranslationUrl").ifBlank { "http://127.0.0.1:8080/v1" }) }
     var translationModel by remember { mutableStateOf(model.config.optString("offlineTranslationModel")) }
     var localKey by remember { mutableStateOf(model.config.optString("offlineTranslationKey")) }
@@ -217,19 +222,40 @@ internal fun TranslationToolScreen(model: AppModel) {
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val problem = if (s.translationActive) null else if (!s.available) "연결 서비스 준비 중" else
         if (local && !prepared) "저장된 로컬 번역 모델 연결을 먼저 확인하세요" else
-            runCatching { model.service().checkTranslation(local) }.exceptionOrNull()?.let { it.message ?: "번역 준비 상태 확인 실패" }
+            runCatching { model.service().checkTranslation(local, bundled, requirePrepared = false) }.exceptionOrNull()?.let { it.message ?: "번역 준비 상태 확인 실패" }
+    LaunchedEffect(pendingStart, mt.phase, mt.language, bundled, s.available) {
+        if (!pendingStart) return@LaunchedEffect
+        if (!bundled || !s.available) { pendingStart = false; return@LaunchedEffect }
+        if (mt.preparing) return@LaunchedEffect
+        pendingStart = false
+        val lifecycle = (context as? androidx.lifecycle.LifecycleOwner)?.lifecycle
+        if (mt.readyFor(MediaTranslationRoute.BILINGUAL) && lifecycle?.currentState == androidx.lifecycle.Lifecycle.State.RESUMED)
+            model.attempt { model.service().startTranslation(bundled = true) }
+        else if (mt.readyFor(MediaTranslationRoute.BILINGUAL))
+            model.notice = "내장 통역 준비 완료 · 화면에서 다시 시작하세요."
+    }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
             Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
             Note(s.translationStatus)
             if (!s.translationActive) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(local, { local = true }); Text("휴대폰 로컬 번역")
+                    RadioButton(bundled, { mode = "bundled" }, enabled = !mt.preparing); Text("앱 내장 한영 통역")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(!local, { local = false }); Text("기존 AI 번역")
+                    RadioButton(local, { mode = "external" }, enabled = !mt.preparing); Text("외부 로컬 서버 (고급)")
                 }
-                if (local) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(mode == "cloud", { mode = "cloud" }, enabled = !mt.preparing); Text("기존 AI 번역 (고급)")
+                }
+                if (bundled) {
+                    Note("안경 마이크의 한국어·영어를 인식하여 양방향 번역합니다. 별도 모델 설치·서버·인터넷이 필요하지 않습니다.")
+                    if (mt.language == MediaTranslationRoute.BILINGUAL) Note(mt.detail)
+                    if (pendingStart && mt.preparing) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        ToolOutlinedButton(onClick = { pendingStart = false; model.attempt { model.service().cancelMediaTranslationPreparation() } }) { Text("시작 취소") }
+                    }
+                } else if (local) {
                     Note(s.offlineStatus)
                     OutlinedTextField(address, { address = it }, Modifier.fillMaxWidth(), label = { Text("휴대폰 로컬 서버 주소") }, singleLine = true)
                     OutlinedTextField(translationModel, { translationModel = it }, Modifier.fillMaxWidth(), label = { Text("로컬 모델 이름") }, singleLine = true)
@@ -244,7 +270,7 @@ internal fun TranslationToolScreen(model: AppModel) {
                             model.service().translator.offline.prepare(model.config)
                         }
                     }, enabled = !s.offlinePreparing && translationModel.isNotBlank()) { Text("로컬 모델 연결 시험") }
-                    Note("휴대폰에서 실행 중인 llama.cpp 호환 번역 모델이 필요합니다. SenseVoice 또는 Nemotron 로컬 음성 모델과 함께 사용합니다. 이 앱은 127.0.0.1에만 연결합니다. 로컬 서버 자체가 클라우드를 중계하지 않는지 확인하세요. 모델은 아직 앱에 내장되지 않습니다.")
+                    Note("휴대폰에서 실행 중인 llama.cpp 호환 번역 모델이 필요합니다. SenseVoice 또는 Nemotron 로컬 음성 모델과 함께 사용합니다. 이 앱은 127.0.0.1에만 연결합니다. 로컬 서버 자체가 클라우드를 중계하지 않는지 확인하세요. 이 선택은 별도의 로컬 서버를 계속 이용하려는 경우에만 사용합니다.")
                 } else Note("설정된 ASR 및 AI 서비스에 발화가 전달될 수 있으며 비용이 발생할 수 있습니다.")
             }
             if (s.wakeActive || s.wakePending) Note("한국어 호출을 먼저 종료하세요.")
@@ -253,7 +279,7 @@ internal fun TranslationToolScreen(model: AppModel) {
             else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
             else {
                 problem?.let { Note("시작할 수 없는 이유: " + it) }
-                ToolButton(onClick = { confirm = true }, enabled = problem == null) { Text("번역 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = problem == null && !pendingStart && !mt.preparing) { Text(if (pendingStart) "통역 준비 중…" else "번역 시작") }
             }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
@@ -261,9 +287,18 @@ internal fun TranslationToolScreen(model: AppModel) {
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("실시간 번역을 시작할까요?") },
-        text = { Text(if (local) "로컬 음성 인식과 휴대폰 내 모델 서버를 사용합니다. 서버의 오프라인 설정을 확인하세요. 다른 기록과 화면 기능은 먼저 종료해야 합니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else "다른 기록과 화면 기능은 먼저 종료해야 하며 음성 및 텍스트가 설정된 서비스로 전송될 수 있습니다. 참여자 동의와 이용량을 확인하세요.") },
+        text = { Text(if (bundled) "안경 마이크와 앱 내장 음성·번역 모델을 사용합니다. 인터넷으로 발화를 보내거나 녹음을 저장하지 않습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else if (local) "로컬 음성 인식과 휴대폰 내 모델 서버를 사용합니다. 서버의 오프라인 설정을 확인하세요. 다른 기록과 화면 기능은 먼저 종료해야 합니다. 참여자 동의와 장소 보안 규칙을 확인하세요." else "다른 기록과 화면 기능은 먼저 종료해야 하며 음성 및 텍스트가 설정된 서비스로 전송될 수 있습니다. 참여자 동의와 이용량을 확인하세요.") },
         confirmButton = { TextButton(enabled = problem == null && !s.translationActive,
-            onClick = { confirm = false; model.attempt { model.service().startTranslation(local) } }) { Text("동의하고 시작") } },
+            onClick = {
+                confirm = false
+                model.attempt {
+                    if (bundled && !mt.readyFor(MediaTranslationRoute.BILINGUAL)) {
+                        model.service().checkTranslation(false, bundled = true, requirePrepared = false)
+                        model.service().prepareMediaTranslation(MediaTranslationRoute.BILINGUAL)
+                        pendingStart = true
+                    } else model.service().startTranslation(local, bundled)
+                }
+            }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }
 
