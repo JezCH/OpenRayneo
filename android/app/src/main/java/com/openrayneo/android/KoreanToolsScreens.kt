@@ -32,6 +32,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val keywordReady = kws.installed(context) && !kws.downloading
     var confirm by remember { mutableStateOf(false) }
     var confirmNative by remember { mutableStateOf(false) }
+    var confirmStandalone by remember { mutableStateOf(false) }
     var confirmAmbient by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
     var resumeAfterLink by remember { mutableStateOf(false) }
@@ -54,9 +55,11 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
             Note("최근 기본 호출: " + s.nativeWakeStatus)
             Note("기본 호출은 실제 펌웨어 이벤트가 필요합니다. 공식 앱을 종료하고 안경 AI 상태를 읽은 뒤 테스트하세요. 이벤트가 없으면 아래 독립 한국어 호출을 사용해 마이크·HUD를 별도로 확인하세요.")
-            if (firmware?.deviceFlag("enabled") == false)
-                ToolButton(onClick = { model.attempt { model.service().deviceSettings.assistantEnabled(true) } },
-                    enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) { Text("안경 AI 자체 활성화") }
+            ToolButton(onClick = { confirmStandalone = true },
+                enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) {
+                Text("독립 기본 호출 준비 · 안경 설정 적용")
+            }
+            Note(s.deviceSettings.notice)
             ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } }, enabled = linked && !s.deviceSettings.busy) { Text("안경 상태 다시 읽기") }
             Note("음성 모델: " + if (speechReady && s.conversation.modelReady) "준비됨" else "설정 또는 다운로드 필요")
             Note("기록 오디오: ${s.conversation.decodedSeconds.toInt()}초 · " + (s.conversation.error ?: s.conversation.status))
@@ -153,6 +156,15 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
+    if (confirmStandalone) AlertDialog(
+        onDismissRequest = { confirmStandalone = false },
+        title = { Text("안경 자체 AI와 깨우기 활성화") },
+        text = { Text("현재 연결된 안경에서 AI·음성 깨우기 스위치를 읽고 꺼진 항목만 활성화합니다. 마이크 개인정보 설정, 계정, 페어링 및 펌웨어는 변경하지 않습니다. 실제 호출 및 AI 응답은 별도 검증이 필요합니다.") },
+        confirmButton = { TextButton(onClick = {
+            confirmStandalone = false
+            model.attempt { model.service().deviceSettings.prepareNativeAssistant() }
+        }, enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) { Text("설정 적용") } },
+        dismissButton = { TextButton(onClick = { confirmStandalone = false }) { Text("취소") } })
     if (confirmNative || confirmAmbient) AlertDialog(
         onDismissRequest = { confirmNative = false; confirmAmbient = false },
         title = { Text(if (confirmNative) "기본 AI 호출 허용" else "기록 중 AI 호출 허용") },

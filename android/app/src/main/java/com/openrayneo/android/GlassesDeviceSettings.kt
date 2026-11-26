@@ -110,6 +110,44 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             }
         }
     }
+    /** Explicit, read-first initialization of the two documented firmware
+     * switches. Never changes microphone privacy, binding, firmware or cloud
+     * account. Stop after an unconfirmed write rather than trying guessed commands. */
+    fun prepareNativeAssistant() {
+        check(state.loaded)
+        perform {
+            var fresh = checkNotNull(readSettingsForVoice()) { "기기 설정 회신 없음 · 초기화하지 않았습니다." }
+            check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
+                "안경 마이크 허용 상태가 꺼져 있거나 미확인입니다. 개인정보 설정을 먼저 확인하세요."
+            }
+            val initial = checkNotNull(fresh.optJSONObject("voiceAssistantConfig")) { "펌웨어 AI 상태 미보고 · 변경하지 않았습니다." }
+            check(initial.deviceFlag("enabled") != null && initial.deviceFlag("voiceWakeup") != null) {
+                "펌웨어 AI 또는 깨우기 값 미보고 · 변경하지 않았습니다."
+            }
+            for ((field, command) in listOf("enabled" to "set_ai_state", "voiceWakeup" to "set_ai_voice_wakeup")) {
+                val current = fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field)
+                    ?: error("기기 상태가 변경되어 나머지 초기화 중단")
+                if (current) continue
+                try {
+                    requests.request(15, 16, JSONObject().put("cmd", command).put("payload", payload(mode = 1))) { type, body ->
+                        type == 17 && body.optString("cmd") in setOf(command, "sync_ai_settings")
+                    }
+                } catch (_: IllegalStateException) { /* Do not repeat ambiguous writes. */ }
+                fresh = checkNotNull(readSettingsForVoice()) { "$field 변경 후 새 상태 미확인 · 나머지 초기화 중단" }
+                check(fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field) == true) {
+                    "$field 활성화가 재조회에서 확인되지 않아 나머지 초기화를 중단했습니다."
+                }
+                check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
+                    "마이크 허용 상태 변경 · 초기화 중단"
+                }
+            }
+            val final = fresh.optJSONObject("voiceAssistantConfig")
+            check(final?.deviceFlag("enabled") == true && final.deviceFlag("voiceWakeup") == true) {
+                "두 스위치가 동시에 활성화되었는지 확인하지 못했습니다."
+            }
+            "펌웨어 AI·깨우기 설정 확인 · 이제 실제 호출 이벤트를 시험하세요."
+        }
+    }
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
         it.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") == enabled
     }
