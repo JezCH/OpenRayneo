@@ -462,7 +462,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             Text("연결 끊김 원인", style = MaterialTheme.typography.titleMedium)
             val health = if (s.available) runCatching { model.service().connectionHealth }.getOrDefault("진단 준비 중") else "진단 준비 중"
             Note(health)
-            Note("최근 연결 종료와 복구 기록입니다. 음성·대화·기기 주소는 저장하지 않습니다.")
+            Note("최근 연결 종료와 복구 기록입니다. 이전 서비스 종료 기록 누락은 앱 업데이트, 재부팅, 강제 종료 등으로 정상 종료 기록이 남지 않았음을 뜻합니다. 음성·대화·기기 주소는 저장하지 않습니다.")
             TextButton(onClick = {
                 context.getSystemService(ClipboardManager::class.java)
                     .setPrimaryClip(ClipData.newPlainText("연결 진단", health))

@@ -47,7 +47,11 @@ internal class ConnectionSupervisor(
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
                     main.removeCallbacks(retry); watchScheduled = false; watching = false; transport.stopPresenceWatch()
-                    if (waiting) publish(LinkState(LinkPhase.DISCONNECTED, "안경 미연결 · 블루투스 꺼짐", state.lastFailure, true))
+                    // Android may turn the adapter off without delivering the final GATT/socket callback.
+                    // Invalidate both transports here; onState retains a previously authenticated target.
+                    if (state.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING) || automatic) {
+                        transport.abortConnection("휴대폰 블루투스 꺼짐")
+                    } else if (waiting) publish(LinkState(LinkPhase.DISCONNECTED, "안경 미연결 · 블루투스 꺼짐", state.lastFailure, true))
                 }
                 BluetoothAdapter.STATE_ON -> if (waiting && target != null && !automatic) {
                     failures = 0; scheduleWatch(1_000)
@@ -77,10 +81,11 @@ internal class ConnectionSupervisor(
         closed = true; cancelRetries()
         runCatching { context.unregisterReceiver(adapterChanges) }
         transport.close()
+        history.clearActive()
     }
     fun recoveryPermissions(): Boolean = context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
         context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
-    private fun adapterEnabled(): Boolean = recoveryPermissions() && context.getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
+    private fun adapterEnabled(): Boolean = recoveryPermissions() && runCatching { context.getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true }.getOrDefault(false)
     private fun scheduleWatch(delay: Long, reason: String? = state.lastFailure) {
         if (closed || target?.classicAddress == null) return
         waiting = true; automatic = false
@@ -126,20 +131,23 @@ internal class ConnectionSupervisor(
             val recovered = automatic
             waiting = false; automatic = false; failures = 0; main.removeCallbacks(retry)
             watchScheduled = false; watching = false
-            if (!bleOnly && !wasReady) { connectedAt = android.os.SystemClock.elapsedRealtime(); history.event(if (recovered) "자동 재연결 성공" else "연결 성공") }
+            if (!bleOnly && !wasReady) {
+                connectedAt = android.os.SystemClock.elapsedRealtime()
+                history.event(if (recovered) "자동 재연결 성공" else "연결 성공", active = true)
+            }
             target = target?.copy(classicAddress = transport.resolvedClassicAddress ?: target?.classicAddress)
             publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
             return
         }
         if (!busy && target?.classicAddress != null && (wasReady || automatic)) {
             if (wasReady) {
-                history.event("연결 끊김", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000))
+                history.event("연결 끊김", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000), active = false)
                 failures = 0; scheduleWatch(1_000, text)
             }
             else retryWatch(text)
             return
         }
-        if (wasReady && !busy) history.event("연결 종료", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000))
+        if (wasReady && !busy) history.event("연결 종료", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000), active = false)
         if (waiting) return // Late callbacks cannot replace the retained failure.
         val phase = if (busy) {
             if (text.startsWith("스캔 중")) LinkPhase.SCANNING else LinkPhase.CONNECTING

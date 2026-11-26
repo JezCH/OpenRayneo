@@ -158,6 +158,7 @@ internal class BridgeService : Service() {
             }
             audioOwner?.let { dispatch(GlassesEvent.AudioChanged(it, audio.state.coordinatorState())) }
             if (conversations.state.running) audioLevels.error?.let { conversations.transportError(it) }
+            if (state.link.reconnectWaiting) supervisor.permissionsChanged()
             if (reconnectCapture.pending && !supervisor.recoveryPermissions()) cancelAlwaysOnRecovery()
             if (voiceAlwaysOnStart.expire(SystemClock.elapsedRealtime())) { onLog("종일 기록 음성 시작 요청 만료"); updateNotification() }
             pollLocalClock()
