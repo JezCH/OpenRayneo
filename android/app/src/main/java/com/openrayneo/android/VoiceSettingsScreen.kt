@@ -193,9 +193,9 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         SectionLabel("AI 기억 추천")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(drafts["memorySuggestOnSend"] == "true", { drafts["memorySuggestOnSend"] = it.toString() })
-            Text("AI 질문을 보낼 때 관련 기록 자동 추천")
+            Text("질문 작성 중 관련 기록 자동 추천")
         }
-        Note("기본 꺼짐. 켜면 전송 전에 휴대폰 내부 검색을 실행합니다. 실제 AI 전송은 추천 기록을 직접 선택하고 동의한 경우에만 이루어집니다. 일반 PC 작업에는 적용하지 않습니다.")
+        Note("기본 켜짐. 작성 중 휴대폰 내부 검색으로 관련 기록이 있을 때만 추천 버튼을 표시합니다. 일반 전송은 방해하지 않으며, 선택·동의하지 않은 기록은 AI에 보내지 않습니다.")
         Text("추천할 기록 기간")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AutomaticMemoryPolicy.days.forEach { n -> FilterChip(drafts["memorySuggestionDays"] == n.toString(), { drafts["memorySuggestionDays"] = n.toString() }, label = { Text("${n}일") }) }
@@ -204,7 +204,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AutomaticMemoryPolicy.limits.forEach { n -> FilterChip(drafts["memorySuggestionLimit"] == n.toString(), { drafts["memorySuggestionLimit"] = n.toString() }, label = { Text("${n}개") }) }
         }
-        TextButton(onClick = { drafts["memorySuggestOnSend"] = "false"; drafts["memorySuggestionDays"] = "30"; drafts["memorySuggestionLimit"] = "3" }) { Text("기억 추천 기본값 복원") }
+        TextButton(onClick = { drafts["memorySuggestOnSend"] = "true"; drafts["memorySuggestionDays"] = "30"; drafts["memorySuggestionLimit"] = "3" }) { Text("기억 추천 기본값 복원") }
         AboutYouSection()
         SectionLabel("기록 요약")
         VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
@@ -222,7 +222,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             else if (drafts["answerMaxChars"].orEmpty().isNotBlank() && drafts["answerMaxChars"]?.toIntOrNull() !in 0..1000) error = "답변 최대 글자 수는 0~1000이어야 함"
             else if (drafts["selfVoiceMarginDb"].orEmpty().isNotBlank() && drafts["selfVoiceMarginDb"]?.toDoubleOrNull()?.let { it in 0.0..30.0 } != true) error = "본인 목소리 판단 기준은 0~30 dB여야 함"
             else if (drafts["answerClearSeconds"].orEmpty().isNotBlank() && drafts["answerClearSeconds"]?.toIntOrNull() !in 0..3600) error = "화면 지우기 지연은 0~3600초여야 함"
-            else { error = null; model.saveConfig((voiceKeys + listOf("modelUrl", "modelName", "modelKey")).associateWith { drafts[it].orEmpty() }) }
+            else { error = null; model.saveVoiceDrafts(voiceKeys + listOf("modelUrl", "modelName", "modelKey")) }
         }, modifier = Modifier.fillMaxWidth()) { Text("음성 설정 저장") }
     }
 }

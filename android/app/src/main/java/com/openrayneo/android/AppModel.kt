@@ -127,6 +127,24 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     // Form drafts survive activity recreation without writing secrets into saved instance state.
     val formDrafts = mutableStateMapOf<String, String>()
+    private val formBaseline = mutableMapOf<String, String>()
+    val recommendedPending get() = FeatureDefaults.recommendedChanges { config.optString(it) }.isNotEmpty()
+    val recommendedEditable get() = state.available && !state.migration.busy &&
+        !state.conversation.running && !state.conversation.stopping && !state.alwaysOnResumePending &&
+        !state.nativeWakeAvailable && !state.wakeActive && !state.wakePending && !state.translationActive &&
+        !state.phoneRunning && !state.computerRunning && !state.teleprompter.busy && state.teleprompter.active == null &&
+        state.glasses.intent == DisplayIntent.Idle && state.glasses.session == null
+    fun applyRecommendedSettings() = attempt {
+        check(recommendedEditable) { "다른 기능을 종료한 후 권장 설정을 적용하세요" }
+        val stored = settings.readStored()
+        val changes = FeatureDefaults.recommendedChanges { stored.optString(it) }
+        if (changes.isNotEmpty()) saveConfig(changes)
+        else notice = "기존 설정을 그대로 유지합니다"
+    }
+    fun saveVoiceDrafts(keys: List<String>) {
+        val changes = FeatureDefaults.changedDrafts(keys, formBaseline, formDrafts)
+        if (changes.isNotEmpty()) saveConfig(changes) else notice = "변경된 설정이 없습니다"
+    }
     var wantsScan = false
     private val files = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -281,16 +299,17 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     fun saveConfig(values: Map<String, String>) = attempt {
         check(!state.migration.busy || !values.containsKey("memoryAutoSummary") || !SummaryDispatchPolicy.autoEnabled(values.getValue("memoryAutoSummary"))) { "기록 이전 중에는 자동 요약을 켤 수 없습니다" }
-        val old = settings.read()
-        val updated = JSONObject(old.toString())
-        values.forEach { (key, value) -> updated.put(key, value.trim()) }
+        val stored = settings.readStored()
+        val old = settings.effective(stored)
+        values.forEach { (key, value) -> stored.put(key, value.trim()) }
+        val updated = settings.effective(stored)
         if (values.keys.any { it in setOf("wakePhrases", "wakeSeconds", "wakeFollowSeconds") }) {
             KoreanWakeOptions.parse(updated.optString("wakePhrases", KoreanWakeOptions.DEFAULT_PHRASES),
                 updated.optString("wakeSeconds", "120").toIntOrNull() ?: 0,
                 updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
-        listOf("ambientWakeEnabled", "ambientWakeContext").forEach { key -> values[key]?.let { require(it in setOf("true", "false")) } }
+        listOf("nativeAutoAnswer", "ambientWakeEnabled", "ambientWakeContext", "fastRealtimeHints").forEach { key -> values[key]?.let { require(it in setOf("true", "false")) } }
         values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
         values["memorySuggestOnSend"]?.let { require(it in setOf("true", "false")) }
         values["memorySuggestionDays"]?.let { require(it.toIntOrNull() in AutomaticMemoryPolicy.days) }
@@ -306,13 +325,13 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             listOf("codexUrl", "codexToken", "codexCwd").any {
                 old.optString(it) != updated.optString(it)
             }
-        if (computerChanged) updated.remove("codexThread")
-        updated.remove("amapKey")
-        updated.remove("amapConsent")
+        if (computerChanged) { updated.remove("codexThread"); stored.remove("codexThread") }
+        updated.remove("amapKey"); stored.remove("amapKey")
+        updated.remove("amapConsent"); stored.remove("amapConsent")
         if (mobileChanged) {
             if (bridge != null) service().clearAgent() else ChatContinuityStore.open(context).clear()
         }
-        settings.save(updated)
+        settings.save(stored)
         if (listOf("ambientWakeEnabled", "ambientWakeContext", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "fastRealtimeHints", "nativeAutoAnswer", "modelUrl", "modelName", "modelKey", "mobileAgentBackend", "answerLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.resetAmbientWake()
         if (listOf("voiceAlwaysOnStart", "nativeAutoAnswer", "audioRetention", "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.cancelVoiceAlwaysOnStart()
         if (old.optString("fastRealtimeHints") != updated.optString("fastRealtimeHints")) bridge?.cancelRealtimeStream()
@@ -336,7 +355,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 "asrLanguage" -> SpeechRounds.languageHints(config)
                 "phoneSpeechLanguage" -> KoreanLanguage.phoneInput(config.optString(it))
                 "answerLanguage" -> KoreanLanguage.answerLanguage(config.optString(it))
-                "memorySuggestOnSend" -> (config.optString(it) == "true").toString()
+                "memorySuggestOnSend" -> config.optBoolean(it).toString()
                 "memorySuggestionDays" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.days }?.toString() ?: "30"
                 "memorySuggestionLimit" -> config.optString(it).toIntOrNull()?.takeIf { n -> n in AutomaticMemoryPolicy.limits }?.toString() ?: "3"
                 "ttsOutput" -> config.optString(it).takeIf { value -> value in setOf("headphones", "media") } ?: "headphones"
@@ -344,6 +363,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 else -> config.optString(it)
             }
         }
+        formBaseline.clear(); formBaseline.putAll(formDrafts)
     }
 
     fun importConfig(data: JSONObject) {

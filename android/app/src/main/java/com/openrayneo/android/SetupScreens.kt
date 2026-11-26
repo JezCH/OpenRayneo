@@ -77,6 +77,7 @@ internal fun OnboardingScreen(
                     SetupRow(Icons.Outlined.GraphicEq, "일상과 회의 기록", "안경 음성을 인식하고 필요한 정보를 찾아보기")
                     SetupRow(Icons.Outlined.AutoAwesome, "언제든 AI에게 질문", "연결한 AI 서비스 또는 컴퓨터에 작업 요청")
                     SetupRow(Icons.Outlined.Tune, "직접 제어", "표시와 음성 수신은 언제든 일시정지 가능")
+                    RecommendedSettingsCard(model)
                 }
                 1 -> {
                     ContentCard {

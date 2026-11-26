@@ -46,6 +46,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Column(Modifier.weight(1f)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
                         Note(if (linked) "안경 연결됨" else s.glasses.link.detail)
+                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
                     }
                     TextButton(onClick = { if (linked) navigate(4) else connect() }) { Text(if (linked) "관리" else "연결") }
                 }
@@ -111,6 +112,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
             }
         }
         item { FeatureTile("미디어 자막", "이어폰으로 듣는 재생음 · 원문 자막", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
+        if (model.recommendedPending) item { RecommendedSettingsCard(model) }
+        item { HomeFeatureDashboard(model, navigate, open, connect) }
         item {
             ContentCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
