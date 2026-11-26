@@ -29,6 +29,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         c.running -> c.mode.title + " 기록 중"
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
+        s.mediaCaption.busy -> "미디어 자막 · " + s.mediaCaption.detail
         s.captionActive -> "실시간 자막 중"
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
@@ -66,6 +67,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                         modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "저장 중…" else "기록 중지") }
                 } else if (s.wakeActive || s.wakePending) {
                     ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }, modifier = Modifier.fillMaxWidth()) { Text("한국어 호출 중지") }
+                } else if (s.mediaCaption.busy) {
+                    ToolButton(onClick = { model.attempt { model.service().stopMediaCaption() } }, enabled = s.mediaCaption.phase != MediaCapturePhase.STOPPING, modifier = Modifier.fillMaxWidth()) { Text("미디어 자막 종료") }
                 } else if (s.captionActive) {
                     ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("자막 종료") }
                 } else if (s.translationActive) {
@@ -168,6 +171,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
         item { FeatureTile("한국어 호출", "종일 호출 · 호출어 설정", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
+        item { FeatureTile("미디어 자막", "YouTube·내부 재생음 원문 자막", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {
@@ -214,6 +218,7 @@ internal fun TranslationToolScreen(model: AppModel) {
                 } else Note("설정된 ASR 및 AI 서비스에 발화가 전달될 수 있으며 비용이 발생할 수 있습니다.")
             }
             if (s.wakeActive || s.wakePending) Note("한국어 호출을 먼저 종료하세요.")
+            else if (s.mediaCaption.busy) Note("미디어 자막을 먼저 종료하세요.")
             else if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
             else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
             else ToolButton(onClick = { confirm = true }, enabled = linked && (!local || prepared) && !s.teleprompter.smartFollow && !s.teleprompter.busy && s.teleprompter.active == null) { Text("번역 시작") }
