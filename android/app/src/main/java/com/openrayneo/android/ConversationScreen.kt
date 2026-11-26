@@ -46,6 +46,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     val date = LocalDate.parse(dateText)
     val record = state.records.firstOrNull { it.id == selected }
     if (record != null) {
+        androidx.activity.compose.BackHandler { selected = null }
         ConversationDetail(model, record, actions, topicState) { selected = null }
         return
     }
@@ -54,6 +55,24 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     } }
     var source by rememberSaveable { mutableStateOf(ConversationSource.ALWAYS_ON) }
     var resumeOnReconnect by rememberSaveable { mutableStateOf(false) }
+    val s = model.state
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val startReady = linked && state.modelReady && model.recommendedEditable &&
+        !s.captionActive && !s.mediaCaption.busy && !s.glasses.navigation.enabled && source != ConversationSource.NATIVE
+    var pendingStart by remember { mutableStateOf<ConversationMode?>(null) }
+    if (pendingStart != null) AlertDialog(onDismissRequest = { pendingStart = null },
+        title = { Text("기록을 시작할까요?") },
+        text = { Text("안경 마이크를 인식하고 기록합니다. 보존 설정에 따라 원본 음성이 저장될 수 있고 설정한 AI 서비스에 전사가 전달될 수 있습니다. 참여자 동의와 장소 보안 규칙을 확인하세요.") },
+        confirmButton = { TextButton(enabled = startReady, onClick = {
+            val mode = pendingStart
+            pendingStart = null
+            if (mode != null) model.attempt {
+                model.service().startConversation(mode, source, resumeOnReconnect = mode == ConversationMode.DAILY &&
+                    source == ConversationSource.ALWAYS_ON && resumeOnReconnect)
+                resumeOnReconnect = false
+            }
+        }) { Text("동의하고 시작") } },
+        dismissButton = { TextButton(onClick = { pendingStart = null }) { Text("취소") } })
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
@@ -73,20 +92,25 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         }
                         Note("이 동의는 이번 일상 기록과 자동 재연결에만 적용됩니다. 원본 음성이 저장될 수 있으므로 참여자의 동의 및 장소의 보안 정책을 확인하세요. 앱 서비스 중지 또는 재부팅 후에는 자동으로 시작하지 않습니다.")
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ToolButton(onClick = { model.attempt {
-                            model.service().startConversation(ConversationMode.DAILY, source, resumeOnReconnect = source == ConversationSource.ALWAYS_ON && resumeOnReconnect)
-                            resumeOnReconnect = false
-                        } },
-                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("일상 기록 시작") }
-                        ToolOutlinedButton(onClick = { model.attempt { model.service().startConversation(ConversationMode.MEETING, source) } },
-                            enabled = state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text("회의 기록 시작") }
+                    if (source == ConversationSource.NATIVE) {
+                        Note("기본 음성 깨우기는 안경의 실제 호출 이벤트로 시작합니다. 여기서 기록 시작 버튼을 누르는 방식은 지원하지 않습니다.")
+                        TextButton(onClick = { open("korean-wake") }) { Text("기본 호출 설정 및 진단") }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToolButton(onClick = { pendingStart = ConversationMode.DAILY }, enabled = startReady) { Text("일상 기록 시작") }
+                            ToolOutlinedButton(onClick = { pendingStart = ConversationMode.MEETING }, enabled = startReady) { Text("회의 기록 시작") }
+                        }
+                        if (!startReady) Note(when {
+                            !linked -> "안경을 완전히 연결하세요."
+                            !state.modelReady -> "음성 설정에서 모델을 준비하세요."
+                            else -> "현재 연결된 화면·음성·AI 또는 기록 이전 작업을 종료하세요."
+                        })
                     }
                 } else {
                     Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
                     if (state.activeRecord?.transcriptOnly == true) Note("기기 내장 전사 · 원본 음성 미보존")
                     if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
-                    ToolButton(onClick = { model.service().stopConversation() }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
+                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

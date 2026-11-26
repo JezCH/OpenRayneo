@@ -18,8 +18,10 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     val s = model.state
     val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val c = s.conversation
-    val otherMode = s.translationActive || s.teleprompter.active != null || s.teleprompter.busy ||
-        s.glasses.navigation.enabled || s.glasses.session != null || s.glasses.intent != DisplayIntent.Idle
+    val otherMode = s.translationActive || s.captionActive || s.mediaCaption.busy || s.wakeActive || s.wakePending ||
+        s.nativeWakeAvailable || s.teleprompter.active != null || s.teleprompter.busy || s.migration.busy ||
+        s.phoneRunning || s.computerRunning || s.glasses.navigation.enabled || s.glasses.session != null ||
+        s.glasses.intent != DisplayIntent.Idle
     var requested by remember { mutableStateOf<ConversationMode?>(null) }
     var hintRequested by remember { mutableStateOf(false) }
     var resume by remember { mutableStateOf(false) }
@@ -34,6 +36,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
         s.teleprompter.busy -> "프롬프터 준비 중"
+        s.migration.busy -> "기록 이전 중"
+        s.nativeWakeAvailable -> "안경 기본 호출 처리 중"
         s.glasses.navigation.enabled -> "길 안내 중"
         s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
         else -> "대기 중"
@@ -75,10 +79,16 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("자막 종료") }
                 } else if (s.translationActive) {
                     ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }, modifier = Modifier.fillMaxWidth()) { Text("번역 종료") }
-                } else if (s.teleprompter.active != null) {
+                } else if (s.teleprompter.active != null || s.teleprompter.busy) {
                     ToolButton(onClick = { open("teleprompter") }, modifier = Modifier.fillMaxWidth()) { Text("프롬프터 제어") }
                 } else if (s.glasses.navigation.enabled) {
                     ToolButton(onClick = { open("navigation") }, modifier = Modifier.fillMaxWidth()) { Text("길 안내 제어") }
+                } else if (s.phoneRunning || s.computerRunning) {
+                    ToolButton(onClick = { navigate(1) }, modifier = Modifier.fillMaxWidth()) { Text("AI 작업 확인") }
+                } else if (s.migration.busy) {
+                    ToolButton(onClick = { open("record-migration") }, modifier = Modifier.fillMaxWidth()) { Text("기록 이전 확인") }
+                } else if (s.nativeWakeAvailable) {
+                    ToolButton(onClick = { open("korean-wake") }, modifier = Modifier.fillMaxWidth()) { Text("호출 상태 확인") }
                 } else {
                     ToolButton(onClick = {
                         if (!linked) connect()
