@@ -60,6 +60,9 @@ internal class BridgeService : Service() {
     private var destroyed = false
     private var initialized = false
     private var foreground = false
+    val foregroundRunning get() = foreground && !stopAfterDisconnect
+    val timerRunning get() = localClock.timerRunning
+    val stopwatchRunning get() = localClock.watchRunning
     private var stopAfterDisconnect = false
     private var restoreTask: Runnable? = null
     private var autoClearFor: AnswerRef? = null
@@ -168,6 +171,8 @@ internal class BridgeService : Service() {
                 ambientWakeStatus = "후속 질문 시간 만료 · 다음 호출 대기"; notifyUI()
             }
             if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
+            // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
+            updateNotification()
             main.postDelayed(this, 1_000)
         }
     }
@@ -304,6 +309,7 @@ internal class BridgeService : Service() {
             startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 if (PhoneLocation.allowed(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
             foreground = true
+            notifyUI()
         }
         return START_NOT_STICKY
     }
@@ -1859,15 +1865,43 @@ internal class BridgeService : Service() {
         check(!SummaryDispatchPolicy.autoEnabled(settings.read().optString("memoryAutoSummary"))) { "기록 이전 전에 자동 요약을 끄세요" }
         migration.transfer(includeAudio)
     }
-    private fun notifyUI() { if (initialized && !destroyed) observers.toList().forEach { it() } }
-    // Connection and retry transitions are in-app status, never repeated phone alerts.
-    private fun summary() = if (localClock.timerRunning) "백그라운드 서비스 실행 중 · 타이머 실행 중" else "백그라운드 서비스 실행 중"
+    private fun notifyUI() {
+        if (initialized && !destroyed) {
+            updateNotification()
+            observers.toList().forEach { it() }
+        }
+    }
+    // Fixed vocabulary only: no transcript, question, identity or credential on lock screen.
+    private fun summary(): String {
+        val c = conversations.state
+        val link = SystemStatusPolicy.link(state.link.phase.name, state.link.reconnectWaiting, state.disconnecting)
+        val capture = SystemStatusPolicy.capture(c.running, c.stopping, c.reprocessing, c.liveTranscriptOnly,
+            alwaysOnResumePending, audioLevels.coordinatorState().phase.name, c.mode == ConversationMode.ENROLL)
+        val activity = when {
+            c.running || c.stopping || alwaysOnResumePending -> capture.label
+            mediaCaptionState.busy -> "미디어 자막 " + when (mediaCaptionState.phase) {
+                MediaCapturePhase.CAPTURING -> "실행 중"
+                MediaCapturePhase.STOPPING -> "종료 중"
+                else -> "준비 중"
+            }
+            translator.wakeActive || wakePending -> "호출 대기"
+            translator.active -> if (translator.captionOnly) "주변 자막" else "통역"
+            speechOutput.speaking -> "음성 출력 중"
+            c.summarizing -> "기록 요약 중"
+            else -> "대기 중"
+        }
+        return listOf("안경 " + link.label, activity,
+            if (agentServer.state.pollRecent && agentServer.state.enabled) "AI 수신 확인" else if (agentServer.state.enabled) "AI 연결 대기" else "AI 꺼짐",
+            if (localClock.timerRunning) "타이머 실행 중" else "").filter { it.isNotBlank() }.joinToString(" · ")
+    }
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, BridgeService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
         val builder = Notification.Builder(this, "bridge").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("OpenRayneo").setContentText(summary()).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setShowWhen(false).setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setStyle(Notification.BigTextStyle().bigText(summary()))
             .addAction(Notification.Action.Builder(null, "서비스 중지", stop).build())
         if (localClock.timerRunning) {
             val cancel = PendingIntent.getService(this, 7919, Intent(this, BridgeService::class.java).setAction("CANCEL_LOCAL_TIMER"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

@@ -198,6 +198,9 @@ internal class MainActivity : ComponentActivity() {
                         mediaCaption = ::requestMediaCaption,
                         voice = ::requestVoice,
                     ),
+                    phoneInput = dictation?.let { session ->
+                        if (session.listening) "마이크 입력 중" else session.status
+                    },
                 )
                 val activeVoice = dictation
                 val busy = voiceBusy()

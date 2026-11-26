@@ -61,7 +61,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
     val fast = cfg.optBoolean("fastRealtimeHints")
     val native = cfg.optBoolean("nativeAutoAnswer")
     val receiving = s.audioLevels.coordinatorState().phase == AudioPhase.RECEIVING
-    val capturesAmbient = c.running && !c.stopping && c.mode != ConversationMode.ENROLL &&
+    val capturesAmbient = c.running && !c.reprocessing && !c.stopping && c.mode != ConversationMode.ENROLL &&
         (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && fast))
     val captureBusy = c.running || c.stopping || s.alwaysOnResumePending || s.wakeActive || s.wakePending ||
         s.nativeWakeAvailable || s.translationActive || s.captionActive || s.mediaCaption.busy || s.teleprompter.busy || s.teleprompter.active != null ||
@@ -89,7 +89,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
         activeDetail = "기록 중 호출 검사 · " + s.ambientWakeStatus + " · " + s.agentServer.receiverStatus,
         waitingDetail = if (capturesAmbient) "전사/음성 수신 대기" else "종일 또는 빠른 실시간 기록 시작 필요")
     val hintStatus = FeatureStatusPolicy.resolve(fast, linked && speechReady && ai && receiver,
-        active = fast && c.running && c.mode != ConversationMode.ENROLL && c.source == ConversationSource.REALTIME && !c.stopping && !s.focusMode && s.appNotificationsEnabled && speechReady && ai && receiver && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
+        active = fast && c.running && !c.reprocessing && c.mode != ConversationMode.ENROLL && c.source == ConversationSource.REALTIME && !c.stopping && !s.focusMode && s.appNotificationsEnabled && speechReady && ai && receiver && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
         waiting = true, blocker = when { s.focusMode -> "집중 모드"; !s.appNotificationsEnabled -> "앱 알림 꺼짐"; mic == false -> "안경 마이크 꺼짐"; else -> null },
         setupDetail = when { !linked -> "안경 연결 필요"; !speechReady -> "기록 엔진·음성 인식 설정 확인"; else -> aiSetup },
         activeDetail = "빠른 실시간 힌트 경로 · " + s.agentServer.receiverStatus, waitingDetail = "실시간 기록 시작 필요")
@@ -119,7 +119,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
             setupDetail = "AI 연결 필요"), "공유·기억 관리", { navigate(1) })
         HorizontalDivider()
         FeatureStateRow("일상·회의 기록", FeatureStatusPolicy.resolve(true, linked && c.modelReady,
-            active = c.running && !c.stopping, stopping = c.stopping,
+            active = c.running && !c.stopping && !c.reprocessing, stopping = c.stopping,
             waiting = s.alwaysOnResumePending, blocker = if (!c.running && captureBusy && !s.alwaysOnResumePending) "다른 기능 사용 중" else null,
             error = c.error, setupDetail = if (!linked) "안경 연결 필요" else "음성 모델 준비 필요",
             activeDetail = c.mode.title + " · " + c.status, waitingDetail = "동일 안경 재연결 대기",
