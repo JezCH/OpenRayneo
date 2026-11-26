@@ -148,4 +148,7 @@ internal data class ConversationState(
     val enrollmentSeconds: Float = 0f, val enrollmentReady: Boolean = false, val enrollmentCanConfirm: Boolean = false, val enrollmentTotalSeconds: Float = 0f, val decodedSeconds: Double = 0.0,
     val voiceGate: String = "",
     val modelReady: Boolean = false, val summarizing: Boolean = false, val stopping: Boolean = false,
+    // Runtime purpose, not inferred from running or from the presence of an old record.
+    val reprocessing: Boolean = false,
+    val liveTranscriptOnly: Boolean = false,
 )

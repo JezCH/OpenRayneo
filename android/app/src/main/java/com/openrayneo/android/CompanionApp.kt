@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.collect
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun CompanionApp(model: AppModel, actions: UiActions) {
+internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: String? = null) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var routeStack by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val route = routeStack.lastOrNull().orEmpty()
@@ -65,12 +65,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
     Scaffold(
         topBar = {
             if (!model.onboarding || route.isNotEmpty())
+                Column {
                 TopAppBar(
                     title = {
                         Text(
                             when (route) {
                                 "settings" -> "설정"
                                 "feature-controls" -> "자동 기능 관리"
+                                "system-status" -> "시스템 현황"
                                 "app-update" -> "앱 업데이트"
                                 "local-clock" -> "타이머 및 스톱워치"
                                 "about-you" -> "개인화 정보"
@@ -108,14 +110,6 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     },
                     actions = {
                         if (route.isEmpty()) {
-                            val connected = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
-                            TextButton(onClick = { tab = 4 }) {
-                                Text(when {
-                                    connected -> "연결됨"
-                                    s.glasses.link.reconnectWaiting -> "재연결 중"
-                                    else -> "미연결"
-                                }, color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
                             IconButton(onClick = { openRoute("settings") }) {
                                 Icon(Icons.Outlined.Settings, "설정")
                             }
@@ -126,6 +120,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             containerColor = MaterialTheme.colorScheme.background
                         ),
                 )
+                if (route != "system-status") SystemStatusStrip(model, phoneInput) { openRoute("system-status") }
+                }
         },
         bottomBar = {
             if (route.isEmpty() && !model.onboarding && !keyboardVisible)
@@ -177,6 +173,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             routeStack = arrayListOf()
                         },
                     )
+                "system-status" -> SystemStatusScreen(model, phoneInput,
+                    { tab = it; routeStack = arrayListOf() }, { openRoute(it) }, { devices = true })
                 "feature-controls" -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (model.recommendedPending) item { RecommendedSettingsCard(model) }
                     item { HomeFeatureDashboard(model, { tab = it; routeStack = arrayListOf() }, { openRoute(it) }, { devices = true }) }

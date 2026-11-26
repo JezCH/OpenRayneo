@@ -18,6 +18,9 @@ internal data class SelectedContact(val name: String, val uri: String)
 
 internal data class CompanionState(
     val available: Boolean = false,
+    val foregroundService: Boolean = false,
+    val timerRunning: Boolean = false,
+    val stopwatchRunning: Boolean = false,
     val glasses: GlassesState = GlassesState(),
     val conversation: ConversationState = ConversationState(),
     val alwaysOnResumePending: Boolean = false,
@@ -214,6 +217,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         state =
             CompanionState(
                 available = true,
+                foregroundService = s.foregroundRunning,
+                timerRunning = s.timerRunning,
+                stopwatchRunning = s.stopwatchRunning,
                 glasses = s.state,
                 conversation = s.conversations.state,
                 alwaysOnResumePending = s.alwaysOnResumePending,

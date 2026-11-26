@@ -164,7 +164,7 @@ internal class ConversationController(private val context: Context, private val 
         val token = ++generation
         gating = source == ConversationSource.ALWAYS_ON && cfg.optString("glassesVoiceGate", "true") != "false"
         writer.post { gate.reset() }
-        publish(state.copy(activeRecord = null, running = true, stopping = false, mode = mode, source = source, segments = emptyList(), error = null,
+        publish(state.copy(activeRecord = null, running = true, stopping = false, reprocessing = false, liveTranscriptOnly = only, mode = mode, source = source, segments = emptyList(), error = null,
             status = if (mode == ConversationMode.ENROLL) "등록은 지정 채널의 본인 목소리만 수집합니다" else if (only) "기기 내장 전사 · 원본 음성 미보존" else if (source == ConversationSource.REALTIME) "2채널 유지: 채널 1은 기본 본인, 채널 2는 별도 식별" else "혼합/단일 채널 오디오는 전체 화자 식별",
             enrollmentSeconds = 0f, enrollmentReady = false, enrollmentCanConfirm = false, enrollmentTotalSeconds = 0f, decodedSeconds = 0.0))
         worker.post {
@@ -509,7 +509,7 @@ internal class ConversationController(private val context: Context, private val 
         }
         transcriptStopReady = false
         replaying = false; pendingSentences.clear(); pendingAgent.clear(); dispatching = false; engines.values.forEach { it.reset() }; manualSpeakers.clear(); closing = false
-        publish(state.copy(running = false, stopping = false, segments = finished?.segments.orEmpty(), activeRecord = null, records = repository.records, status = finalMessage))
+        publish(state.copy(running = false, stopping = false, reprocessing = false, liveTranscriptOnly = false, segments = finished?.segments.orEmpty(), activeRecord = null, records = repository.records, status = finalMessage))
         if (finished != null && finished.mode != ConversationMode.ENROLL && !finished.processingPending && finished.segments.isNotEmpty()) { enqueueSummary(finished.id, "record_end"); scheduleDaySummaries(finished.source == ConversationSource.ALWAYS_ON) }
         val continuation = stopAfter; stopAfter = null; main.post { if (continuation != null) continuation() else stopped() }
     }
@@ -650,7 +650,7 @@ internal class ConversationController(private val context: Context, private val 
         val cfg = settings.read(); require(SpeechRounds.ready(context, cfg)) { SpeechRounds.missing(cfg) }
         transcriptOnly = false; transcriptInterrupted = false
         ++generation
-        publish(state.copy(running = true, stopping = false, mode = old.mode, source = old.source, status = "채널별 완료 커서에 따라 각각 보충하며 원문과 수동 수정은 유지됩니다",
+        publish(state.copy(running = true, stopping = false, reprocessing = true, liveTranscriptOnly = false, mode = old.mode, source = old.source, status = "채널별 완료 커서에 따라 각각 보충하며 원문과 수동 수정은 유지됩니다",
             error = null, activeRecord = old, segments = old.segments, decodedSeconds = 0.0))
         worker.post {
             selfGate = selfGateFor(old.source, old.mode, cfg)
