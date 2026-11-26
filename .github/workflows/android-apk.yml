@@ -22,6 +22,16 @@ on:
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Package to update (validation is the active development app)"
+        type: choice
+        options: [validation, release]
+        default: validation
+      validation_signer:
+        description: "Installed validation APK certificate SHA-256 (64 hex characters)"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -31,6 +41,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       DISTRIBUTE_APK: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+      APK_TARGET: ${{ inputs.target || 'validation' }}
+      VALIDATION_EXPECTED_SIGNER: ${{ inputs.validation_signer || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,17 +70,28 @@ jobs:
             printf '%s' "$KEYSTORE_B64" | base64 -d > "$signing_file"
             restored_signer=$(keytool -exportcert -keystore "$signing_file" -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')
             echo "Restored signing certificate SHA-256: $restored_signer"
-            if [ "$GITHUB_REPOSITORY" = "JezCH/OpenRayneo" ] && [ "$restored_signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
-              echo "::error::Restored key does not match #84. Restore the original ANDROID_DEBUG_KEYSTORE_B64. Do not uninstall the existing app."
-              if [ "$DISTRIBUTE_APK" = "true" ]; then exit 1; fi
-              rm -f "$signing_file"
-              exit 0
-            fi
             if [ "$DISTRIBUTE_APK" != "true" ]; then
-              echo "Original #84 signing key verified; no APK distribution requested."
+              echo "Registered signing certificate inspected; no APK distribution requested."
               rm -f "$signing_file"
               exit 0
             fi
+            if [ "$APK_TARGET" = "validation" ]; then
+              expected=$(printf '%s' "$VALIDATION_EXPECTED_SIGNER" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+              if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "::error::Enter the installed validation app certificate SHA-256 before updating."
+                exit 1
+              fi
+            elif [ "$APK_TARGET" = "release" ]; then
+              expected="cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70"
+            else
+              echo "::error::Invalid distribution target."
+              exit 1
+            fi
+            if [ "$restored_signer" != "$expected" ]; then
+              echo "::error::Registered key does not match the selected installed app. Do not uninstall or change the certificate pin to bypass this check."
+              exit 1
+            fi
+            echo "OPENRAYNEO_EXPECTED_SIGNER=$expected" >> "$GITHUB_ENV"
             echo "OPENRAYNEO_RESTORED_SIGNER=$restored_signer" >> "$GITHUB_ENV"
             echo "OPENRAYNEO_SIGNING_KEYSTORE=$signing_file" >> "$GITHUB_ENV"
             echo "OPENRAYNEO_FIXED_SIGNING=true" >> "$GITHUB_ENV"
@@ -89,13 +112,18 @@ jobs:
         working-directory: android
         run: ./gradlew :app:compileReleaseKotlin :app:compileValidationKotlin --console=plain
 
-      - name: Build release APK
+      - name: Build selected APK
         if: env.DISTRIBUTE_APK == 'true'
         working-directory: android
         run: |
           # Surface compiler/lint errors as annotations so they are readable without opening the raw log.
           set -o pipefail
-          ./gradlew :app:assembleRelease --console=plain 2>&1 | tee "$RUNNER_TEMP/gradle.log" || {
+          case "$APK_TARGET" in
+            validation) task=assembleValidation ;;
+            release) task=assembleRelease ;;
+            *) exit 1 ;;
+          esac
+          ./gradlew ":app:$task" --console=plain 2>&1 | tee "$RUNNER_TEMP/gradle.log" || {
             # One annotation (GitHub keeps only a few per step); newlines encoded as %0A.
             msg=$( { grep -E '^e: |error:' "$RUNNER_TEMP/gradle.log"; grep -A12 'What went wrong' "$RUNNER_TEMP/gradle.log"; } | grep -v '^> Task' | head -50 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error::$msg"
@@ -106,20 +134,22 @@ jobs:
         if: env.DISTRIBUTE_APK == 'true'
         run: |
           set -o pipefail
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/openrayneo-certs.txt"
+          case "$APK_TARGET" in
+            validation) apk=android/app/build/outputs/apk/validation/app-validation.apk; package=com.openrayneo.android.validation ;;
+            release) apk=android/app/build/outputs/apk/release/app-release.apk; package=com.openrayneo.android ;;
+            *) exit 1 ;;
+          esac
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/openrayneo-certs.txt"
           actual_signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
           test "$actual_signer" = "$OPENRAYNEO_RESTORED_SIGNER" || { echo "::error::APK did not use restored signing key."; exit 1; }
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/openrayneo-badging.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/openrayneo-badging.txt"
+          grep -F "package: name='$package' versionCode='$((1000 + GITHUB_RUN_NUMBER))'" "$RUNNER_TEMP/openrayneo-badging.txt" || { echo "::error::Incorrect APK package or versionCode"; exit 1; }
 
-      # Fork continuity pin: only the public certificate fingerprint, never the private key.
-      - name: Verify distribution signer continuity
-        if: env.DISTRIBUTE_APK == 'true' && github.repository == 'JezCH/OpenRayneo'
+      - name: Verify selected distribution signer continuity
+        if: env.DISTRIBUTE_APK == 'true'
         run: |
           signer=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print tolower($NF)}' "$RUNNER_TEMP/openrayneo-certs.txt")
-          if [ "$signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
-            echo "::error::APK signer differs from installed #84 lineage. In-place upgrade blocked; recover the original key rather than uninstalling."
-            exit 1
-          fi
+          test "$signer" = "$OPENRAYNEO_EXPECTED_SIGNER" || { echo "::error::APK signer does not match the selected installed app."; exit 1; }
 
       - name: Check DSH plugin policies
         working-directory: integrations/dsh-go
@@ -131,7 +161,7 @@ jobs:
         run: npm pack --pack-destination "$RUNNER_TEMP"
 
       - name: Assemble verified installation bundle
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'release'
         run: |
           python3 scripts/build-install-bundle.py \
             --apk android/app/build/outputs/apk/release/app-release.apk \
@@ -143,20 +173,36 @@ jobs:
             --out "$RUNNER_TEMP/openrayneo-install"
 
       - name: Include exact Mozilla corresponding source
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'release'
         run: cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-install/"
 
       - uses: actions/upload-artifact@v4
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'release'
         with:
           name: openrayneo-android-${{ github.sha }}
           path: ${{ runner.temp }}/openrayneo-install/
           if-no-files-found: error
 
+      - name: Package validation in-place update
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'validation'
+        run: |
+          mkdir -p "$RUNNER_TEMP/openrayneo-validation-update"
+          cp android/app/build/outputs/apk/validation/app-validation.apk "$RUNNER_TEMP/openrayneo-validation-update/OpenRayneo-validation.apk"
+          cp "$RUNNER_TEMP/openrayneo-certs.txt" "$RUNNER_TEMP/openrayneo-validation-update/"
+          cp "$RUNNER_TEMP/openrayneo-badging.txt" "$RUNNER_TEMP/openrayneo-validation-update/"
+          cp "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "$RUNNER_TEMP/openrayneo-validation-update/"
+          cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-validation-update/"
+      - uses: actions/upload-artifact@v4
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'validation'
+        with:
+          name: openrayneo-validation-update-${{ github.sha }}
+          path: ${{ runner.temp }}/openrayneo-validation-update/
+          if-no-files-found: error
+
       # Optional: upload APK and plugin to a Nextcloud "file drop" (upload-only) public share.
       # Store the share link (https://host/s/TOKEN) as repository secret NEXTCLOUD_DROP_URL.
       - name: Upload to Nextcloud
-        if: env.DISTRIBUTE_APK == 'true'
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'release'
         env:
           DROP_URL: ${{ secrets.NEXTCLOUD_DROP_URL }}
         run: |
