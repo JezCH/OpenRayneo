@@ -50,7 +50,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 Text(label)
             }
         }
-        Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 휴대폰에 설치된 시스템 음성 인식 서비스의 언어 및 네트워크 지원을 따릅니다. 아래 안경 ASR과 별도 설정입니다.")
+        Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 앱 내장 음성 모델로 인식하며 인터넷 연결은 필요하지 않습니다. 아래 안경 ASR과 별도 설정입니다.")
         SectionLabel("AI 기본 답변 언어")
         val answerLanguage = KoreanLanguage.answerLanguage(drafts["answerLanguage"].orEmpty())
         KoreanLanguage.answerOptions.forEach { (code, label) ->
@@ -85,7 +85,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { drafts["asrEngine"] = key }); Text(label) }
             }
         }
-        Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐집니다. Nemotron은 한국어·영어 등 다국어(언어 힌트가 하나면 그 언어로 고정, 아니면 자동 감지)이며 무겁고, zipformer는 가볍지만 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 전용 모델 대신 설치된 SenseVoice 또는 Nemotron을 사용합니다. 둘 다 없으면 로컬 모델을 준비해야 하며 클라우드로 자동 전환하지 않습니다.")
+        Note("기본 한국어는 Zipformer, 한국어·영어 혼합은 Nemotron 또는 SenseVoice를 사용합니다. 내장 모델은 자동 준비되며 클라우드로 자동 전환하지 않습니다. 실제 정확도와 지연은 기기·환경에 따라 달라집니다.")
         val context = LocalContext.current
         SpeechRounds.model(JSONObject().put("asrEngine", engine))?.let { local ->
             var access by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
@@ -100,6 +100,8 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 Text(if (local.downloading) "${(local.progress * 100).toInt()}% 진행 중…"
                     else "${local.title} 모델 내려받기 (${local.size}, Wi-Fi 권장" + if (access) ", 공용 폴더에 저장)" else ")")
             }
+            // Bundled models require no broad storage permission or manual file management.
+            if (!local.bundled(context)) {
             val movable = remember(local, local.downloading, access, recheck) { local.movable(context) }
             if (movable) ToolOutlinedButton(onClick = { local.moveToShared(context.applicationContext) }, enabled = !local.downloading, modifier = Modifier.fillMaxWidth()) {
                 Text("앱 내부 모델을 공용 폴더로 옮기기 (백업용)")
@@ -115,6 +117,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 // Pick up the permission when the user returns from system settings.
                 while (true) { kotlinx.coroutines.delay(1000); if (android.os.Environment.isExternalStorageManager()) { access = true; break } }
             }
+            }
             if (local.downloading) LinearProgressIndicator(progress = { local.progress }, modifier = Modifier.fillMaxWidth())
             local.message?.takeIf { !local.downloading }?.let { Note(it) }
         }
@@ -123,10 +126,13 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Checkbox(keepLoaded, { drafts["asrKeepLoaded"] = it.toString() }); Text("기기 내장 ASR 모델을 항상 메모리에 유지")
         }
         Note("켜면 고른 기기 내장 모델을 미리 올려 두어 깨울 때 불러오기 지연(Nemotron은 수 초)이 없습니다. 휴대폰 메모리를 계속 차지합니다(Nemotron 약 700MB, SenseVoice 약 250MB). 끄면 1분 동안 쓰지 않을 때 내립니다.")
-        SectionLabel("Bailian ASR")
-        VoiceField(model, "asrKey", "API Key", secret = true)
-        VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
-        VoiceField(model, "asrModel", "모델", "qwen-audio-3.1-asr-flash-message")
+        if (engine == "cloud") {
+            SectionLabel("클라우드 음성 인식 (선택)")
+            Note("이 엔진을 선택하면 음성이 외부 ASR 서비스로 전송됩니다.")
+            VoiceField(model, "asrKey", "API Key", secret = true)
+            VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+            VoiceField(model, "asrModel", "모델", "qwen-audio-3.1-asr-flash-message")
+        }
         val asrLanguages = drafts["asrLanguage"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         fun toggleLanguage(code: String, on: Boolean) {
             val selected = if (on) asrLanguages + code else asrLanguages - code

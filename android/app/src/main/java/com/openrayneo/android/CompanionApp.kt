@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.collect
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,10 +55,11 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
             backRoute()
         else if (model.onboarding) model.step(model.onboardingStep - 1) else tab = 0
     }
-    LaunchedEffect(model.notice) {
-        model.notice?.let {
+    // Clearing the notice must not cancel the coroutine displaying its snackbar.
+    LaunchedEffect(Unit) {
+        snapshotFlow { model.notice }.filterNotNull().collect { message ->
             model.notice = null
-            snackbars.showSnackbar(it)
+            snackbars.showSnackbar(message)
         }
     }
     Scaffold(
@@ -67,6 +70,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                         Text(
                             when (route) {
                                 "settings" -> "설정"
+                                "feature-controls" -> "자동 기능 관리"
                                 "app-update" -> "앱 업데이트"
                                 "local-clock" -> "타이머 및 스톱워치"
                                 "about-you" -> "개인화 정보"
@@ -104,7 +108,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     },
                     actions = {
                         if (route.isEmpty()) {
-                            if (s.glasses.link.phase == LinkPhase.FULL) StatusPill("안경 연결됨")
+                            val connected = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+                            TextButton(onClick = { tab = 4 }) {
+                                Text(when {
+                                    connected -> "연결됨"
+                                    s.glasses.link.reconnectWaiting -> "재연결 중"
+                                    else -> "미연결"
+                                }, color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             IconButton(onClick = { openRoute("settings") }) {
                                 Icon(Icons.Outlined.Settings, "설정")
                             }
@@ -138,8 +149,9 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             icon = {
                                 BadgedBox(
                                     badge = {
-                                        if (index == 1 && s.approvals.isNotEmpty())
-                                            Badge { Text(s.approvals.size.toString()) }
+                                        val pending = s.approvals.size + s.agentReviews.size
+                                        if (index == 1 && pending > 0)
+                                            Badge { Text(pending.toString()) }
                                     }
                                 ) {
                                     Icon(icons[index], null)
@@ -165,6 +177,10 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             routeStack = arrayListOf()
                         },
                     )
+                "feature-controls" -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (model.recommendedPending) item { RecommendedSettingsCard(model) }
+                    item { HomeFeatureDashboard(model, { tab = it; routeStack = arrayListOf() }, { openRoute(it) }, { devices = true }) }
+                }
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
                 "app-update" -> if (AppUpdate.supported) AppUpdateScreen(model) else Text("이 앱은 자체 업데이트 대상이 아닙니다.")
@@ -448,11 +464,11 @@ internal fun FeatureTile(
 ) {
     Card(
         onClick = click,
-        modifier = modifier,
+        modifier = modifier.heightIn(min = 124.dp),
         colors =
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
             Text(title, style = MaterialTheme.typography.titleMedium)
             Note(subtitle)
@@ -483,7 +499,8 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("안경 연결하기", style = MaterialTheme.typography.headlineSmall)
-        Note("안경을 깨운 뒤 공식 RayNeo 앱 및 다른 OpenRayneo를 시스템 앱 정보에서 강제 종료하세요. 연결 충돌이 계속되면 해당 앱의 근처 기기 권한을 일시적으로 끄고 다시 시도하세요. 계정 바인딩 해제, 블루투스 페어링 삭제, 앱 데이터 삭제 및 안경 초기화는 하지 마세요.")
+        Note("안경을 깨워 휴대폰 가까이 두세요. 기존 페어링은 유지합니다.")
+        if (s.glasses.link.lastFailure != null) Note("다른 앱이 연결을 점유한 경우에만 해당 앱의 안경 연결을 종료하고 다시 시도하세요. 페어링·계정·앱 데이터를 삭제하거나 안경을 초기화하지 마세요.")
         Text(s.glasses.link.detail, color = MaterialTheme.colorScheme.primary)
         s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
         if (s.glasses.link.reconnectWaiting) Note("현재 안경은 미연결 상태입니다. 자동 재연결을 기다리거나 아래에서 다시 스캔하세요.")

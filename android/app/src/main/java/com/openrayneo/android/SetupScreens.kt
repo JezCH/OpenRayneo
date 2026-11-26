@@ -40,7 +40,7 @@ internal fun OnboardingScreen(
         listOf(
             "OpenRayneo에 오신 것을 환영합니다. 몇 단계로 설정을 마치거나 나중에 계속할 수 있습니다.",
             "휴대폰으로 RayNeo iO에 직접 연결하면 내비게이션과 답변이 눈앞에 표시됩니다.",
-            "한국어 음성 인식 모델을 준비합니다. 기록은 별도로 시작할 때만 실행됩니다.",
+            "음성 모델은 설치 앱에 포함됩니다. 기록은 직접 시작할 때만 실행됩니다.",
             "휴대폰은 로컬 Agent로 작업을 처리하고 독립적으로 기록·요약합니다. 컴퓨터가 온라인이면 작업을 다음에도 맡길 수 있습니다: Codex.",
             "아래는 현재 준비 상태입니다. 완료하지 않은 항목은 언제든 설정에서 계속할 수 있습니다.",
         )
@@ -103,9 +103,10 @@ internal fun OnboardingScreen(
                 2 -> {
                     ContentCard {
                         Text(if (model.state.conversation.modelReady) "음성 인식 준비됨" else "음성 인식 설정 필요", style = MaterialTheme.typography.titleMedium)
-                        Note("한국어 중심이라면 기기 내장 한국어 모델을 먼저 준비하세요. 한영 혼합에는 다국어 모델을 선택할 수 있습니다. 모델을 저장했다고 실제 마이크 인식이 검증된 것은 아닙니다.")
-                        ToolButton(onClick = { configure("voice-settings") }, modifier = Modifier.fillMaxWidth()) { Text("음성 인식 설정") }
-                        Note("원본 음성 보존 및 AI 전송 범위도 설정에서 확인하세요.")
+                        Note("한국어·다국어 음성 모델이 내장되어 별도 다운로드가 필요하지 않습니다. 처음 사용할 때 앱이 준비합니다.")
+                        if (!model.state.conversation.modelReady)
+                            ToolOutlinedButton(onClick = { configure("voice-settings") }, modifier = Modifier.fillMaxWidth()) { Text("음성 상태 확인") }
+                        Note("원본 음성 보존 및 AI 전송 범위는 음성·기억 설정에서 확인할 수 있습니다.")
                     }
                 }
                 3 -> {
@@ -135,12 +136,13 @@ internal fun OnboardingScreen(
                             "연결됨",
                             "나중에 연결",
                         )
-                        CompletionRow("음성 인식", model.state.conversation.modelReady, "모델 준비됨", "나중에 준비")
+                        CompletionRow("음성 인식", model.speechConfigured, "선택한 모델 확보 또는 외부 설정됨", "음성 인식 설정 확인")
+                        CompletionRow("기록 엔진", model.state.conversation.modelReady, "초기화 완료", "초기화 상태 확인")
                         CompletionRow(
                             "로컬 Agent",
-                            model.state.agentServer.enabled,
-                            "연결 기능 켜짐 · 응답 미검증",
-                            "선택 사항, 나중에 설정",
+                            model.state.agentServer.enabled && model.state.agentServer.pollRecent,
+                            "최근 요청 수신 확인 · 모델 응답은 별도",
+                            if (model.state.agentServer.enabled) "연결 켜짐 · 요청 수신 대기" else "선택 사항, 나중에 설정",
                         )
                         CompletionRow(
                             "컴퓨터 Codex",
@@ -266,7 +268,8 @@ internal fun SettingsScreen(
         }
         SettingsRow("AI 연결 · DSH Go", model.state.agentServer.receiverStatus + " · 연결 및 동기화", Icons.Outlined.Hub) { open("agent-api") }
         SectionLabel("음성·기억 설정")
-        SettingsRow("음성·기억 설정", "음성 모델 다운로드 · 언어 · 기억 및 요약", Icons.Outlined.Mic) { open("voice-settings") }
+        SettingsRow("자동 기능 관리", "호출 · 힌트 · 기억 · 알림의 실제 상태와 허용 설정", Icons.Outlined.Tune) { open("feature-controls") }
+        SettingsRow("음성·기억 설정", "내장 음성 모델 · 언어 · 기억 및 요약", Icons.Outlined.Mic) { open("voice-settings") }
         SettingsRow("About You · 개인화 정보", "승인한 프로필·선호·관심사 관리", Icons.Outlined.People) { open("about-you") }
         SettingsRow("한국어 호출어", "내 호출어 · 듣기 시작 및 중지", Icons.Outlined.Mic) { open("korean-wake") }
         SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }

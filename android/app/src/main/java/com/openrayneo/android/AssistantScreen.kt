@@ -44,6 +44,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     var continuityDialog by remember { mutableStateOf(false) }
     var confirmNewChat by remember { mutableStateOf(false) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    var showContextOptions by rememberSaveable { mutableStateOf(false) }
     val suggestMemory = model.config.optBoolean("memorySuggestOnSend")
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
@@ -174,6 +175,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Icon(Icons.Outlined.AddComment, "새 대화")
             }
         }
+        if (mobile && s.approvals.isNotEmpty()) TextButton(onClick = { mobile = false }) { Text("PC 작업 승인 ${s.approvals.size}건 확인") }
+        if (!mobile && s.agentReviews.isNotEmpty()) TextButton(onClick = { mobile = true }) { Text("AI 작업 승인 ${s.agentReviews.size}건 확인") }
         LazyColumn(
             state = list,
             modifier = Modifier.weight(1f),
@@ -200,6 +203,15 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         ToolButton(onClick = { configure(if (mobile) "agent-api" else "computer") }) {
                             Text(if (mobile) "AI 연결 설정" else "컴퓨터 연결 설정")
                         }
+                    }
+                }
+            else if (mobile && !s.agentServer.pollRecent && !running)
+                item {
+                    ContentCard {
+                        Text("AI 연결 대기 중", style = MaterialTheme.typography.titleMedium)
+                        Note(s.agentServer.receiverStatus)
+                        Note("연결 기능은 켜져 있지만 외부 AI가 아직 요청을 수신하지 않습니다. 질문 초안은 유지됩니다.")
+                        ToolButton(onClick = { configure("agent-api") }) { Text("AI 연결 확인") }
                     }
                 }
             else if (!mobile && !s.computerConnected)
@@ -330,15 +342,25 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
                         FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running)
                     }
-                    TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
-                        Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
+                    if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
+                    else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
+                                enabled = !running && !s.migration.busy && draft.length <= 2000, modifier = Modifier.weight(1f)) {
+                                Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개" else "기억 첨부")
+                            }
+                            TextButton(onClick = { showContextOptions = !showContextOptions }, modifier = Modifier.weight(1f)) {
+                                Text(if (showContextOptions) "맥락 설정 접기" else "맥락 설정")
+                            }
+                        }
+                        if (showContextOptions) {
+                            TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
+                                Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
+                            }
+                            OrdinaryContextButton()
+                        }
                     }
                     if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
-                    if (!executeTask) OrdinaryContextButton()
-                    if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 2분 내 수신되지 않은 업무는 취소됩니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
-                    else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy && draft.length <= 2000) {
-                        Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
-                    }
                 }
                 if (!inputReady && !running) {
                     Note(when {
