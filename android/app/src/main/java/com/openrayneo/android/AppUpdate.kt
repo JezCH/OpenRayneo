@@ -217,8 +217,10 @@ internal object AppUpdate {
                 val cancellation = currentCoroutineContext()
                 ApkDelta.restore(base, patch, rebuilt, candidate.size) { cancellation.ensureActive() }
                 check(fileHash(rebuilt) == candidate.digest) { "복원 APK 해시 불일치" }
-                verifyArchive(context, candidate, rebuilt)
+                currentCoroutineContext().ensureActive()
                 check(rebuilt.renameTo(apk)) { "복원 APK 저장 실패" }
+                try { verifyArchive(context, candidate, apk) }
+                catch (e: Exception) { apk.delete(); throw e }
                 return@withContext apk
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) {

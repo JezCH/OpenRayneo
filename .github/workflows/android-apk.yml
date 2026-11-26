@@ -315,9 +315,7 @@ jobs:
           gh release create "$tag" --target "$GITHUB_SHA" --title "OpenRayneo validation $code" --generate-notes --draft --prerelease
           # Only manifest-listed, hash-verified delta assets are published.
           patches=()
-          while IFS=
-          gh release edit "$tag" --draft=false
-\t' read -r name size digest; do
+          while IFS="$(printf '\t')" read -r name size digest; do
             test -n "$name" || continue
             [[ "$name" =~ ^delta-[0-9]+-to-$code\.orp$ ]]
             test "$(stat -c %s "$name")" = "$size"
