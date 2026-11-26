@@ -206,6 +206,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         }
         TextButton(onClick = { drafts["memorySuggestOnSend"] = "true"; drafts["memorySuggestionDays"] = "30"; drafts["memorySuggestionLimit"] = "3" }) { Text("기억 추천 기본값 복원") }
         AboutYouSection()
+        OrdinaryContextButton()
         SectionLabel("기록 요약")
         VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
         VoiceField(model, "modelName", "요약 모델 이름")

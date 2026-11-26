@@ -26,6 +26,10 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val dirty = savedOptions.isFailure || parsed.getOrNull() != options
     val editable = !s.wakeActive && !s.wakePending
     var allowAI by remember { mutableStateOf(false) }
+    var keyword by remember { mutableStateOf(false) }
+    val context = model.getApplication<android.app.Application>()
+    val kws = KoreanKeywordModels.model
+    val keywordReady = kws.installed(context) && !kws.downloading
     var confirm by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
     var resumeAfterLink by remember { mutableStateOf(false) }
@@ -82,10 +86,22 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Text("한국어 호출 (1회 시험)", style = MaterialTheme.typography.headlineSmall)
             Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
             Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
+            if (s.wakeActive) Note(s.captionStatus)
             Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
             Note("예: " + options.phrases.first() + ", 지금 몇 시야")
 
             if (!s.wakeActive && !s.wakePending) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(keyword, { keyword = it })
+                    Text("경량 호출 모델로 먼저 감지 (시험)")
+                }
+                if (keyword) {
+                    Note("한국어 전용 약 9.3MB KWS로 대기하고 후보가 감지되면 기존 로컬 ASR로 호출어를 다시 확인합니다. 확인되지 않은 후보는 AI에 보내지 않습니다. 모델 출처: kairess/ko-kws-zipformer-tiny (Apache-2.0). 실제 감지율과 전력은 미검증입니다.")
+                    if (!keywordReady) ToolOutlinedButton(onClick = { kws.download(context.applicationContext) }, enabled = !kws.downloading) {
+                        Text(if (kws.downloading) "경량 모델 다운로드 ${(kws.progress * 100).toInt()}%" else "경량 호출 모델 내려받기")
+                    }
+                    kws.message?.let { Note(it) }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(allowAI, { allowAI = it })
                     Text("인식된 질문을 연결된 AI로 보내기 허용 (작업 도구 없음)")
@@ -93,7 +109,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
                 Note("기본은 로컬 명령만 실행합니다. AI를 허용하면 호출 후 인식한 한 문장이 DSH 모델로 전송되며 이용량/비용이 발생할 수 있습니다. 화자 인증은 하지 않습니다.")
                 if (!linked) Note("먼저 안경을 연결하세요.")
                 if (!localReady) ToolOutlinedButton(onClick = voiceSettings) { Text("로컬 음성 모델 설정") }
-                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy && !dirty) { Text("호출 대기 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy && !dirty && (!keyword || keywordReady)) { Text("호출 대기 시작") }
             } else ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("호출 중지") }
         } }
         item { ContentCard {
@@ -147,8 +163,8 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
         dismissButton = { TextButton(onClick = { startContinuous = null }) { Text("취소") } }) }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("한국어 호출 대기를 시작할까요?") },
         text = { Text("주변 음성이 일시적으로 로컬에서 인식됩니다. 기록을 저장하지 않습니다. 참여자 동의와 장소 보안 규칙을 확인하세요." + if (allowAI) " 호출 후 질문 1개를 설정된 AI로 보냅니다." else " AI 요청은 하지 않습니다.") },
-        confirmButton = { TextButton(enabled = linked && localReady && !busy && !dirty, onClick = {
-            confirm = false; model.attempt { model.service().startKoreanWake(allowAI) }
+        confirmButton = { TextButton(enabled = linked && localReady && !busy && !dirty && (!keyword || keywordReady), onClick = {
+            confirm = false; model.attempt { model.service().startKoreanWake(allowAI, keyword) }
         }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } })
 }

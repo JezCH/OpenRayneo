@@ -324,6 +324,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
                     }
                     if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
+                    if (!executeTask) OrdinaryContextButton()
                     if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
                     else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy && draft.length <= 2000) {
                         Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
