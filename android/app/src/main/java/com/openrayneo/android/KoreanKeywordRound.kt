@@ -65,7 +65,6 @@ internal class KoreanKeywordRound(private val context: Context, private val conf
     private var candidate: SpeechRound? = null
     private var epoch = 0L
     private var confirmed = false
-    private var started = 0L
     private var deadline = 0L
     private val matcher = KoreanWakeMatcher(options)
     private val ring = ArrayDeque<FloatArray>()
@@ -78,7 +77,8 @@ internal class KoreanKeywordRound(private val context: Context, private val conf
             openDetector()
         } }
     }
-    override fun canAcceptAudio() = !ended && queued.get() < MAX_QUEUE
+    // Let append reject overload explicitly rather than silently skipping PCM mid-keyword.
+    override fun canAcceptAudio() = !ended
     override fun append(samples: FloatArray) {
         if (ended || samples.isEmpty()) return
         check(queued.addAndGet(samples.size) <= MAX_QUEUE * 2) {
@@ -109,7 +109,7 @@ internal class KoreanKeywordRound(private val context: Context, private val conf
             if (!confirmed && SystemClock.elapsedRealtime() > deadline) {
                 reject(); return
             }
-            if (!asr.canAcceptAudio()) { reject(); return }
+            check(asr.canAcceptAudio()) { "호출 확인 음성 인식이 지연되었습니다. 다시 시작하세요" }
             asr.append(samples)
             return
         }
@@ -129,8 +129,7 @@ internal class KoreanKeywordRound(private val context: Context, private val conf
     private fun verify() {
         val token = ++epoch
         confirmed = false
-        started = SystemClock.elapsedRealtime()
-        deadline = started + 8_000L
+        deadline = SystemClock.elapsedRealtime() + 8_000L
         stream?.release(); stream = null
         stage("호출 후보 · 로컬 음성 인식으로 확인 중")
         val round = SpeechRounds.create(context, config, { text, from, to, id, words ->
@@ -147,8 +146,8 @@ internal class KoreanKeywordRound(private val context: Context, private val conf
                     }
                 } else sentence(text, from, to, id, words)
             }
-        }, { message -> if (!ended && token == epoch) attempt { reject(); stage("호출 확인 실패 · 다시 대기") } },
-            { if (!ended && token == epoch) attempt { reject() } })
+        }, { message -> if (!ended && token == epoch) attempt { error(message) } },
+            { if (!ended && token == epoch) attempt { error("호출 확인 음성 인식이 종료되었습니다") } })
         candidate = round
         round.start()
         for (chunk in ring) round.append(chunk)
