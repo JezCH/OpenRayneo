@@ -95,8 +95,28 @@ internal class MainActivity : ComponentActivity() {
             }
         }
 
+    private fun receiveExternalHudText(incoming: Intent) {
+        if (!AppUpdate.supported || incoming.action != Intent.ACTION_SEND || incoming.type != "text/plain") return
+        // Treat every sender as untrusted. Only preview explicit text, never read attachments or execute it.
+        model.attempt {
+            val text = incoming.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+            require(text.isNotBlank() && text.length <= ExternalHudText.MAX_INPUT) {
+                "공유할 일반 텍스트는 4000자 이하로 선택하거나 복사해 주세요."
+            }
+            model.externalHudDraft = text
+            model.externalHudOpen = true
+        }
+        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveExternalHudText(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) receiveExternalHudText(intent)
         voiceSource =
             savedInstanceState?.getString("voiceSource")?.let(AnswerSource::valueOf)
                 ?: AnswerSource.MOBILE_AGENT

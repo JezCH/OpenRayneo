@@ -33,6 +33,12 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
     var routeParent by rememberSaveable { mutableStateOf("") }
     fun openRoute(target: String, parent: String = "") { routeParent = parent; route = target }
     fun backRoute() { route = routeParent; routeParent = "" }
+    LaunchedEffect(model.externalHudOpen) {
+        if (AppUpdate.supported && model.externalHudOpen) {
+            model.externalHudOpen = false
+            openRoute("external-hud")
+        }
+    }
     var pendingNavigation by remember { mutableStateOf<String?>(null) }
     var devices by rememberSaveable { mutableStateOf(false) }
     var sources by rememberSaveable { mutableStateOf(false) }
@@ -65,6 +71,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             when (route) {
                                 "settings" -> "설정"
                                 "app-update" -> "앱 업데이트"
+                                "external-hud" -> "외부 텍스트 안경 표시"
                                 "model" -> "휴대폰 모델"
                                 "computer" -> "컴퓨터 연결"
                                 "diagnostics" -> "기기 및 진단"
@@ -163,6 +170,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
                 "app-update" -> if (AppUpdate.supported) AppUpdateScreen(model) else Text("이 앱은 자체 업데이트 대상이 아닙니다.")
+                "external-hud" -> if (AppUpdate.supported) ExternalHudScreen(model) else Text("검증 앱에서만 사용할 수 있습니다.")
                 "diagnostics" -> DiagnosticsScreen(model, actions)
                 "voice-settings" -> VoiceSettingsScreen(model, actions)
                 "voice-profiles" -> VoiceProfilesScreen(model)
