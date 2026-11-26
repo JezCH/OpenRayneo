@@ -18,7 +18,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
     var language by rememberSaveable { mutableStateOf("en") }
     val options = MediaCaptionOptions(MediaCaptionScope.valueOf(scope), language)
     val problem = if (capture.busy) null else if (!s.available) "연결 서비스 준비 중" else
-        runCatching { model.service().checkMediaCaption(options) }.exceptionOrNull()?.message
+        runCatching { model.service().checkMediaCaption(options) }.exceptionOrNull()?.let { it.message ?: "미디어 자막 준비 상태를 확인할 수 없습니다." }
     val labels = listOf("en" to "영어", "ja" to "일본어", "zh" to "중국어", "ko" to "한국어")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
