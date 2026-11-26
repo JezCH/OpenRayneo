@@ -32,6 +32,7 @@ internal class LiveTranslator(
     @Volatile var status = OFF; private set
     @Volatile var captionOnly = false; private set
     var offlineMode = false; private set
+    @Volatile var mediaSessionId: String? = null; private set
     private var wakeWindow: KoreanWakeWindow? = null
     private var wakeAction: ((String) -> Unit)? = null
     val wakeActive get() = active && wakeWindow != null
@@ -86,8 +87,27 @@ internal class LiveTranslator(
             validate(settings, local)
             if (local) offlineSpeech(settings) else JSONObject(SpeechRounds.bilingual(context, settings).toString()).put("asrLanguage", "ko,en")
         }
+        startSpeech(speech, captions, local)
+    }
+
+    /** Reuse the installed ASR; never change the user's everyday ASR settings or fall back to cloud. */
+    fun mediaCaptionConfig(language: String): JSONObject {
+        require(language in setOf("en", "ja", "zh", "ko"))
+        val engine = when {
+            language == "ko" && LocalModels.zipformer.installed(context) -> "stream"
+            language in setOf("ko", "en") && LocalModels.nemotron.installed(context) -> "nemotron"
+            else -> "local" // SenseVoice supports English, Japanese, Chinese and Korean.
+        }
+        val speech = JSONObject().put("asrEngine", engine).put("asrLanguage", language)
+        require(SpeechRounds.ready(context, speech)) { SpeechRounds.missing(speech) }
+        return speech
+    }
+    fun startMediaCaption(id: String, language: String) = startSpeech(mediaCaptionConfig(language), true, false, id)
+
+    private fun startSpeech(speech: JSONObject, captions: Boolean, local: Boolean, mediaId: String? = null) {
         stop()
         synchronized(this) {
+            mediaSessionId = mediaId
             captionOnly = captions
             offlineMode = local && !captions
             config = speech
@@ -121,6 +141,7 @@ internal class LiveTranslator(
         synchronized(this) {
             wasActive = active
             active = false
+            mediaSessionId = null
             generation++
             asr?.cancel(); asr = null
         }
@@ -134,7 +155,7 @@ internal class LiveTranslator(
 
     /** Called on the audio worker with 48 kHz PCM from the glasses prompt page. */
     @Synchronized fun accept(left: ShortArray, right: ShortArray) {
-        if (!active) return
+        if (!active || mediaSessionId != null) return
         // Bidirectional: either speaker may be on either microphone, so feed one mixed stream.
         val mixed = if (right.size == left.size) ShortArray(left.size) { ((left[it].toInt() + right[it].toInt()) / 2).toShort() } else left
         val samples = resampler.convert(mixed)
@@ -144,6 +165,19 @@ internal class LiveTranslator(
         try { target.append(samples) } catch (error: Exception) {
             val token = generation
             main.post { asrEnded(token, error.message ?: "ASR 오디오 전송 실패") }
+        }
+    }
+
+    /** Device-playback PCM is already mono 16 kHz; never run the glasses 48 kHz resampler. */
+    @Synchronized fun acceptMedia(id: String, pcm: ShortArray, count: Int): Boolean {
+        if (!active || mediaSessionId != id || count !in 1..pcm.size) return false
+        val target = asr ?: return false
+        if (!target.canAcceptAudio()) return false
+        return try { target.append(FloatArray(count) { pcm[it] / 32768f }); true }
+        catch (error: Exception) {
+            val token = generation
+            main.post { asrEnded(token, error.message ?: "미디어 ASR 오디오 처리 실패") }
+            false
         }
     }
 
@@ -190,12 +224,12 @@ internal class LiveTranslator(
         if (failures != 0 || status != listening()) { failures = 0; status = listening(); changed() }
     }
 
-    private fun listening() = if (wakeActive) "한국어 호출 대기" else if (captionOnly) "듣는 중 · 로컬 자막" else if (offlineMode) "듣는 중 · 오프라인 한영 번역" else LISTENING
-    private fun render() = if (captionOnly) show("실시간 자막", clip(sourceLine, TARGET_LIMIT))
+    private fun listening() = if (wakeActive) "한국어 호출 대기" else if (mediaSessionId != null) "휴대폰 재생음 · 로컬 원문 자막" else if (captionOnly) "듣는 중 · 로컬 자막" else if (offlineMode) "듣는 중 · 오프라인 한영 번역" else LISTENING
+    private fun render() = if (captionOnly) show(if (mediaSessionId != null) "미디어 원문 자막" else "실시간 자막", clip(sourceLine, TARGET_LIMIT))
         else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
 
     private fun interim(token: Int, text: String) {
-        if (token != generation || !active || wakeActive || misheard(text)) return
+        if (token != generation || !active || wakeActive || (mediaSessionId == null && misheard(text))) return
         heard()
         sourceLine = text
         render()
@@ -205,7 +239,7 @@ internal class LiveTranslator(
         if (token != generation || !active) return
         heard()
         // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
-        if (misheard(text)) return
+        if (mediaSessionId == null && misheard(text)) return
         wakeWindow?.let { window ->
             val question = window.accept(text, android.os.SystemClock.elapsedRealtime())
             if (question != null) {

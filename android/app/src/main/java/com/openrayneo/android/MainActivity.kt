@@ -52,6 +52,36 @@ internal class MainActivity : ComponentActivity() {
                     model.importConfig(JSONObject(String(bytes, Charsets.UTF_8)))
                 }
         }
+    private var pendingMediaCaption: MediaCaptionOptions? = null
+    private val mediaProjection = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val options = pendingMediaCaption
+        pendingMediaCaption = null
+        val data = result.data
+        if (options != null && result.resultCode == RESULT_OK && data != null)
+            model.attempt { model.service().startMediaCaption(options, result.resultCode, data) }
+        else if (result.resultCode == RESULT_OK) model.error = "미디어 자막 요청이 변경되었습니다. 다시 시작하세요."
+        else model.notice = "미디어 캡처 승인이 취소되었습니다."
+    }
+    private val mediaRecordPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && pendingMediaCaption != null) launchMediaConsent()
+        else { pendingMediaCaption = null; model.error = "내부 재생음 수집에는 Android 오디오 권한이 필요합니다." }
+    }
+    private fun launchMediaConsent() {
+        try {
+            val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            mediaProjection.launch(manager.createScreenCaptureIntent())
+        } catch (failure: Exception) { pendingMediaCaption = null; model.error = failure.message ?: "캡처 승인 화면을 열지 못했습니다." }
+    }
+    private fun requestMediaCaption(options: MediaCaptionOptions) = model.attempt {
+        check(pendingMediaCaption == null) { "시스템 캡처 승인 대기 중입니다." }
+        model.service().checkMediaCaption(options)
+        pendingMediaCaption = options
+        try {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) launchMediaConsent()
+            else mediaRecordPermission.launch(Manifest.permission.RECORD_AUDIO)
+        } catch (failure: Exception) { pendingMediaCaption = null; throw failure }
+    }
+
     private val speech =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK) {
@@ -128,6 +158,7 @@ internal class MainActivity : ComponentActivity() {
                         importConfig = {
                             importFile.launch(arrayOf("application/json", "text/plain"))
                         },
+                        mediaCaption = ::requestMediaCaption,
                         voice = { source ->
                             model.attempt {
                                 voiceSource = source
@@ -171,4 +202,5 @@ internal data class UiActions(
     val openGaode: () -> Unit,
     val importConfig: () -> Unit,
     val voice: (AnswerSource) -> Unit,
+    val mediaCaption: (MediaCaptionOptions) -> Unit,
 )

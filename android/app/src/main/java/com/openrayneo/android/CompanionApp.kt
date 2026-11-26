@@ -77,6 +77,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
                                 "captions" -> "실시간 자막"
+                                "media-captions" -> "미디어 자막"
                                 "korean-wake" -> "한국어 호출"
                                 "korean-glyphs" -> "한글 표시 검사"
                                 "phone-notifications" -> "휴대폰 알림"
@@ -169,6 +170,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
+                "media-captions" -> MediaCaptionScreen(model, actions.mediaCaption, { openRoute("voice-settings", "media-captions") })
                 "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") })
                 "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") }, { openRoute("device-settings", "korean-wake") })
                 "korean-glyphs" -> KoreanGlyphScreen(model)
@@ -365,13 +367,16 @@ private fun GlassesScreen(
                         ) {
                             Text("실시간 번역 (한국어 ↔ 영어)")
                         }
-                    if (model.state.translationActive && !model.state.captionActive && !model.state.wakeActive) {
+                    if (model.state.mediaCaption.busy) {
+                        Note(model.state.mediaCaption.detail)
+                        TextButton(onClick = { model.attempt { model.service().stopMediaCaption() } }) { Text("미디어 자막 종료") }
+                    } else if (model.state.translationActive && !model.state.captionActive && !model.state.wakeActive) {
                         Note("실시간 번역 (한국어 ↔ 영어): ${model.state.translationStatus}")
                         TextButton(onClick = { model.attempt { model.service().stopTranslation() } }) {
                             Text("번역 종료")
                         }
                     } else if (model.state.translationStatus != "실시간 번역 꺼짐") Note(model.state.translationStatus)
-                    if (state.session?.mode == PageMode.PROMPT && state.session.phase == PagePhase.READY)
+                    if (!model.state.mediaCaption.busy && state.session?.mode == PageMode.PROMPT && state.session.phase == PagePhase.READY)
                         TextButton(onClick = { model.attempt { model.service().clearDisplay() } }) {
                             Text("화면 지우기 (음성 수신 유지)")
                         }
