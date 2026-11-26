@@ -43,6 +43,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     var autoMemory by remember { mutableStateOf(false) }
     var continuityDialog by remember { mutableStateOf(false) }
     var confirmNewChat by remember { mutableStateOf(false) }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     val suggestMemory = model.config.optBoolean("memorySuggestOnSend")
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
@@ -189,11 +190,11 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            if (mobile) "로컬 Agent 엔드포인트를 활성화하세요" else "컴퓨터가 아직 설정되지 않음",
+                            if (mobile) "AI에 연결해야 질문할 수 있습니다" else "컴퓨터가 아직 설정되지 않음",
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Note(
-                            if (mobile) "로컬 엔드포인트를 활성화하고 DSH Go에서 안경을 연결하세요. 답변, 짧은 힌트, 작업은 로컬 Agent가 처리합니다."
+                            if (mobile) "AI 연결 설정에서 연결을 켠 뒤 DSH Go 플러그인을 연결하세요. 일반 질문과 업무 실행은 이 연결을 사용합니다."
                             else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
                         )
                         ToolButton(onClick = { configure(if (mobile) "agent-api" else "computer") }) {
@@ -238,8 +239,17 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
                 AgentReceiptCard(model, s.agentReceipts)
             }
-            if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
-            if (configured) item(key = "hud-remote") { HudRemoteCard(model, source) }
+            if (configured) item(key = "assistant-controls") {
+                Column {
+                    TextButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                        Text(if (showDiagnostics) "AI 연결 진단·무음 조작 접기" else "AI 연결 진단·무음 조작 보기")
+                    }
+                    if (showDiagnostics) {
+                        if (mobile) AgentProbeCard(model)
+                        HudRemoteCard(model, source)
+                    }
+                }
+            }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }
             if (question.isNotBlank())
                 item {
@@ -329,6 +339,14 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     else TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true }, enabled = !running && !s.migration.busy && draft.length <= 2000) {
                         Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개 · 선택 첨부" else "기억을 참고한 질문")
                     }
+                }
+                if (!inputReady && !running) {
+                    Note(when {
+                        !s.available -> "연결 서비스 준비 중"
+                        !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
+                        !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
+                        else -> "현재 질문을 보낼 수 없습니다."
+                    })
                 }
                 Row(
                     verticalAlignment = Alignment.Bottom,
