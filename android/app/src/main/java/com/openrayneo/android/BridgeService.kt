@@ -925,6 +925,7 @@ internal class BridgeService : Service() {
             if (token == nativeChatGeneration && current()) voiceTransport.reply(message, request.text, wake)
         }
         if (!agentServer.state.enabled) { respond("AI 연결을 설정해 주세요."); return true }
+        if (!agentServer.state.pollRecent) { respond("외부 AI가 수신 대기 중인지 확인해 주세요."); return true }
         val workPrefix = Regex("^업무\\s*실행(?:\\s+|[:：,，]\\s*)")
         val work = workPrefix.find(request.text.trim())
         if (work != null) {
@@ -1293,6 +1294,7 @@ internal class BridgeService : Service() {
         }
         if (local != null) { answer(local); return true }
         if (!agentServer.state.enabled) { answer("호출 인식 완료 · AI 연결 설정 필요"); return true }
+        if (!agentServer.state.pollRecent) { answer("외부 AI의 최근 수신 요청 없음 · 연결 상태 확인"); return true }
         ambientWakeStatus = "호출 인식 · AI 응답 대기"
         show("AI 응답 대기"); notifyUI()
         // History is opt-in and scoped to the current record and a recognized person
@@ -1348,6 +1350,11 @@ internal class BridgeService : Service() {
         }
         if (!allowAI || !agentServer.state.enabled || agent.running || codex.running) {
             wakeResult = "지원되는 로컬 명령이 아니거나 AI 질문이 허용되지 않았습니다."; notifyUI(); return
+        }
+        if (!agentServer.state.pollRecent) {
+            wakeResult = "외부 AI의 최근 수신 요청 없음 · 연결 상태 확인"
+            runCatching { sendCompanionNotification("한국어 호출", wakeResult, FocusPolicy.Output.DIRECT_ANSWER) }
+            notifyUI(); return
         }
         val token = ++wakeGeneration
         wakeResult = "질문 전용 AI 응답 대기 중"; notifyUI()
@@ -1438,6 +1445,7 @@ internal class BridgeService : Service() {
         check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }
+            check(agentServer.state.pollRecent) { "외부 Agent의 최근 수신 요청이 없습니다. DSH Go가 실행 중인지 확인하세요. 처리 중이라면 완료 후 다시 시도하세요." }
         }
         when (source) {
             AnswerSource.MOBILE_AGENT -> check(!agent.running) { "답변을 기다리거나 먼저 중지하세요" }
