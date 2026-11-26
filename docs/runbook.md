@@ -37,11 +37,14 @@ macOS的Homebrew JDK17可通过 `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/
 
 ## Fork Android 안전 검증판 (2026-11-25)
 
-- GitHub [Android APK](https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml)에서 실기기 시험 준비 후 main을 선택하여 **Run workflow**(workflow_dispatch)로 명시적으로 배포한다. 성공한 해당 실행의 `openrayneo-android-<commit>` artifact ZIP을 다운로드한다. manifest와 APK, DSH 플러그인은 같은 빌드의 묶음이다. push/main 및 pull_request는 Kotlin 컴파일 및 기존 정책 검사만 수행하고 설치 APK/외부 업로드를 생성하지 않는다.
+- GitHub [Android APK](https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml)에서 실기기 시험 준비 후 main을 선택하여 **Run workflow**(workflow_dispatch)로 명시적으로 배포한다. 성공한 해당 실행의 검증 앱의 `openrayneo-validation-update-<commit>` artifact ZIP을 다운로드한다. manifest와 APK, DSH 플러그인은 같은 빌드의 묶음이다. 일반 push/main 및 pull_request는 Kotlin 컴파일 및 기존 정책 검사만 수행하고 설치 APK/외부 업로드를 생성하지 않는다.
 - 기존 설치 OpenRayneo(`com.openrayneo.android`)의 서명과 배포 APK 서명이 같다는 근거가 없으면 `app-release.apk`로 업데이트하지 않는다. 실제 main #41과 #43은 서로 다른 임시 인증서였으며 Android 정상 업데이트가 불가능하다. 앱 삭제·데이터 초기화로 서명 오류를 회피하지 않는다.
 - 대신 패키지 `com.openrayneo.android.validation`인 `openrayneo-validation.apk`를 **별도 설치**한다. 원본 앱의 로컬 암호화 기록과 설정은 그대로 남고 검증판은 새 기록·새 설정을 사용한다. 기존 앱의 안경 연결/백그라운드 BridgeService를 먼저 중지해 BLE 및 로컬 8766 포트 충돌을 방지한다. 검증판에 주변 기기·알림 권한을 별도 부여한다. 모델 파일 경로 `/sdcard/OpenRayneo/models`는 공유될 수 있다.
 - 묶음에 포함된 `openrayneo-dsh-*.tgz` 버전과 실제 설치 DSH 플러그인을 맞추고 엔진을 재시작한다. 안경 연결 후 기존 Assistant 화면의 **AI 연결 및 안경 표시 진단**을 펼쳐 모델 요청 비용 가능성 안내를 확인하고 직접 동의하면 임의의 테스트 코드만 전송한다. 휴대폰에서 코드 일치/응답시간을 확인하고 필요할 때만 동일 코드를 안경으로 보낸 후 사용자가 실제 표시 여부를 확인한다.
-- Fork의 #84부터 고정 CI 서명키로 배포하며 JezCH/OpenRayneo main 배포는 #84 공개 인증서 지문과 일치해야 한다. 과거 임시 서명 설치본은 일치하지 않을 수 있으므로 서명을 확인하고, 불일치 시 삭제하지 않는다. 영구 사용 및 데이터 이전을 완료한 제품으로 취급하지 않는다. 신규 진단은 DSH 기본 모델과 HUD 경로만 확인하며 제조사 AI 이용권·ChatGPT 구독·일반 Agent 도구까지 증명하지 않는다.
+- 현재 개발 대상은 `com.openrayneo.android.validation`의 #144 (versionCode 1144, SHA-256 `ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965`) 서명 계보이다. CI는 해당 인증서와 더 높은 버전만 검증 앱에 허용한다. 기존 검증 앱과 설치 충돌은 별도 문제이며 기존 기록 삭제·초기화 승인은 없다. 정식 앱은 이전 서명 기준을 유지하며 이 개발 범위에서 제외한다.
+- 명시적으로 APK 제작이 필요한 경우 main의 Run workflow에서 validation을 선택하거나, 검토·검증된 현재 main 커밋으로 `wearable/validation-package` 브랜치를 생성/fast-forward한다. 두 방식 모두 동일 인증서로 검증 앱 APK와 manifest·DSH·대응 소스를 Actions artifact에 저장한다. 일반 main/PR은 컴파일만 한다. 브랜치에는 별도 소스 변경을 넣지 않으며, force push하지 않는다.
+- 공개 GitHub Releases 배포는 공개 범위를 승인받은 후에만 main dispatch의 `publish_validation=true` 또는 현재 main으로 `wearable/validation-publish` 브랜치를 명시적으로 fast-forward하는 방식으로 실행한다. 이 두 번째 브랜치는 공개 배포를 의미하므로 일반 빌드에 사용하지 않는다. 배포 전 현재 main 일치, 고정 인증서, 버전·해시를 검증하고 draft에 APK·manifest·관련 소스를 첨부한 뒤 공개한다. 앱에서 설정 → 앱 업데이트로 확인·다운로드·설치한다. #144 실기기 설치 및 연속 업데이트는 아직 검증되지 않았다.
+- 신규 진단은 DSH 기본 모델과 HUD 경로만 확인하며 제조사 AI 이용권·ChatGPT 구독·일반 Agent 도구까지 증명하지 않는다.
 
 ## 连接与恢复
 
