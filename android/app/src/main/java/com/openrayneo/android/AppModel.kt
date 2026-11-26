@@ -38,6 +38,7 @@ internal data class CompanionState(
     val chatContinuityError: String = "",
     val chatContinuityBusy: Boolean = false,
     val nativeWakeAvailable: Boolean = false,
+    val nativeWakeObserved: Boolean = false,
     val devices: List<RayneoConnection.Device> = emptyList(),
     val navigationEntries: List<NavigationFeed.Entry> = emptyList(),
     val navigationEvidence: List<NavigationFeed.SourceEvidence> = emptyList(),
@@ -79,6 +80,9 @@ internal data class CompanionState(
     val wakeResult: String = "한국어 호출 대기 꺼짐",
     val ambientWakeStatus: String = "호출 대기",
     val nativeWakeStatus: String = "아직 안경 깨우기 이벤트 없음",
+    val hostVisibilityStatus: String = "연결 후 전송 대기",
+    val recordingVisibilityStatus: String = "연결 후 전송 대기",
+    val capabilityStatus: String = "협상 요청 미수신",
     val notificationReadStatus: String = "알림 리스너 서비스 대기 중",
     val notificationSnapshotAt: Long = 0,
     val notificationReadPhase: NotificationReadPhase = NotificationReadPhase.DISCONNECTED,
@@ -94,6 +98,11 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     ) // Application-bound service; the binding and observer are released in onCleared.
     private var bridge: BridgeService? = null
     private var bound = false
+    private var hostVisible = false
+    fun setHostVisible(visible: Boolean) {
+        hostVisible = visible
+        bridge?.setHostVisible(visible)
+    }
     var state by mutableStateOf(CompanionState())
         private set
 
@@ -179,6 +188,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
                 bridge = (binder as BridgeService.LocalBinder).service
                 bridge!!.observers.add(observer)
+                bridge!!.setHostVisible(hostVisible)
                 refresh()
                 if (bluetoothAllowed) runCatching { bridge!!.connection.showBonded() }
                 if (wantsScan && bluetoothAllowed) {
@@ -243,6 +253,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 chatContinuityError = s.chatContinuity.error,
                 chatContinuityBusy = s.chatContinuityBusy,
                 nativeWakeAvailable = s.voiceTransport.nativeActive,
+                nativeWakeObserved = s.voiceTransport.nativeWakeObserved,
                 devices = s.devices.values.toList(),
                 navigationEntries = s.navigation.entries.values.toList(),
                 navigationEvidence = s.navigation.evidence,
@@ -281,6 +292,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 wakeResult = if (!s.translator.wakeActive && !s.wakePending && s.wakeResult.startsWith("호출 대기 ·")) s.translator.status else s.wakeResult,
                 ambientWakeStatus = s.ambientWakeStatus,
                 nativeWakeStatus = s.nativeWakeStatus,
+                hostVisibilityStatus = s.hostVisibilityStatus,
+                recordingVisibilityStatus = s.recordingVisibilityStatus,
+                capabilityStatus = s.capabilityStatus,
                 captionActive = s.translator.active && s.translator.captionOnly && !s.translator.wakeActive && !s.mediaCaptionState.busy,
                 captionStatus = if (s.mediaCaptionState.busy) "미디어 자막 사용 중" else if (s.translator.captionOnly) s.translator.status else "실시간 자막 꺼짐",
                 translationStatus = if (s.translator.captionOnly) "실시간 번역 꺼짐" else s.translator.status,

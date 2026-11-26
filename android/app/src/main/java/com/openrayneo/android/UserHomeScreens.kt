@@ -50,7 +50,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                     Column(Modifier.weight(1f)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "안경 연결됨" else s.glasses.link.detail)
+                        Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
                         if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
                         if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
                     }
@@ -351,7 +351,7 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
         item { ContentCard {
             GlassesArtwork(Modifier.fillMaxWidth().height(90.dp), MaterialTheme.colorScheme.primary)
             Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-            Note(if (linked) "연결됨 · 휴대폰 직접 연결" else s.glasses.link.detail)
+            Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
             val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
             ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
         } }

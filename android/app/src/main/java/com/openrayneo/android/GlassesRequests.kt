@@ -34,15 +34,16 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
             main.post { completion(result) }
         }
     }
-    fun request(protocol: Int, type: Int, body: JSONObject, wait: Boolean = true,
+    fun request(protocol: Int, type: Int, body: JSONObject?, wait: Boolean = true,
                 matches: (Int, JSONObject) -> Boolean = { reply, _ -> reply == type }): JSONObject? {
         check(Looper.myLooper() != Looper.getMainLooper()) { "기기 요청이 UI를 막아서는 안 됨" }
         val operation = Pending(protocol, matches, CountDownLatch(1))
         val token = operationGeneration; val allowed = operationAllowed
         main.post {
             if (token != generation || !allowed()) { operation.error = IllegalStateException("기기 연결이 전환되어 이전 작업이 취소됨"); operation.latch.countDown(); return@post }
-            pending = operation
-            try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
+            if (wait) pending = operation
+            try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body?.toString().orEmpty(),
+                if (protocol == 0x0e || protocol == 0x09) byteArrayOf() else null)) { result ->
                 if (result.isFailure) { operation.error = result.exceptionOrNull(); operation.latch.countDown() }
                 else if (!wait) operation.latch.countDown()
             } } catch (error: Exception) { operation.error = error; operation.latch.countDown() }
@@ -66,7 +67,7 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
         error?.let { throw it }
     }
     fun receive(frame: ProtocolCodec.Frame) {
-        if (frame.protocol !in setOf(0x0f, 0x16, 0x14, 0x0e)) return
+        if (frame.protocol !in setOf(0x0f, 0x16, 0x14, 0x0e, 0x09)) return
         val message = ProtocolCodec.message(frame.payload)
         val body = message.json?.let(::JSONObject) ?: return
         observe(frame.protocol, message.type, body)

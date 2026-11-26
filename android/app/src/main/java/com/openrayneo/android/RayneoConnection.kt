@@ -319,7 +319,10 @@ internal class RayneoConnection(private val context: Context, private val listen
                     16 to byteArrayOf(1), 17 to identity,
                     18 to (adapter.name ?: "OpenRayneo Android").toByteArray(),
                     19 to byteArrayOf(2), 22 to Build.MANUFACTURER.toByteArray(),
-                    23 to Build.MODEL.toByteArray(), 27 to byteArrayOf(1)
+                    // Automatic recovery is restricted to a previously authenticated,
+                    // still-bonded target by ConnectionSupervisor. Use the documented
+                    // reconnect intent, not a new application registration.
+                    23 to Build.MODEL.toByteArray(), 27 to byteArrayOf(ProtocolCodec.pairingIntent(automaticConnection))
                 ))
             }
         }
@@ -362,7 +365,9 @@ internal class RayneoConnection(private val context: Context, private val listen
         when (command) {
             17 -> {
                 val fields = ProtocolCodec.pairingFields(frame.payload)
-                check(25 !in fields) { "안경이 계정 바인딩 ECDH를 요구하지만 현재 검증 버전은 지원하지 않음" }
+                check(25 !in fields && fields[26]?.isNotEmpty() != true) {
+                    "안경이 계정 바인딩 인증을 요구하지만 현재 검증 버전은 지원하지 않음"
+                }
                 val random = ByteArray(4).also { SecureRandom().nextBytes(it) }
                 state("앱 인증 진행 중…", busy = true)
                 writePairing(24, listOf(16 to random, 17 to authentication(random)))

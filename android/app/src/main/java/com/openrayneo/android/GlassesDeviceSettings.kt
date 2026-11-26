@@ -5,16 +5,92 @@ package com.openrayneo.android
 import org.json.JSONObject
 
 internal data class DeviceSettingsState(val status: JSONObject = JSONObject(), val settings: JSONObject = JSONObject(),
-    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기")
+    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기",
+    val readback: DeviceReadback = DeviceReadback.NONE,
+    val initialization: DeviceInitialization = DeviceInitialization())
 internal fun JSONObject.deviceInt(key: String): Int? = (opt(key) as? Number)?.toInt()
 internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = opt(key)) {
-    is Boolean -> value; is Number -> value.toInt() == 1; else -> null
+    is Boolean -> value
+    is Number -> when (value.toDouble()) { 0.0 -> false; 1.0 -> true; else -> null }
+    else -> null
 }
 internal class GlassesDeviceSettings(private val requests: GlassesRequests, private val changed: () -> Unit) {
     @Volatile var state = DeviceSettingsState(); private set
     private val reported = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    fun refresh() = perform { readAll(); "안경의 현재 설정을 읽음" }
-    fun disconnected() { state = DeviceSettingsState(); reported.clear(); changed() }
+    private var revision = 0L
+    /** Two independent, correlated business replies from this connection.
+     * A rejected or timed-out read does not make the transport disconnect,
+     * and a successful socket write does not become device-readback success. */
+    fun refresh(initialize: Boolean = false, completed: () -> Unit = {}) {
+        check(!state.busy) { "현재 기기 작업을 기다리세요" }
+        val token = ++revision
+        state = state.copy(busy = true, readback = DeviceReadback.PENDING, notice = "안경 상태와 설정을 각각 읽는 중…"); changed()
+        requests.perform({
+            // Clock sync is a documented send-only command, not an ACK or
+            // evidence that firmware applied the clock. No account or pairing writes.
+            val clock = if (initialize) runCatching {
+                val now = System.currentTimeMillis()
+                val zone = java.util.TimeZone.getDefault()
+                val data = JSONObject().put("utc", (now / 1000).toString())
+                    .put("offset", zone.getOffset(now) / 1000).put("timezone", zone.id)
+                requests.request(15, 5, JSONObject().put("cmd", "sync_time")
+                    .put("payload", payload(data = data.toString())), wait = false)
+            }.isSuccess else null
+            val status = runCatching {
+                requests.request(15, 1, envelope("request_general_status")) { type, body ->
+                    type == 1 && body.optJSONObject("generalStatus")?.length()?.let { it > 0 } == true
+                }?.optJSONObject("generalStatus")
+            }.getOrNull()
+            val settings = runCatching {
+                readSettingsForVoice()
+            }.getOrNull()
+            val battery = (status?.opt("battery") as? Number)?.toDouble()
+            val brightness = (status?.opt("brightness") as? Number)?.toDouble()
+            val meaningfulStatus = battery?.let { it in 0.0..100.0 && it == it.toInt().toDouble() } == true ||
+                brightness?.let { it in 1.0..17.0 && it == it.toInt().toDouble() } == true
+            val readback = DeviceReadback.from(meaningfulStatus, settings?.length()?.let { it > 0 } == true)
+            // Query only: never start, stop, resume, import, or delete the
+            // device's native recording. Firmware 0x09 type 1 is read-only.
+            // observeRecorder receives the actual reports in arrival order on
+            // the main thread; never overwrite a newer report with an older
+            // query result when the remaining initialization finishes.
+            runCatching {
+                requests.request(0x0e, 5, JSONObject().put("uuid", "").put("action", 1)) { type, body ->
+                    type == 5 && body.optInt("action", -1) == 2 &&
+                        NativeRecorderState.from(body.deviceInt("state")) != NativeRecorderState.UNKNOWN
+                }
+            }
+            val version = runCatching {
+                requests.request(0x09, 1, null) { type, body ->
+                    type == 1 && body.opt("OsVersion") is String && body.optString("OsVersion").isNotBlank()
+                }?.optString("OsVersion")?.takeIf { it.length in 1..128 }
+            }.getOrNull()
+            Triple(readback, clock, version)
+        }) { result ->
+            if (token == revision) {
+                val actual = result.getOrNull()
+                val readback = actual?.first ?: DeviceReadback.FAILED
+                val previous = state.initialization
+                state = state.copy(busy = false, readback = readback, notice = readback.label,
+                    initialization = DeviceInitialization(true,
+                        if (initialize) actual?.second ?: false else previous.clockSent,
+                        actual?.third ?: previous.firmwareVersion,
+                        previous.recorder))
+                changed()
+                completed()
+            }
+        }
+    }
+
+    /** Only explicit device state reports, not transport writes or start ACKs. */
+    fun observeRecorder(type: Int, body: JSONObject) {
+        if (type != 5 || body.optInt("action", -1) != 2) return
+        val actual = NativeRecorderState.from(body.deviceInt("state"))
+        if (actual == NativeRecorderState.UNKNOWN) return
+        state = state.copy(initialization = state.initialization.copy(recorder = actual))
+        changed()
+    }
+    fun disconnected() { revision++; state = DeviceSettingsState(); reported.clear(); changed() }
     private fun readAll() {
         requests.request(15, 1, envelope("request_general_status")) { type, body -> type == 1 && body.has("generalStatus") }
         requests.request(15, 4, envelope("request_general_settings")) { type, body -> type == 4 && body.has("generalSettings") }
@@ -57,6 +133,66 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         val data = JSONObject(checkNotNull(state.settings.optJSONObject("privacyConfig")).toString())
         values.forEach { (key, value) -> require(key in setOf("mic_switch", "led_light", "led_auto_light", "log_switch")); data.put(key, if (value) 1 else 0) }
         apply("privacy_config", 5, 6, payload(data = data.toString()), "privacyConfig") { s -> values.all { (key, value) -> s.settings.optJSONObject("privacyConfig")?.deviceFlag(key) == value } }
+    }
+    /** Explicit device-side AI switch, independent of the phone's response setting.
+     * Require a fresh reported value; never treat an ACK or cached merged value as success. */
+    fun assistantEnabled(enabled: Boolean) {
+        check(state.loaded)
+        perform {
+            val before = readSettingsForVoice()?.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled")
+                ?: error("안경이 AI 활성화 상태를 보고하지 않았습니다. 변경하지 않았습니다.")
+            if (before == enabled) return@perform "안경 AI가 이미 " + if (enabled) "켜져 있습니다." else "꺼져 있습니다."
+            try {
+                requests.request(15, 16, JSONObject().put("cmd", "set_ai_state")
+                    .put("payload", payload(mode = if (enabled) 1 else 0))) { type, body ->
+                    type == 17 && body.optString("cmd") in setOf("set_ai_state", "sync_ai_settings")
+                }
+            } catch (_: IllegalStateException) { /* A fresh full read is the confirmation. */ }
+            val actual = readSettingsForVoice()?.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled")
+            when (actual) {
+                enabled -> "안경 AI 활성화 설정 재조회 일치 · 실제 호출은 별도 확인하세요."
+                null -> "안경 AI 변경 후 새 상태를 확인하지 못했습니다."
+                else -> "안경 AI 재조회 값이 요청과 다릅니다."
+            }
+        }
+    }
+    /** Explicit, read-first initialization of the two documented firmware
+     * switches. Never changes microphone privacy, binding, firmware or cloud
+     * account. Stop after an unconfirmed write rather than trying guessed commands. */
+    fun prepareNativeAssistant() {
+        check(state.loaded)
+        perform {
+            var fresh = checkNotNull(readSettingsForVoice()) { "기기 설정 회신 없음 · 초기화하지 않았습니다." }
+            check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
+                "안경 마이크 허용 상태가 꺼져 있거나 미확인입니다. 개인정보 설정을 먼저 확인하세요."
+            }
+            val initial = checkNotNull(fresh.optJSONObject("voiceAssistantConfig")) { "펌웨어 AI 상태 미보고 · 변경하지 않았습니다." }
+            check(initial.deviceFlag("enabled") != null && initial.deviceFlag("voiceWakeup") != null) {
+                "펌웨어 AI 또는 깨우기 값 미보고 · 변경하지 않았습니다."
+            }
+            for ((field, command) in listOf("enabled" to "set_ai_state", "voiceWakeup" to "set_ai_voice_wakeup")) {
+                val current = fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field)
+                    ?: error("기기 상태가 변경되어 나머지 초기화 중단")
+                if (current) continue
+                try {
+                    requests.request(15, 16, JSONObject().put("cmd", command).put("payload", payload(mode = 1))) { type, body ->
+                        type == 17 && body.optString("cmd") in setOf(command, "sync_ai_settings")
+                    }
+                } catch (_: IllegalStateException) { /* Do not repeat ambiguous writes. */ }
+                fresh = checkNotNull(readSettingsForVoice()) { "$field 변경 후 새 상태 미확인 · 나머지 초기화 중단" }
+                check(fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field) == true) {
+                    "$field 활성화가 재조회에서 확인되지 않아 나머지 초기화를 중단했습니다."
+                }
+                check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
+                    "마이크 허용 상태 변경 · 초기화 중단"
+                }
+            }
+            val final = fresh.optJSONObject("voiceAssistantConfig")
+            check(final?.deviceFlag("enabled") == true && final.deviceFlag("voiceWakeup") == true) {
+                "두 스위치가 동시에 활성화되었는지 확인하지 못했습니다."
+            }
+            "펌웨어 AI·깨우기 설정 확인 · 이제 실제 호출 이벤트를 시험하세요."
+        }
     }
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
         it.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") == enabled
@@ -107,7 +243,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
 
     private fun readSettingsForVoice(): JSONObject? =
         requests.request(15, 4, envelope("request_general_settings")) { type, body ->
-            type == 4 && body.has("generalSettings")
+            type == 4 && body.optJSONObject("generalSettings")?.length()?.let { it > 0 } == true
         }?.optJSONObject("generalSettings")
     private fun exactInt(value: Any?): Int? {
         val number = (value as? Number)?.toDouble() ?: return null
@@ -216,9 +352,12 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     private fun perform(work: () -> String) {
         check(!state.busy) { "현재 기기 작업을 기다리세요" }
+        val token = ++revision
         state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
         requests.perform(work) { result ->
-            state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
+            if (token == revision) {
+                state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
+            }
         }
     }
     fun observe(type: Int, body: JSONObject) {

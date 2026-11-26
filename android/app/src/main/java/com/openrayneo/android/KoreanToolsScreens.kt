@@ -32,6 +32,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val keywordReady = kws.installed(context) && !kws.downloading
     var confirm by remember { mutableStateOf(false) }
     var confirmNative by remember { mutableStateOf(false) }
+    var confirmStandalone by remember { mutableStateOf(false) }
     var confirmAmbient by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
     var resumeAfterLink by remember { mutableStateOf(false) }
@@ -44,11 +45,28 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             val firmware = s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")
             val mic = s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")
             fun flag(value: Boolean?) = when (value) { true -> "켜짐"; false -> "꺼짐"; null -> "기기 보고 없음" }
-            Note("안경 연결: " + if (linked) "완전 연결" else s.glasses.link.detail)
+            Note("안경 연결: " + if (linked) "BLE 인증·SPP 연결" else s.glasses.link.detail)
+            Note("실제 기기 응답: " + s.deviceSettings.readback.label)
+            Note("현재 연결의 기본 호출 이벤트: " + if (s.nativeWakeObserved) "수신 확인" else "미수신")
             Note("안경 마이크: " + flag(mic))
+            Note("펌웨어 AI 활성화: " + flag(firmware?.deviceFlag("enabled")))
+            Note("호스트 상태 동기화: " + s.hostVisibilityStatus)
+            Note("녹음 서비스 상태 동기화: " + s.recordingVisibilityStatus)
+            Note("기능 협상: " + s.capabilityStatus)
+            Note("안경 내부 시계: " + s.deviceSettings.initialization.clockLabel)
+            Note("펌웨어 보고 버전: " + (s.deviceSettings.initialization.firmwareVersion ?: "미확인"))
+            Note("안경 자체 녹음: " + s.deviceSettings.initialization.recorder.label)
             Note("펌웨어 호출: " + flag(firmware?.deviceFlag("voiceWakeup")) + " · " + when (firmware?.deviceInt("wakeupWord")) { 1 -> "샤오레이 샤오레이"; 2 -> "Hey RayNeo"; else -> "호출어 미확인" })
             Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
             Note("최근 기본 호출: " + s.nativeWakeStatus)
+            Note("기본 호출은 실제 펌웨어 이벤트가 필요합니다. 공식 앱을 종료하고 안경 AI 상태를 읽은 뒤 테스트하세요. 이벤트가 없으면 아래 독립 한국어 호출을 사용해 마이크·HUD를 별도로 확인하세요.")
+            ToolButton(onClick = { confirmStandalone = true },
+                enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) {
+                Text("독립 기본 호출 준비 · 안경 설정 적용")
+            }
+            Note(s.deviceSettings.notice)
+            ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh(initialize = true) } },
+                enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) { Text("안경 초기 상태 다시 동기화") }
             Note("음성 모델: " + if (speechReady && s.conversation.modelReady) "준비됨" else "설정 또는 다운로드 필요")
             Note("기록 오디오: ${s.conversation.decodedSeconds.toInt()}초 · " + (s.conversation.error ?: s.conversation.status))
             Note(s.audioLevels.timingSummary())
@@ -144,6 +162,15 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
+    if (confirmStandalone) AlertDialog(
+        onDismissRequest = { confirmStandalone = false },
+        title = { Text("안경 자체 AI와 깨우기 활성화") },
+        text = { Text("현재 연결된 안경에서 AI·음성 깨우기 스위치를 읽고 꺼진 항목만 활성화합니다. 마이크 개인정보 설정, 계정, 페어링 및 펌웨어는 변경하지 않습니다. 실제 호출 및 AI 응답은 별도 검증이 필요합니다.") },
+        confirmButton = { TextButton(onClick = {
+            confirmStandalone = false
+            model.attempt { model.service().deviceSettings.prepareNativeAssistant() }
+        }, enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) { Text("설정 적용") } },
+        dismissButton = { TextButton(onClick = { confirmStandalone = false }) { Text("취소") } })
     if (confirmNative || confirmAmbient) AlertDialog(
         onDismissRequest = { confirmNative = false; confirmAmbient = false },
         title = { Text(if (confirmNative) "기본 AI 호출 허용" else "기록 중 AI 호출 허용") },

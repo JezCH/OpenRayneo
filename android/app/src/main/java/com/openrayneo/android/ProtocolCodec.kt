@@ -31,6 +31,22 @@ internal object ProtocolCodec {
     fun transportAcknowledgements(frames: List<Frame>): List<ByteArray> =
         frames.filter { it.requiresAcknowledgement }.map(::acknowledgement)
 
+    /** 1 = registration, 2 = reconnect. Callers must establish recovery eligibility. */
+    fun pairingIntent(previouslyAuthenticatedRecovery: Boolean): Byte =
+        if (previouslyAuthenticatedRecovery) 2 else 1
+
+    /** Documented raw host visibility command 31; not a TLV or business ACK. */
+    fun hostVisibility(sequence: Int, visible: Boolean): ByteArray =
+        frame(0x10, sequence, byteArrayOf(0x1f, 0, 1, if (visible) 2 else 1))
+
+    /** 0x06 uses raw JSON, not the protobuf business envelope. No unsupported
+     * capabilities are advertised. Reference: upstream CapabilityController.swift. */
+    fun emptyCapabilityReply(sequence: Int): ByteArray =
+        frame(0x06, sequence, """{"type":2,"ret":"OK","capabilities":[]}""".toByteArray(Charsets.UTF_8))
+
+    fun recordingVisibility(sequence: Int, visible: Boolean): ByteArray =
+        display(0x0e, sequence, 14, """{"isAppForeground":$visible}""", byteArrayOf())
+
     fun pairing(sequence: Int, command: Int, fields: List<Pair<Int, ByteArray>>): ByteArray {
         val tlvs = ByteArrayOutputStream()
         fields.forEach { (tag, value) ->

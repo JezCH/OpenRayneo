@@ -33,6 +33,11 @@ internal object LocalDeviceQuery {
 
     fun parse(text: String, source: ConversationSource, backfill: Boolean): Command? {
         if (source != ConversationSource.NATIVE || backfill) return null
+        return parseExplicit(text)
+    }
+
+    /** Only for a separately authorized, bounded software-wake question. */
+    fun parseExplicit(text: String): Command? {
         val normalized = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot { it.isWhitespace() }
         if (normalized in batteryQueries) return Command(Kind.BATTERY)
         if (read.matches(normalized)) return Command(Kind.BRIGHTNESS_READ)

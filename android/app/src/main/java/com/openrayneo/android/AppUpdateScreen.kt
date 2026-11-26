@@ -37,7 +37,7 @@ internal fun AppUpdateScreen(model: AppModel) {
 
     fun idle(): Boolean {
         val s = model.state
-        return model.recommendedEditable && !s.captionActive && !s.mediaCaption.busy &&
+        return model.recommendedEditable && !s.deviceSettings.busy && !s.captionActive && !s.mediaCaption.busy &&
             !s.mediaTranslation.preparing && !s.offlinePreparing && !s.speechPlaying &&
             !s.chatContinuityBusy && s.approvals.isEmpty() && s.agentReviews.isEmpty() &&
             !s.agentServer.enabled && !s.recordSync.enabled && !s.glasses.navigation.enabled &&
@@ -173,7 +173,27 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         if (AppUpdateInstall.sessionId != null && !busy)
             TextButton(onClick = { AppUpdateInstall.cancel(app) }) { Text("설치 요청 취소") }
-        if (!idle()) Text("설치 전 진행 중인 기록·번역·AI·모델 다운로드 및 외부 Agent/동기화 서비스를 종료하세요.")
+        if (!idle()) {
+            val s = model.state
+            Text("설치 차단 원인: " + buildList {
+                if (!s.available) add("연결 서비스 준비 중")
+                if (s.deviceSettings.busy) add("안경 상태·설정 동기화")
+                if (s.glasses.link.reconnectWaiting) add("자동 재연결 대기")
+                if (s.glasses.disconnecting || s.glasses.link.phase !in setOf(LinkPhase.DISCONNECTED, LinkPhase.FULL, LinkPhase.BLE_ONLY)) add("연결 전환")
+                if (s.conversation.running || s.conversation.stopping || s.conversation.summarizing || s.alwaysOnResumePending) add("기록·요약·자동 재개")
+                if (s.nativeWakeAvailable || s.wakeActive || s.wakePending) add("음성 호출")
+                if (s.translationActive || s.captionActive || s.mediaCaption.busy || s.mediaTranslation.preparing || s.offlinePreparing) add("통역·자막·모델 준비")
+                if (s.phoneRunning || s.computerRunning || s.speechPlaying || s.chatContinuityBusy || s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) add("AI·음성 출력·승인 작업")
+                if (s.agentServer.enabled) add("외부 Agent 서버")
+                if (s.recordSync.enabled) add("기록 동기화 서버")
+                if (s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.glasses.navigation.enabled || s.teleprompter.busy || s.teleprompter.active != null) add("안경 화면·길 안내·프롬프터")
+                if (s.migration.busy) add("기록 이전")
+                if (LocalModels.zipformer.downloading || LocalModels.senseVoice.downloading || LocalModels.nemotron.downloading || KoreanKeywordModels.model.downloading) add("음성 모델 다운로드")
+            }.joinToString(" · ").ifBlank { "현재 작업 상태 확인 필요" })
+            if (s.available && s.glasses.link.reconnectWaiting) TextButton(onClick = {
+                model.attempt { model.service().disconnect() }
+            }) { Text("자동 재연결 중지 후 설치") }
+        }
         if (status.isNotBlank()) Text(status)
         if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
         Text("자동 설치는 아직 활성화하지 않았습니다. Android 또는 Galaxy 보안 정책에서 설치 승인을 요청할 수 있습니다.",

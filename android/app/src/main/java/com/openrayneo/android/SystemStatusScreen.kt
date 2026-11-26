@@ -32,8 +32,15 @@ private fun SystemRow.priority() = when {
     else -> 4
 }
 private fun SystemRow.working() = status.phase in setOf(Phase.ACTIVE, Phase.BUSY)
-private fun connection(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "서비스 대기")
-    else SystemStatusPolicy.link(s.glasses.link.phase.name, s.glasses.link.reconnectWaiting, s.glasses.disconnecting)
+private fun connection(s: CompanionState) = when {
+    !s.available -> status(Phase.UNKNOWN, "서비스 대기")
+    s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting -> when (s.deviceSettings.readback) {
+        DeviceReadback.VERIFIED -> status(Phase.READY, "기기 응답 확인")
+        DeviceReadback.FAILED -> status(Phase.ERROR, "기기 응답 실패")
+        else -> status(Phase.WAITING, "기기 응답 확인 중")
+    }
+    else -> SystemStatusPolicy.link(s.glasses.link.phase.name, s.glasses.link.reconnectWaiting, s.glasses.disconnecting)
+}
 internal fun recording(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "미확인") else with(s.conversation) {
     SystemStatusPolicy.capture(running, stopping, reprocessing, liveTranscriptOnly, s.alwaysOnResumePending,
         s.audioLevels.coordinatorState().phase.name, mode == ConversationMode.ENROLL)
@@ -49,6 +56,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val ai = s.agentServer.enabled && s.agentServer.pollRecent
     val mic = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") else null
     val firmware = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") else null
+    val firmwareAI = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled") else null
     val speech = c.modelReady && model.speechConfigured
     val ambient = cfg.optBoolean("ambientWakeEnabled")
     val fast = cfg.optBoolean("fastRealtimeHints")
@@ -73,7 +81,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         }
         addRow("기기", "안경 연결", connection(s), if (linked) {
             val battery = if (s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
-            if (battery != null) "완전 연결 · 최근 배터리 $battery%" else "완전 연결 · 배터리 미확인"
+            "BLE·SPP 연결 · " + s.deviceSettings.readback.label + if (battery != null) " · 배터리 $battery%" else ""
         } else when {
             !model.bluetoothAllowed -> "근처 기기 권한 필요"
             s.glasses.link.phase == LinkPhase.BLE_ONLY -> "SPP 연결 미완료 · 음성 및 HUD 사용 불가"
@@ -114,8 +122,12 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("음성·기록", "음성 출력", active(s.speechPlaying), "휴대폰 오디오 경로", "voice-settings")
         addRow("AI·기억", "AI 연결", receiver(s), if(s.agentServer.enabled && !ai) "외부 Agent 요청 수신 대기 · 실행 환경 확인" else "최근 요청 수신 기준 · 모델 응답 별도", "agent-api", s.agentServer.enabled, s.agentServer.enabled && !ai)
         addRow("AI·기억", "AI 질문·업무", active(s.phoneRunning || s.voiceAiPending), if(s.voiceAiPending) "안경 호출 질문 응답 대기" else "휴대폰 AI 처리", "ai")
-        addRow("AI·기억", "기본 AI 호출", allowed(native, linked && speech && ai && mic == true && firmware == true,
-            live && c.source == ConversationSource.NATIVE && ai && speech, mic == false || firmware == false), "안경 기본 호출 이벤트", "korean-wake", native)
+        addRow("AI·기억", "안경 AI 자체 활성화", when (firmwareAI) {
+            true -> status(Phase.READY,"기기 설정 켜짐"); false -> off; null -> unknown
+        }, "펌웨어 보고값 · 실제 호출과 별도", "korean-wake", firmwareAI, firmwareAI == false)
+        addRow("AI·기억", "기본 AI 호출", allowed(native, linked && speech && s.nativeWakeObserved && mic == true && firmware == true && firmwareAI == true,
+            live && c.source == ConversationSource.NATIVE && speech && s.nativeWakeObserved, mic == false || firmware == false || firmwareAI == false),
+            "현재 연결의 이벤트: " + s.nativeWakeStatus, "korean-wake", native)
         addRow("AI·기억", "한국어 호출", when {
             s.wakePending -> status(Phase.BUSY,"준비 중")
             s.wakeActive -> status(Phase.ACTIVE,"호출 듣는 중")
