@@ -238,6 +238,13 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
                 AgentReceiptCard(model, s.agentReceipts)
             }
+            if (AppUpdate.supported && mobile) item(key = "external-hud") {
+                ContentCard {
+                    Text("외부 AI 답변 안경 표시", style = MaterialTheme.typography.titleMedium)
+                    Note("ChatGPT 등에서 복사하거나 공유한 텍스트를 추가 AI 요청 없이 표시합니다.")
+                    TextButton(onClick = { configure("external-hud") }) { Text("텍스트 표시") }
+                }
+            }
             if (mobile && configured) item(key = "agent-probe") { AgentProbeCard(model) }
             if (configured) item(key = "hud-remote") { HudRemoteCard(model, source) }
             history.forEach { record -> item { ConversationTurn(record.question, record.answer) } }

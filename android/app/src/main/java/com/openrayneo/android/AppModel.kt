@@ -119,6 +119,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         mutableStateOf(preferences.getString("deviceName", "RayNeo iO") ?: "RayNeo iO")
         private set
 
+    var externalHudDraft by mutableStateOf("")
+    var externalHudOpen by mutableStateOf(false)
     var phoneDraft by mutableStateOf("")
     var selectedContact by mutableStateOf<SelectedContact?>(null)
     var computerDraft by mutableStateOf("")

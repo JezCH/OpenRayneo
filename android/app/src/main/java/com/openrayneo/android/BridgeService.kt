@@ -1654,6 +1654,19 @@ internal class BridgeService : Service() {
         cancelAgentProbe()
         agentProbe.reset()
     }
+    fun sendExternalHudText(text: String) {
+        check(AppUpdate.supported) { "검증 앱에서만 사용할 수 있습니다." }
+        require(text.isNotBlank() && text.length <= ExternalHudText.PAGE_LENGTH &&
+            text.none { it.isISOControl() }) { "표시할 텍스트 페이지를 확인하세요." }
+        check(hudAnswerAvailable() && state.intent == DisplayIntent.Idle && state.session == null &&
+            !mediaCaptionState.busy && !agent.running && !codex.running && !ambientWakeBusy() &&
+            !speechOutput.speaking && !migration.state.busy) {
+            "현재 기록·음성·화면·AI 작업을 먼저 종료하세요."
+        }
+        check(sendCompanionNotification("외부 텍스트", text)) {
+            "안경 완전 연결 및 집중 모드·알림 설정을 확인하세요."
+        }
+    }
     fun sendAgentProbeHud() {
         val probe = agentProbe.state
         check(probe.phase == AgentProbePolicy.Phase.PASSED && probe.hud == AgentProbePolicy.Hud.NOT_SENT)
