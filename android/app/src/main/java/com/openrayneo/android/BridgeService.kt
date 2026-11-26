@@ -513,6 +513,7 @@ internal class BridgeService : Service() {
         navigationSwitch = null
         navigationSwitchStatus = ""
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        resumeAlwaysOn = null
         conversationOwnsDisplay = false
         val frame = NavigationFrame.render(instruction.direction, instruction.meters, if (entry.experimental) entry.sourceName else entry.title)
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
@@ -546,12 +547,15 @@ internal class BridgeService : Service() {
             conversations.activityGeneration != pending.recordGeneration -> "다른 기록이 시작되어 전환 취소됨"
             migration.state.busy || translator.active || mediaCaptionState.busy || voiceTransport.nativeActive || wakePending || prompterReserved -> "다른 기능이 시작되어 전환 취소됨"
             !c.running && !c.stopping && c.error != null -> "기록 오류 확인 후 길 안내를 다시 선택하세요."
+            !c.running && !c.stopping && state.intent !in setOf(DisplayIntent.Idle, DisplayIntent.Navigation) -> "다른 안경 화면이 시작되어 전환 취소됨"
             else -> null
         }
         if (failure != null) {
             navigationSwitch = null; navigationSwitchStatus = failure; notifyUI(); return
         }
         if (c.running || c.stopping || voiceTransport.source != null) return
+        // Let the old prompt close before sending a new page, without taking over a new one.
+        if (state.session?.let { it.mode != PageMode.NAVIGATION } == true) return
         if (navigation.entries[pending.key]?.safeInstruction == null) return
         navigationSwitch = null
         runCatching { followNavigation(pending.key) }.onFailure {
