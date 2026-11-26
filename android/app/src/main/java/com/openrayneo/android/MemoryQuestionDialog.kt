@@ -49,7 +49,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Note("과거 기록을 휴대폰에서 먼저 검색합니다. 선택한 전사 일부와 질문만 연결된 AI로 전송합니다. 일반 AI 작업과 달리 도구를 사용하지 않습니다.")
-                Note("자동 추천 범위: 최근 ${days}일 · 최대 ${limit}개. 기기 내 단어·일부 조사 변형 일치 방식이며 의미 검색은 아닙니다.")
+                Note("자동 추천 범위: 최근 ${days}일 · 최대 ${limit}개. 기기 내 구문·핵심어·일부 조사/띄어쓰기 변형 일치입니다. 의미 추론이나 외부 모델 호출은 하지 않습니다.")
                 if (topics.isFailure) Note("주제 목록을 읽지 못했습니다. 전체 기록 검색만 가능합니다.")
                 if (topics.getOrDefault(emptyList()).isNotEmpty()) {
                     Text("검색할 주제", style = MaterialTheme.typography.labelMedium)
@@ -73,7 +73,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                             value.fold({ result = it }, { error = "기록 검색 실패 · 검색어를 확인하세요" })
                         }
                     } catch (_: Exception) { busy = false; error = "기록 검색을 시작하지 못했습니다" }
-                }, enabled = !busy && query.isNotBlank() && !model.state.migration.busy) { Text("내 기록 검색") }
+                }, enabled = !busy && query.isNotBlank() && !model.state.migration.busy) { Text("관련 기록 검색") }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
                 if (current != null && hits.isEmpty()) Note("일치하는 전사 기록이 없습니다. 검색어를 바꿔 보거나 기억 없이 질문할 수 있습니다.")
@@ -87,6 +87,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                             Text(java.text.SimpleDateFormat("yyyy.MM.dd HH:mm", java.util.Locale.KOREA).format(java.util.Date(hit.source.start)),
                                 style = MaterialTheme.typography.labelMedium)
                             Text(hit.excerpt)
+                            Note("관련 후보 · 선택하기 전에 원문을 확인하세요")
                             Note(if (hit.source.incomplete || hit.source.mixed || !hit.source.stable) "전사 또는 화자 정보가 불확실할 수 있음" else "원본 전사 · 사실 여부는 별도 확인")
                         }
                     }
