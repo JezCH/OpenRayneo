@@ -44,8 +44,10 @@ jobs:
 
       # Explicit main workflow dispatch is the only distribution path. Push/PR runs compile only.
       # Store base64 of ~/.android/debug.keystore as repository secret ANDROID_DEBUG_KEYSTORE_B64.
-      - name: Restore signing keystore
-        if: env.DISTRIBUTE_APK == 'true'
+      # Trusted main pushes also inspect the registered key without distributing an APK.
+      # PRs never receive the signing secret. Report only the public certificate fingerprint.
+      - name: Restore and diagnose signing keystore
+        if: env.DISTRIBUTE_APK == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
@@ -58,7 +60,14 @@ jobs:
             echo "Restored signing certificate SHA-256: $restored_signer"
             if [ "$GITHUB_REPOSITORY" = "JezCH/OpenRayneo" ] && [ "$restored_signer" != "cb13b9f191e8212e0eb0c343aa833fc94ef10a8c4477c317ec74b5d2bcce6b70" ]; then
               echo "::error::Restored key does not match #84. Restore the original ANDROID_DEBUG_KEYSTORE_B64. Do not uninstall the existing app."
-              exit 1
+              if [ "$DISTRIBUTE_APK" = "true" ]; then exit 1; fi
+              rm -f "$signing_file"
+              exit 0
+            fi
+            if [ "$DISTRIBUTE_APK" != "true" ]; then
+              echo "Original #84 signing key verified; no APK distribution requested."
+              rm -f "$signing_file"
+              exit 0
             fi
             echo "OPENRAYNEO_RESTORED_SIGNER=$restored_signer" >> "$GITHUB_ENV"
             echo "OPENRAYNEO_SIGNING_KEYSTORE=$signing_file" >> "$GITHUB_ENV"
@@ -66,7 +75,7 @@ jobs:
             echo "Using explicitly selected distribution keystore"
           else
             echo "::error::Fixed signing key missing. Distribution blocked; configure ANDROID_DEBUG_KEYSTORE_B64 before publishing."
-            exit 1
+            if [ "$DISTRIBUTE_APK" = "true" ]; then exit 1; fi
           fi
 
       - uses: gradle/actions/setup-gradle@v4
