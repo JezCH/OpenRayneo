@@ -110,6 +110,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 FeatureTile("실시간 번역", "한국어 ↔ 영어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
             }
         }
+        item { FeatureTile("미디어 자막", "이어폰으로 듣는 재생음 · 원문 자막", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         item {
             ContentCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
