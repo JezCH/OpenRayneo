@@ -106,7 +106,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (!s.agentServer.pollRecent) TextButton(onClick = { open("agent-api") }) { Text("AI 연결 상태 확인") }
-                if (!linked) TextButton(onClick = { open("diagnostics") }) { Text("연결 상태와 오류 확인") }
+                TextButton(onClick = { open("diagnostics") }) { Text(if (linked) "최근 연결 끊김 확인" else "연결 상태와 오류 확인") }
             }
         }
         item { SectionLabel("바로 사용") }

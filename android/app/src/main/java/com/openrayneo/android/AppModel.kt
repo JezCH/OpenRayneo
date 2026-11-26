@@ -286,6 +286,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         backgroundNotifications =
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
+        bridge?.refreshConnectionPermissions()
         NavigationNotifications.refresh(context, foreground = true)
     }
 
