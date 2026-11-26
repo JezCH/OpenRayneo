@@ -43,6 +43,13 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         else -> "대기 중"
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (AppUpdate.supported && model.updateCheck.candidate != null && model.updateCheck.error.isBlank()) {
+            item { ContentCard {
+                Text("새 앱 업데이트", style = MaterialTheme.typography.titleMedium)
+                Note(model.updateCheck.summary)
+                TextButton(onClick = { open("app-update") }) { Text("업데이트 보기") }
+            } }
+        }
         item {
             ContentCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
