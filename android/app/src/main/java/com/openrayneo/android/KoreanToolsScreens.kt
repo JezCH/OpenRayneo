@@ -31,6 +31,8 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val kws = KoreanKeywordModels.model
     val keywordReady = kws.installed(context) && !kws.downloading
     var confirm by remember { mutableStateOf(false) }
+    var confirmNative by remember { mutableStateOf(false) }
+    var confirmAmbient by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
     var resumeAfterLink by remember { mutableStateOf(false) }
     val fast = model.config.optBoolean("fastRealtimeHints")
@@ -54,13 +56,13 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note("휴대폰의 실제 수신·디코딩·전사 시각입니다. 첫 발화까지의 대기와 무음·펌웨어 묶음 전송을 포함하며 물리적 발화→PCM 지연은 아닙니다. 디코더를 다시 시작하면 해당 디코더 측정은 초기화됩니다. 원문이나 음성은 진단에 추가 저장하지 않습니다.")
             Note("AI 연결: " + s.agentServer.receiverStatus)
             ToolOutlinedButton(onClick = deviceSettings) { Text("안경 마이크·기본 호출 설정") }
-            if (!model.config.optBoolean("nativeAutoAnswer")) ToolOutlinedButton(onClick = { model.saveConfig(mapOf("nativeAutoAnswer" to "true")) }) { Text("앱 기본 호출 자동 응답 켜기") }
+            if (!model.config.optBoolean("nativeAutoAnswer")) ToolOutlinedButton(onClick = { confirmNative = true }, enabled = model.recommendedEditable) { Text("앱 기본 호출 자동 응답 켜기") }
             if (!speechReady) ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
         } }
         item { ContentCard {
             Text("종일 및 실시간 한국어 호출", style = MaterialTheme.typography.headlineSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(continuous, { enabled -> model.saveConfig(mapOf("ambientWakeEnabled" to enabled.toString())) })
+                Checkbox(continuous, { enabled -> if (enabled) confirmAmbient = true else model.saveConfig(mapOf("ambientWakeEnabled" to "false")) }, enabled = model.recommendedEditable)
                 Text("기록 중 호출어 감지 및 AI 질문 허용")
             }
             if (continuous) {
@@ -142,6 +144,16 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
+    if (confirmNative || confirmAmbient) AlertDialog(
+        onDismissRequest = { confirmNative = false; confirmAmbient = false },
+        title = { Text(if (confirmNative) "기본 AI 호출 허용" else "기록 중 AI 호출 허용") },
+        text = { Text("호출 뒤 인식된 질문이 연결된 AI에 전송될 수 있으며 이용량이나 비용이 발생할 수 있습니다. 녹음 시작과 업무 승인은 별도입니다.") },
+        confirmButton = { TextButton(enabled = model.recommendedEditable, onClick = {
+            val key = if (confirmNative) "nativeAutoAnswer" else "ambientWakeEnabled"
+            confirmNative = false; confirmAmbient = false
+            model.saveConfig(mapOf(key to "true"))
+        }) { Text("동의하고 켜기") } },
+        dismissButton = { TextButton(onClick = { confirmNative = false; confirmAmbient = false }) { Text("취소") } })
     startContinuous?.let { source -> AlertDialog(onDismissRequest = { startContinuous = null }, title = { Text(if (source == ConversationSource.REALTIME) "빠른 실시간 호출을 시작할까요?" else "종일 기록 및 호출을 시작할까요?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

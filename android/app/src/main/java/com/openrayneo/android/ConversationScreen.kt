@@ -76,7 +76,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
-                Text("새 기록", style = MaterialTheme.typography.headlineSmall)
+                Text(if (state.running || state.stopping || s.alwaysOnResumePending) "현재 기록" else "새 기록", style = MaterialTheme.typography.headlineSmall)
                 Note("일상과 회의를 기록하고 아래에서 원문과 기억을 찾아보세요. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
                 if (model.state.alwaysOnResumePending) {
                     Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 같은 안경에 자동 재연결되면 이탈 시간과 관계없이 다시 시작합니다. 직접 중지하거나 서비스가 종료되면 재개하지 않습니다.")
@@ -102,9 +102,11 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         }
                         if (!startReady) Note(when {
                             !linked -> "안경을 완전히 연결하세요."
-                            !state.modelReady -> "음성 설정에서 모델을 준비하세요."
+                            !state.modelReady -> "내장 음성 모델 상태를 확인하세요."
                             else -> "현재 연결된 화면·음성·AI 또는 기록 이전 작업을 종료하세요."
                         })
+                        if (!linked) TextButton(onClick = { open("display-controls") }) { Text("안경 연결 관리") }
+                        else if (!state.modelReady) TextButton(onClick = { open("voice-settings") }) { Text("음성 상태 확인") }
                     }
                 } else {
                     Text("${state.mode.title} · ${state.source.title} · 오디오 ${state.decodedSeconds.toInt()}초 수신")
