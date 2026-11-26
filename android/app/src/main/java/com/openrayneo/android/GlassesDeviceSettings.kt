@@ -6,7 +6,8 @@ import org.json.JSONObject
 
 internal data class DeviceSettingsState(val status: JSONObject = JSONObject(), val settings: JSONObject = JSONObject(),
     val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기",
-    val readback: DeviceReadback = DeviceReadback.NONE)
+    val readback: DeviceReadback = DeviceReadback.NONE,
+    val initialization: DeviceInitialization = DeviceInitialization())
 internal fun JSONObject.deviceInt(key: String): Int? = (opt(key) as? Number)?.toInt()
 internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = opt(key)) {
     is Boolean -> value; is Number -> value.toInt() == 1; else -> null
@@ -18,11 +19,21 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     /** Two independent, correlated business replies from this connection.
      * A rejected or timed-out read does not make the transport disconnect,
      * and a successful socket write does not become device-readback success. */
-    fun refresh() {
+    fun refresh(initialize: Boolean = false, completed: () -> Unit = {}) {
         check(!state.busy) { "현재 기기 작업을 기다리세요" }
         val token = ++revision
         state = state.copy(busy = true, readback = DeviceReadback.PENDING, notice = "안경 상태와 설정을 각각 읽는 중…"); changed()
         requests.perform({
+            // Clock sync is a documented send-only command, not an ACK or
+            // evidence that firmware applied the clock. No account or pairing writes.
+            val clock = if (initialize) runCatching {
+                val now = System.currentTimeMillis()
+                val zone = java.util.TimeZone.getDefault()
+                val data = JSONObject().put("utc", (now / 1000).toString())
+                    .put("offset", zone.getOffset(now) / 1000).put("timezone", zone.id)
+                requests.request(15, 5, JSONObject().put("cmd", "sync_time")
+                    .put("payload", payload(data = data.toString())), wait = false)
+            }.isSuccess else null
             val status = runCatching {
                 requests.request(15, 1, envelope("request_general_status")) { type, body ->
                     type == 1 && body.optJSONObject("generalStatus")?.length()?.let { it > 0 } == true
@@ -35,14 +46,44 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             val brightness = (status?.opt("brightness") as? Number)?.toDouble()
             val meaningfulStatus = battery?.let { it in 0.0..100.0 && it == it.toInt().toDouble() } == true ||
                 brightness?.let { it in 1.0..17.0 && it == it.toInt().toDouble() } == true
-            DeviceReadback.from(meaningfulStatus, settings?.length()?.let { it > 0 } == true)
+            val readback = DeviceReadback.from(meaningfulStatus, settings?.length()?.let { it > 0 } == true)
+            // Query only: never start, stop, resume, import, or delete the
+            // device's native recording. Firmware 0x09 type 1 is read-only.
+            val recorder = runCatching {
+                requests.request(0x0e, 5, JSONObject().put("uuid", "").put("action", 1)) { type, body ->
+                    type == 5 && body.optInt("action", -1) == 2 &&
+                        NativeRecorderState.from(body.deviceInt("state")) != NativeRecorderState.UNKNOWN
+                }?.let { NativeRecorderState.from(it.deviceInt("state")) }
+            }.getOrNull() ?: NativeRecorderState.UNKNOWN
+            val version = runCatching {
+                requests.request(0x09, 1, JSONObject()) { type, body ->
+                    type == 1 && body.opt("OsVersion") is String && body.optString("OsVersion").isNotBlank()
+                }?.optString("OsVersion")?.takeIf { it.length in 1..128 }
+            }.getOrNull()
+            Triple(readback, clock, recorder to version)
         }) { result ->
             if (token == revision) {
-                val readback = result.getOrDefault(DeviceReadback.FAILED)
-                state = state.copy(busy = false, readback = readback, notice = readback.label)
+                val actual = result.getOrNull()
+                val readback = actual?.first ?: DeviceReadback.FAILED
+                val previous = state.initialization
+                state = state.copy(busy = false, readback = readback, notice = readback.label,
+                    initialization = DeviceInitialization(true,
+                        if (initialize) actual?.second ?: false else previous.clockSent,
+                        actual?.third?.second ?: previous.firmwareVersion,
+                        actual?.third?.first ?: NativeRecorderState.UNKNOWN))
                 changed()
+                completed()
             }
         }
+    }
+
+    /** Only explicit device state reports, not transport writes or start ACKs. */
+    fun observeRecorder(type: Int, body: JSONObject) {
+        if (type != 5 || body.optInt("action", -1) != 2) return
+        val actual = NativeRecorderState.from(body.deviceInt("state"))
+        if (actual == NativeRecorderState.UNKNOWN) return
+        state = state.copy(initialization = state.initialization.copy(recorder = actual))
+        changed()
     }
     fun disconnected() { revision++; state = DeviceSettingsState(); reported.clear(); changed() }
     private fun readAll() {

@@ -5,6 +5,30 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StandaloneDeviceProtocolTest {
+    @Test fun nativeRecorderStateIsNotLifeLogOrSocketState() {
+        assertEquals(NativeRecorderState.RECORDING, NativeRecorderState.from(1))
+        assertEquals(NativeRecorderState.PAUSED, NativeRecorderState.from(2))
+        assertEquals(NativeRecorderState.IDLE, NativeRecorderState.from(3))
+        for (code in listOf(null, -1, 0, 4, 255)) assertEquals(NativeRecorderState.UNKNOWN, NativeRecorderState.from(code))
+        assertTrue(NativeRecorderState.RECORDING.occupied)
+        assertTrue(NativeRecorderState.PAUSED.occupied)
+        assertFalse(NativeRecorderState.IDLE.occupied)
+        assertFalse(NativeRecorderState.UNKNOWN.occupied)
+    }
+    @Test fun capabilityAndRecordingVisibilityUseSeparateWireContracts() {
+        val capability = ProtocolCodec.StreamDecoder().append(ProtocolCodec.emptyCapabilityReply(0x6900)).single()
+        assertEquals(6, capability.protocol)
+        assertEquals("""{"type":2,"ret":"OK","capabilities":[]}""", capability.payload.toString(Charsets.UTF_8))
+        for (visible in listOf(true, false)) {
+            val f = ProtocolCodec.StreamDecoder().append(ProtocolCodec.recordingVisibility(0x6800, visible)).single()
+            assertEquals(0x0e, f.protocol)
+            val msg = ProtocolCodec.message(f.payload)
+            assertEquals(14, msg.type)
+            assertEquals("""{"isAppForeground":$visible}""", msg.json)
+            assertArrayEquals(byteArrayOf(), msg.audio)
+        }
+    }
+
     @Test fun distinguishReadbackFromTransportAndPartialReplies() {
         assertEquals(DeviceReadback.FAILED, DeviceReadback.from(false, false))
         assertEquals(DeviceReadback.STATUS_ONLY, DeviceReadback.from(true, false))

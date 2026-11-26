@@ -64,6 +64,28 @@ internal class BridgeService : Service() {
     private var hostVisibilityRevision = 0L
     private var hostVisibilitySequence = 0x6800
     var hostVisibilityStatus = "연결 후 전송 대기"; private set
+    var recordingVisibilityStatus = "연결 후 전송 대기"; private set
+    var capabilityStatus = "현재 연결의 협상 요청 미수신"; private set
+    private var capabilitySequence = 0x6900
+    private fun handleCapability(frame: ProtocolCodec.Frame) {
+        if (frame.protocol != 0x06 || frame.payload.size !in 1..8192 ||
+            state.link.phase != LinkPhase.FULL || state.disconnecting || destroyed) return
+        val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
+        if (body.deviceInt("type") != 1) return
+        val revision = hostVisibilityRevision
+        capabilityStatus = "안경 협상 요청 수신 · 지원 목록 응답 중"
+        runCatching {
+            connection.sendFrame(ProtocolCodec.emptyCapabilityReply(capabilitySequence++ and 65535)) { result ->
+                // Connection transport invalidates completions after disconnect. A
+                // visibility change alone must not turn a capability reply into success.
+                if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
+                    revision != hostVisibilityRevision) return@sendFrame
+                capabilityStatus = if (result.isSuccess) "빈 지원 목록 응답 전송됨 · 적용 미확인" else "협상 응답 전송 실패"
+                notifyUI()
+            }
+        }.onFailure { capabilityStatus = "협상 응답 전송 실패" }
+        notifyUI()
+    }
     fun setHostVisible(visible: Boolean) {
         if (hostVisible == visible) return
         hostVisible = visible
@@ -74,6 +96,7 @@ internal class BridgeService : Service() {
         val revision = ++hostVisibilityRevision
         val label = if (hostVisible) "전경" else "백그라운드"
         hostVisibilityStatus = "$label 상태 전송 중"
+        recordingVisibilityStatus = "$label 상태 전송 중"
         runCatching {
             connection.sendFrame(ProtocolCodec.hostVisibility(hostVisibilitySequence++ and 65535, hostVisible)) { result ->
                 if (revision != hostVisibilityRevision || destroyed || state.link.phase != LinkPhase.FULL) return@sendFrame
@@ -81,6 +104,13 @@ internal class BridgeService : Service() {
                 notifyUI()
             }
         }.onFailure { hostVisibilityStatus = "$label 상태 전송 실패" }
+        runCatching {
+            connection.sendFrame(ProtocolCodec.recordingVisibility(hostVisibilitySequence++ and 65535, hostVisible)) { result ->
+                if (revision != hostVisibilityRevision || destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) return@sendFrame
+                recordingVisibilityStatus = if (result.isSuccess) "$label 녹음 상태 전송됨 · 적용 미확인" else "$label 녹음 상태 전송 실패"
+                notifyUI()
+            }
+        }.onFailure { recordingVisibilityStatus = "$label 녹음 상태 전송 실패" }
         notifyUI()
     }
     private var foreground = false
@@ -124,8 +154,14 @@ internal class BridgeService : Service() {
         check(!prompterReserved) { "프롬프터 재생·전송·전환을 먼저 종료하세요" }
     }
     private fun requireCaptureFree() {
+        requireNativeRecorderFree()
         check(!conversations.state.running && !conversations.state.stopping && voiceTransport.source == null &&
             !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy) { "현재 음성·기록 기능을 먼저 종료하세요" }
+    }
+    private fun requireNativeRecorderFree() {
+        check(!deviceSettings.state.initialization.recorder.occupied) {
+            "안경 자체 녹음이 진행 중입니다. 안경에서 녹음을 종료한 후 상태를 다시 읽으세요."
+        }
     }
     private fun requireNativeCapturePageFree(source: ConversationSource) {
         if (source != ConversationSource.REALTIME)
@@ -249,6 +285,10 @@ internal class BridgeService : Service() {
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {
+                if (frame.protocol == 0x06) handleCapability(frame)
+                // A native assistant event before this connection is authenticated
+                // cannot become a valid current-link wake.
+                if (frame.protocol == 0x0d && state.link.phase != LinkPhase.FULL) return@runCatching
                 teleprompter.observe(frame)
                 requests.receive(frame)
                 // Assistant control events (not audio) go to the app log, to see how the firmware behaves around barge-in.
@@ -272,7 +312,11 @@ internal class BridgeService : Service() {
             org.json.JSONArray(conversations.repository.records.map { it.json().apply { remove("speakerSamples") } })
         }, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }, { agent.harness }, ::recordAPI)
         requests.observe = { protocol, type, body ->
-            when (protocol) { 15 -> deviceSettings.observe(type, body); 22 -> content.observe(type, body) }
+            when (protocol) {
+                15 -> deviceSettings.observe(type, body)
+                22 -> content.observe(type, body)
+                14 -> if (state.link.phase == LinkPhase.FULL && !state.disconnecting) deviceSettings.observeRecorder(type, body)
+            }
         }
         conversations = ConversationController(this, settings, ::notifyUI, ::conversationCapture, ::submitVoiceRequest,
             { segment, source ->
@@ -409,6 +453,8 @@ internal class BridgeService : Service() {
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     hostVisibilityRevision++
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
+                    recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
+                    capabilityStatus = "연결 끊김 · 이전 응답 무효"
                     cancelKoreanWake()
                     cancelNavigationSwitch()
                     clearVoiceNavigation()
@@ -432,9 +478,12 @@ internal class BridgeService : Service() {
                 }
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
                     nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
+                    capabilityStatus = "현재 연결의 협상 요청 미수신"
                     syncHostVisibility()
-                    content.connected(); runCatching { deviceSettings.refresh() }
-                    if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
+                    content.connected()
+                    runCatching { deviceSettings.refresh(initialize = true) {
+                        if (reconnectCapture.pending) tryResumeAlwaysOn()
+                    } }.onFailure { onLog("연결 초기화 시작 실패") }
                 }
                 if (currentEvent is GlassesEvent.ExternalPage) navigationVoiceHandoff = null
                 if (currentEvent is GlassesEvent.ExternalPage && prompterLaunchPending) cancelPrompterLaunch()
@@ -890,6 +939,7 @@ internal class BridgeService : Service() {
     fun startConversation(mode: ConversationMode, source: ConversationSource, target: VoicePerson? = null,
                           resumeOnReconnect: Boolean = false) {
         check(!migration.state.busy) { "기록 이전을 먼저 종료하세요" }
+        requireNativeRecorderFree()
         requirePrompterFree()
         check(!translator.active && !mediaCaptionState.busy) { "실시간 번역·자막을 먼저 종료하세요" }
         check(voiceTransport.source == null && (source == ConversationSource.NATIVE) == voiceTransport.nativeActive) {
@@ -935,7 +985,10 @@ internal class BridgeService : Service() {
         if (destroyed || !foreground || state.disconnecting || !supervisor.recoveryPermissions()) {
             cancelAlwaysOnRecovery(); updateNotification(); notifyUI(); return
         }
-        if (state.link.phase != LinkPhase.FULL) return
+        if (state.link.phase != LinkPhase.FULL || deviceSettings.state.busy) return
+        if (deviceSettings.state.initialization.recorder.occupied) {
+            cancelAlwaysOnRecovery(); onLog("안경 자체 녹음이 진행 중이므로 종일 기록 자동 재개 중단"); notifyUI(); return
+        }
         if (state.intent != DisplayIntent.Idle || state.ownership != DisplayOwnership.APP || translator.active || voiceTransport.nativeActive || migration.state.busy || prompterReserved) {
             cancelAlwaysOnRecovery(); return
         }
@@ -947,6 +1000,9 @@ internal class BridgeService : Service() {
     }
     private fun nativeWake() {
         nativeWakeStatus = "안경 기본 호출 이벤트 수신"
+        if (deviceSettings.state.initialization.recorder.occupied) {
+            nativeWakeStatus += " · 안경 자체 녹음 사용 중"; notifyUI(); return
+        }
         if (speechOutput.speaking) speechOutput.stop()
         if (translator.active || mediaCaptionState.busy) { nativeWakeStatus += " · 번역/자막 사용 중"; notifyUI(); return }
         if (prompterReserved) {
@@ -1620,6 +1676,7 @@ internal class BridgeService : Service() {
 
     fun startKoreanWake(allowAI: Boolean, keyword: Boolean = false) = startCaptionMode(true, allowAI, keyword)
     private fun startCaptionMode(wake: Boolean, allowAI: Boolean, keyword: Boolean = false) {
+        requireNativeRecorderFree()
         check(foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
             voiceTransport.source == null && audioOwner == null &&

@@ -51,6 +51,11 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note("안경 마이크: " + flag(mic))
             Note("펌웨어 AI 활성화: " + flag(firmware?.deviceFlag("enabled")))
             Note("호스트 상태 동기화: " + s.hostVisibilityStatus)
+            Note("녹음 서비스 상태 동기화: " + s.recordingVisibilityStatus)
+            Note("기능 협상: " + s.capabilityStatus)
+            Note("안경 내부 시계: " + s.deviceSettings.initialization.clockLabel)
+            Note("펌웨어 보고 버전: " + (s.deviceSettings.initialization.firmwareVersion ?: "미확인"))
+            Note("안경 자체 녹음: " + s.deviceSettings.initialization.recorder.label)
             Note("펌웨어 호출: " + flag(firmware?.deviceFlag("voiceWakeup")) + " · " + when (firmware?.deviceInt("wakeupWord")) { 1 -> "샤오레이 샤오레이"; 2 -> "Hey RayNeo"; else -> "호출어 미확인" })
             Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
             Note("최근 기본 호출: " + s.nativeWakeStatus)
@@ -60,7 +65,8 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
                 Text("독립 기본 호출 준비 · 안경 설정 적용")
             }
             Note(s.deviceSettings.notice)
-            ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } }, enabled = linked && !s.deviceSettings.busy) { Text("안경 상태 다시 읽기") }
+            ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh(initialize = true) } },
+                enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) { Text("안경 초기 상태 다시 동기화") }
             Note("음성 모델: " + if (speechReady && s.conversation.modelReady) "준비됨" else "설정 또는 다운로드 필요")
             Note("기록 오디오: ${s.conversation.decodedSeconds.toInt()}초 · " + (s.conversation.error ?: s.conversation.status))
             Note(s.audioLevels.timingSummary())
