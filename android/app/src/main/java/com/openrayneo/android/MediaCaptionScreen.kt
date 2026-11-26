@@ -19,10 +19,20 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
     var language by rememberSaveable { mutableStateOf("en") }
     var korean by rememberSaveable { mutableStateOf(true) }
     var details by rememberSaveable { mutableStateOf(false) }
+    var pendingStart by remember { mutableStateOf<MediaCaptionOptions?>(null) }
     val options = MediaCaptionOptions(MediaCaptionScope.valueOf(scope), language, korean)
     val needsTranslation = MediaTranslationRoute.required(language, korean)
     val problem = if (capture.busy) null else if (!s.available) "연결 서비스 준비 중" else
-        runCatching { model.service().checkMediaCaption(options) }.exceptionOrNull()?.let { it.message ?: "미디어 자막 준비 상태를 확인할 수 없습니다." }
+        runCatching { model.service().checkMediaCaption(options, requirePrepared = false) }.exceptionOrNull()?.let { it.message ?: "미디어 자막 준비 상태를 확인할 수 없습니다." }
+    // Only continue the explicit start action while this screen and the same options are active.
+    LaunchedEffect(pendingStart, mt.phase, mt.language, options, s.available, capture.busy) {
+        val request = pendingStart ?: return@LaunchedEffect
+        if (request != options || !s.available || capture.busy) { pendingStart = null; return@LaunchedEffect }
+        if (mt.readyFor(request.language)) {
+            pendingStart = null
+            model.attempt { model.service().checkMediaCaption(request); start(request) }
+        } else if (!mt.preparing) pendingStart = null
+    }
     val labels = listOf("en" to "영어", "ja" to "일본어", "zh" to "중국어", "ko" to "한국어")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
@@ -79,31 +89,35 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                     RadioButton(korean, { korean = true }, enabled = !mt.preparing); Text("한국어 번역")
                     RadioButton(!korean, { korean = false }, enabled = !mt.preparing); Text("원문 자막")
                 }
-                Note("영어·일본어·중국어에는 SenseVoice 모델을 준비하세요. 설치된 Nemotron은 영어, 한국어 모델은 한국어에 재사용할 수 있습니다. 일상 음성 설정은 변경하지 않습니다.")
-                ToolOutlinedButton(onClick = voiceSettings, enabled = !mt.preparing, modifier = Modifier.fillMaxWidth()) { Text("음성 모델 다운로드 화면 열기") }
+                Note("음성 인식 모델은 앱에 포함되어 있으며 원문 언어에 맞게 자동 선택합니다. 일상 음성 설정은 변경하지 않습니다.")
+                if (s.available && runCatching { model.service().translator.mediaCaptionConfig(language) }.isFailure)
+                    ToolOutlinedButton(onClick = voiceSettings, enabled = !mt.preparing) { Text("음성 모델 상태 확인") }
                 if (language == "ko" && korean) Note("한국어 음성은 번역 모델 없이 원문을 표시합니다.")
                 if (needsTranslation || mt.preparing) {
                     Text("내장 번역 모델", style = MaterialTheme.typography.titleMedium)
-                    Note("Mozilla 번역 모델 · 영어→한국어 직접, 일본어·중국어는 영어 경유. 최초 전체 다운로드 영어 약 38MB, 일본어·중국어 약 76MB. 설치한 공통 파일은 다시 내려받지 않습니다.")
-                    Note(if (mt.language == language || mt.preparing) mt.detail else "선택한 언어 모델 준비 필요")
+                    Note("영어→한국어 직접, 일본어·중국어는 영어 경유. 모델은 APK에 포함되며 자막 시작 시 자동 준비합니다.")
+                    Note(if (mt.language == language || mt.preparing) mt.detail else "시작하면 내장 모델 자동 준비")
                     if (mt.preparing) {
                         if (mt.total > 0) {
                             LinearProgressIndicator(progress = { (mt.received.toDouble() / mt.total).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                             Note("${mt.received / 1_000_000} / ${mt.total / 1_000_000} MB")
                         } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        ToolOutlinedButton(onClick = { model.attempt { model.service().cancelMediaTranslationPreparation() } },
-                            enabled = mt.phase != LocalMediaTranslationPhase.CANCELLING) { Text("모델 준비 취소") }
-                    } else if (!mt.readyFor(language)) {
-                        ToolButton(onClick = { model.attempt { model.service().prepareMediaTranslation(language) } },
-                            enabled = s.available) { Text("모델 다운로드·준비") }
+                        ToolOutlinedButton(onClick = { pendingStart = null; model.attempt { model.service().cancelMediaTranslationPreparation() } },
+                            enabled = mt.phase != LocalMediaTranslationPhase.CANCELLING) { Text("시작 취소") }
                     }
                 }
-                if (mt.phase == LocalMediaTranslationPhase.READY && !mt.preparing)
-                    TextButton(onClick = { model.attempt { model.service().releaseMediaTranslation() } }) { Text("번역 모델 메모리 해제") }
                 if (capture.phase == MediaCapturePhase.ERROR) Note("최근 종료: " + capture.detail + " · 수집 " + capture.samples + "샘플 · 확정 문장 " + s.mediaFinalCount + "개")
                 if (problem != null) Note("시작할 수 없는 이유: " + problem)
-                ToolButton(onClick = { start(options) }, enabled = problem == null && s.available && !mt.preparing,
-                    modifier = Modifier.fillMaxWidth()) { Text("시스템 승인 후 자막 시작") }
+                ToolButton(onClick = {
+                    model.attempt {
+                        if (needsTranslation && !mt.readyFor(language)) {
+                            model.service().checkMediaCaption(options, requirePrepared = false)
+                            model.service().prepareMediaTranslation(language)
+                            pendingStart = options
+                        } else start(options)
+                    }
+                }, enabled = problem == null && s.available && !mt.preparing && pendingStart == null,
+                    modifier = Modifier.fillMaxWidth()) { Text(if (mt.preparing) "자막 시작 준비 중…" else "시스템 승인 후 자막 시작") }
             }
             Note("Mozilla Translations / Bergamot 및 Ngoroth의 공개 Android 구현 기반. 모델 MPL-2.0. 설치 모델로 번역하며 음성·전사·번역은 저장하거나 외부로 전송하지 않습니다. 오류 시 원문을 표시하고 유료 서버로 전환하지 않습니다.")
             Note("Android 오디오 및 화면 공유 승인창은 재생음 수집 권한을 얻기 위해 필요합니다. 안경 마이크 패킷은 앱에서 사용하지 않지만 펌웨어 자체 마이크 상태는 아직 실기기 확인이 필요합니다.")

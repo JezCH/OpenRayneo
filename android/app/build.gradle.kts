@@ -59,6 +59,7 @@ android {
     sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/mozilla/jni"))
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/mozilla/assets"))
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/bundled-speech-assets"))
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/bundled-translation-assets"))
 }
 
 val prepareVoiceModels by tasks.registering(Exec::class) {
@@ -82,7 +83,21 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.con
     dependsOn(prepareBundledSpeech)
 }
 
-// Build exact upstream native source; translation weights are downloaded by the user.
+// Package the existing pinned Mozilla model catalog at build time.
+val prepareBundledTranslation by tasks.registering(Exec::class) {
+    val script = rootProject.file("../scripts/prepare-android-bundled-translation.py")
+    val catalog = file("src/main/assets/mozilla-media-models.json")
+    val license = rootProject.file("../ThirdParty/MozillaTranslation/LICENSE")
+    val output = layout.buildDirectory.dir("generated/bundled-translation-assets")
+    inputs.files(script, catalog, license)
+    outputs.dir(output)
+    commandLine("python3", script.absolutePath, "prepare", output.get().asFile.absolutePath)
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(prepareBundledTranslation)
+}
+
+// Build exact upstream native source; translation weights are included in the APK.
 val mozillaAbis = providers.gradleProperty("openrayneo.abis").orElse("arm64-v8a")
 val prepareMozillaNative by tasks.registering(Exec::class) {
     val script = rootProject.file("../scripts/prepare-android-mozilla.py")

@@ -8,7 +8,7 @@ import io.github.ngoroth.offlinetranslator.mozilla.MozillaNativeRuntime
 import java.util.concurrent.Executors
 
 /** Main-thread session owner, one native worker. One in-flight and one latest pending final.
- * Model downloader is reachable only from explicit preparation, never from translate().
+ * Model preparation reads the APK's bundled assets, never a network.
  */
 internal class MediaLocalTranslation(context: Context, private val main: Handler, private val changed: () -> Unit) {
     private val models = MozillaMediaModels(context.applicationContext)
@@ -39,7 +39,7 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
                     main.post {
                         if (!closed && !cancelPrepare && ticket == preparationId) publish(state.copy(
                             phase = phase, received = received, total = total,
-                            detail = if (phase == LocalMediaTranslationPhase.DOWNLOADING) "번역 모델 다운로드 중" else "번역 모델 무결성 확인 중"))
+                            detail = "내장 번역 모델 준비 중"))
                     }
                 }
                 check(!cancelled()) { "번역 모델 준비 취소" }
@@ -76,7 +76,6 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
     fun cancelPreparation() {
         if (!state.preparing || closed) return
         cancelPrepare = true
-        models.cancel()
         publish(state.copy(phase = LocalMediaTranslationPhase.CANCELLING, detail = "모델 준비 취소 중"))
     }
 
@@ -155,8 +154,7 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
     fun close() {
         closed = true; cancelPrepare = true; activeSession = null
         synchronized(lock) { pending = null }
-        models.cancel()
-        worker.execute { runCatching { releaseRuntime() }; models.close() }
+        worker.execute { runCatching { releaseRuntime() } }
         worker.shutdown()
     }
     private fun releaseRuntime() { val old = runtime; runtime = null; old?.close() }
@@ -164,7 +162,7 @@ internal class MediaLocalTranslation(context: Context, private val main: Handler
     private fun preparationError(error: Throwable): String = when (error) {
         is io.github.ngoroth.offlinetranslator.mozilla.MozillaNativeException -> "내장 번역 엔진 준비 실패 (${error.code})"
         is OutOfMemoryError -> "번역 모델을 로딩할 메모리가 부족합니다"
-        is java.io.IOException -> "번역 모델 다운로드 또는 저장 실패 · 네트워크/저장공간 확인"
+        is java.io.IOException -> "내장 번역 모델 읽기 또는 저장 실패 · 설치 APK/저장공간 확인"
         else -> error.message?.takeIf { it.startsWith("번역") || it.startsWith("모델") } ?: "내장 번역 모델 준비 실패"
     }
 }

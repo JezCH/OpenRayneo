@@ -2,24 +2,15 @@
 package com.openrayneo.android
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import okhttp3.Call
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.io.FilterInputStream
-import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
-import java.util.zip.GZIPInputStream
 
-/** Model-only I/O. Captured audio, transcript and credentials never enter this class. */
+/** Model-only APK asset I/O. No network, captured audio, transcript or credentials. */
 internal class MozillaMediaModels(private val context: Context) {
     private data class Component(val role: String, val name: String, val wireBytes: Long, val bytes: Long,
                                  val hash: String, val url: String, val gzip: Boolean) {
@@ -28,13 +19,6 @@ internal class MozillaMediaModels(private val context: Context) {
     private data class Model(val id: String, val source: String, val files: List<Component>)
     private val catalog by lazy { readCatalog() }
     private val root get() = File(context.noBackupFilesDir, "mozilla-media-models-v1")
-    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-        .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).build()
-    @Volatile private var call: Call? = null
-
-    fun cancel() { call?.cancel() }
-    fun close() { cancel(); http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
-
     fun configurations(language: String, cancelled: () -> Boolean,
                        progress: (LocalMediaTranslationPhase, Long, Long) -> Unit): LinkedHashMap<String, String> {
         val models = MediaTranslationRoute.steps(language).map { checkNotNull(catalog[it]) }
@@ -44,25 +28,17 @@ internal class MozillaMediaModels(private val context: Context) {
         val files = models.flatMap { it.files }.distinctBy { it.installedName }
         progress(LocalMediaTranslationPhase.VERIFYING, 0, 0)
         val missing = files.filterNot { file -> verify(File(directory, file.installedName), file, cancelled) }
-        val total = missing.sumOf { it.wireBytes }
+        val total = missing.sumOf { it.bytes }
         if (missing.isNotEmpty()) {
-            val network = context.getSystemService(ConnectivityManager::class.java)
-            val capabilities = network.getNetworkCapabilities(network.activeNetwork)
-            check(capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
-                "모델 다운로드에는 Wi-Fi 등 비종량제 인터넷 연결이 필요합니다"
-            }
-            check(directory.usableSpace > missing.sumOf { it.bytes } + 8 * 1024 * 1024L) {
-                "번역 모델을 설치할 저장 공간이 부족합니다"
-            }
+            check(directory.usableSpace > total + 8 * 1024 * 1024L) { "번역 모델을 준비할 저장 공간이 부족합니다" }
             var completed = 0L
             for (file in missing) {
                 checkCancelled(cancelled)
-                download(directory, file, cancelled) { received ->
-                    progress(LocalMediaTranslationPhase.DOWNLOADING, completed + received, total)
+                installBundled(directory, file, cancelled) { received ->
+                    progress(LocalMediaTranslationPhase.VERIFYING, completed + received, total)
                 }
-                completed += file.wireBytes
-                progress(LocalMediaTranslationPhase.DOWNLOADING, completed, total)
+                completed += file.bytes
+                progress(LocalMediaTranslationPhase.VERIFYING, completed, total)
             }
         }
         checkCancelled(cancelled)
@@ -158,62 +134,32 @@ internal class MozillaMediaModels(private val context: Context) {
         return hex(digest.digest()) == file.hash
     }
 
-    private fun download(directory: File, file: Component, cancelled: () -> Boolean, progress: (Long) -> Unit) {
+    /** Copy the exact signed APK model. Never contact a network or silently change models. */
+    private fun installBundled(directory: File, file: Component, cancelled: () -> Boolean, progress: (Long) -> Unit) {
         val target = File(directory, file.installedName)
         val temp = File.createTempFile("model-", ".part", directory)
-        val active = http.newCall(Request.Builder().url(file.url).header("Accept-Encoding", "identity").build())
-        call = active
         try {
-            checkCancelled(cancelled)
-            active.execute().use { response ->
-                check(response.isSuccessful) { "번역 모델 다운로드 실패 (HTTP ${response.code})" }
-                val body = checkNotNull(response.body) { "번역 모델 응답이 비어 있습니다" }
-                check(body.contentLength() == -1L || body.contentLength() == file.wireBytes) { "번역 모델 다운로드 크기 불일치" }
-                val wire = BoundedInput(body.byteStream(), file.wireBytes, cancelled, progress)
-                val digest = MessageDigest.getInstance("SHA-256")
-                var written = 0L
-                (if (file.gzip) GZIPInputStream(wire, 65536) else wire).use { input ->
-                    FileOutputStream(temp).use { output ->
-                        val buffer = ByteArray(65536)
-                        while (true) {
-                            checkCancelled(cancelled)
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            written += count
-                            check(written <= file.bytes) { "번역 모델 압축 해제 크기 초과" }
-                            digest.update(buffer, 0, count); output.write(buffer, 0, count)
-                        }
-                        check(written == file.bytes && wire.received == file.wireBytes &&
-                            hex(digest.digest()) == file.hash) { "번역 모델 무결성 검증 실패" }
-                        output.fd.sync()
+            val digest = MessageDigest.getInstance("SHA-256")
+            var written = 0L
+            context.assets.open("bundled-translation/" + file.installedName).use { input ->
+                FileOutputStream(temp).use { output ->
+                    val buffer = ByteArray(65536)
+                    while (true) {
+                        checkCancelled(cancelled)
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        written += count
+                        check(written <= file.bytes) { "번역 모델 크기 초과" }
+                        digest.update(buffer, 0, count); output.write(buffer, 0, count)
+                        if (written % 262144L < count || written == file.bytes) progress(written)
                     }
+                    check(written == file.bytes && hex(digest.digest()) == file.hash) { "번역 모델 무결성 검증 실패" }
+                    output.fd.sync()
                 }
-                checkCancelled(cancelled)
-                Files.move(temp.toPath(), target.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
             }
-        } finally {
-            if (call === active) call = null
-            temp.delete()
-        }
-    }
-
-    private class BoundedInput(input: InputStream, private val expected: Long,
-                               private val cancelled: () -> Boolean, private val progress: (Long) -> Unit) : FilterInputStream(input) {
-        var received = 0L; private set
-        private var reported = 0L
-        private fun account(count: Int) {
-            if (count <= 0) return
-            received += count
-            check(received <= expected) { "번역 모델 전송 크기 초과" }
-            if (received - reported >= 262144 || received == expected) {
-                reported = received; progress(received)
-            }
-        }
-        override fun read(): Int { checkCancelled(cancelled); val result = super.read(); if (result >= 0) account(1); return result }
-        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
             checkCancelled(cancelled)
-            return super.read(buffer, offset, length).also(::account)
-        }
+            Files.move(temp.toPath(), target.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
+        } finally { temp.delete() }
     }
     private fun atomicWrite(target: File, bytes: ByteArray) {
         val temp = File.createTempFile("config-", ".part", target.parentFile)
