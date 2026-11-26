@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -44,15 +45,18 @@ internal fun AppUpdateScreen(model: AppModel) {
 
     fun launchWork(work: suspend () -> Unit) {
         if (job != null) return
-        job = scope.launch {
+        val workJob = scope.launch(start = CoroutineStart.LAZY) {
             try { work() }
             catch (e: CancellationException) { status = "작업 취소"; throw e }
             catch (e: Exception) { status = e.message?.take(300) ?: "업데이트 작업 실패" }
             finally { job = null }
         }
+        job = workJob
+        workJob.start()
     }
 
     LaunchedEffect(Unit) {
+        AppUpdateInstall.restore(app)
         signer = withContext(Dispatchers.IO) { runCatching { AppUpdate.installedSigner(app) }.getOrElse { "확인 실패" } }
     }
     DisposableEffect(Unit) {
@@ -63,7 +67,9 @@ internal fun AppUpdateScreen(model: AppModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("검증 앱 업데이트", style = MaterialTheme.typography.headlineSmall)
         Text("현재 버전: " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-        Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)
+        }
         Text("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
         Button(onClick = {
             downloaded?.delete(); downloaded = null; candidate = null; progress = 0
