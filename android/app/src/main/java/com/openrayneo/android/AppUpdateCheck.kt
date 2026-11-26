@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.File
 import org.json.JSONObject
 
 /** Foreground-only metadata checks. No automatic APK download, install or user data upload. */
@@ -22,6 +23,35 @@ internal class AppUpdateCheck(context: Context) {
     private val prefs = app.getSharedPreferences("validation_update_check", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
+    private var downloadJob: Job? = null
+    var downloading by mutableStateOf(false); private set
+    var downloadCandidate by mutableStateOf<AppUpdate.Candidate?>(null); private set
+    var downloaded by mutableStateOf<File?>(null); private set
+    var downloadProgress by mutableStateOf(0L); private set
+    var downloadStatus by mutableStateOf(""); private set
+
+    fun startDownload(item: AppUpdate.Candidate) {
+        check(!checking && error.isBlank() && candidate == item && downloadJob == null) { "최신 업데이트 정보를 확인하세요" }
+        downloadCandidate = item; downloaded = null; downloadProgress = 0L
+        downloadStatus = "APK 확보 및 무결성 확인 중"
+        downloading = true
+        val work = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                downloaded = AppUpdate.download(app, item) { count ->
+                    kotlinx.coroutines.withContext(Dispatchers.Main) { downloadProgress = count }
+                }
+                downloadStatus = "다운로드 및 인증서 검증 완료"
+            } catch (e: CancellationException) {
+                downloadStatus = "다운로드 취소"; throw e
+            } catch (e: Exception) {
+                downloadStatus = e.message?.take(300) ?: "업데이트 다운로드 실패"
+            } finally {
+                downloading = false; downloadJob = null
+            }
+        }
+        downloadJob = work; work.start()
+    }
+    fun cancelDownload() { downloadJob?.cancel() }
     private val period = 6 * 60 * 60 * 1000L
     private val retry = 15 * 60 * 1000L
     var automatic by mutableStateOf(prefs.getBoolean("automatic", true)); private set
@@ -42,7 +72,7 @@ internal class AppUpdateCheck(context: Context) {
             val signer = json.getString("signer")
             require(code > BuildConfig.VERSION_CODE && code <= Int.MAX_VALUE &&
                 url == "https://github.com/JezCH/OpenRayneo/releases/download/validation-v$code/OpenRayneo-validation.apk" &&
-                size in 1..(500L * 1024 * 1024) && Regex("[0-9a-f]{64}").matches(digest) &&
+                size in 1..AppUpdate.MAX_APK && Regex("[0-9a-f]{64}").matches(digest) &&
                 Regex("[0-9a-f]{64}").matches(signer) && name.length <= 100)
             AppUpdate.Candidate(code, name, json.getString("notes").take(4000), url, size, digest, signer)
         }.getOrNull()

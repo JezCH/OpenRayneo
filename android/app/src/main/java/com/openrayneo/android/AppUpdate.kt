@@ -25,7 +25,7 @@ internal object AppUpdate {
     private const val LIST = "https://api.github.com/repos/JezCH/OpenRayneo/releases?per_page=30"
     private const val APK = "OpenRayneo-validation.apk"
     private const val MANIFEST = "update-manifest.json"
-    private const val MAX_APK = 1900L * 1024 * 1024
+    const val MAX_APK = 1900L * 1024 * 1024
     private const val MAX_JSON = 2L * 1024 * 1024
     private val tagPattern = Regex("validation-v([1-9][0-9]{0,9})")
     private val digestPattern = Regex("[0-9a-f]{64}")
@@ -131,12 +131,48 @@ internal object AppUpdate {
             a.getString("browser_download_url"), size, digest, signer)
     }
 
+    private fun updateDirectory(context: Context) = File(context.noBackupFilesDir, "verified-app-update")
+    private fun target(context: Context, candidate: Candidate): File {
+        require(candidate.code > BuildConfig.VERSION_CODE && candidate.code <= Int.MAX_VALUE &&
+            digestPattern.matches(candidate.digest) && candidate.size in 1..MAX_APK)
+        return File(updateDirectory(context), "validation-${candidate.code}-${candidate.digest}.apk")
+    }
+    // A candidate file is only a hint for the UI; download() revalidates it before installation.
+    fun hasDownloaded(context: Context, candidate: Candidate): Boolean =
+        runCatching { target(context, candidate).let { it.isFile && it.length() == candidate.size } }.getOrDefault(false)
+
     suspend fun download(context: Context, candidate: Candidate, progress: suspend (Long) -> Unit): File = withContext(Dispatchers.IO) {
         check(supported && candidate.code > BuildConfig.VERSION_CODE && candidate.signer == installedSigner(context))
-        val dir = File(context.cacheDir, "app-update").apply { mkdirs() }
+        val dir = updateDirectory(context)
+        check(dir.isDirectory || dir.mkdirs()) { "업데이트 저장 폴더를 만들 수 없습니다" }
+        val apk = target(context, candidate)
+        if (apk.isFile) {
+            val valid = try {
+                val hash = MessageDigest.getInstance("SHA-256")
+                check(apk.length() == candidate.size)
+                apk.inputStream().use { input ->
+                    val buffer = ByteArray(65536)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        hash.update(buffer, 0, count)
+                    }
+                }
+                check(hex(hash.digest()) == candidate.digest)
+                verifyArchive(context, candidate, apk)
+                true
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { false }
+            if (valid) { progress(candidate.size); return@withContext apk }
+            check(apk.delete()) { "손상된 업데이트 파일을 정리할 수 없습니다" }
+        }
+        // This private directory is dedicated to installer files, never user records.
+        // Clean only old completed installer copies and interrupted temporary downloads.
+        dir.listFiles()?.filter { it.isFile && (it.name.matches(Regex("validation-[0-9]+-[0-9a-f]{64}\\.apk")) ||
+            it.name.matches(Regex("validation-[0-9]+\\.part"))) && it != apk }?.forEach { it.delete() }
         check(dir.usableSpace > candidate.size * 2 + 16 * 1024 * 1024) { "설치에 필요한 저장 공간이 부족합니다" }
         val part = File.createTempFile("validation-", ".part", dir)
-        val apk = File(dir, part.name.removeSuffix(".part") + ".apk")
         var complete = false
         try {
             val hash = MessageDigest.getInstance("SHA-256")
