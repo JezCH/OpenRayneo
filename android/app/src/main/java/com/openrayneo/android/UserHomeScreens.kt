@@ -111,7 +111,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 FeatureTile("실시간 번역", "한국어 ↔ 영어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
             }
         }
-        item { FeatureTile("미디어 자막", "이어폰으로 듣는 재생음 · 원문 자막", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
+        item { FeatureTile("미디어 번역·자막", "이어폰 재생음 · 내장 한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         if (model.recommendedPending) item { RecommendedSettingsCard(model) }
         item { HomeFeatureDashboard(model, navigate, open, connect) }
         item {
@@ -175,7 +175,7 @@ internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
             FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
         } }
         item { FeatureTile("한국어 호출", "종일 호출 · 호출어 설정", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
-        item { FeatureTile("미디어 자막", "YouTube·내부 재생음 원문 자막", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
+        item { FeatureTile("미디어 번역·자막", "YouTube·내부 재생음 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
         item { FeatureTile("실시간 자막", "로컬 음성 인식 · AI 없이 표시", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
         item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
         item { ContentCard {

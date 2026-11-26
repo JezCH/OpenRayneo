@@ -77,7 +77,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
                                 "captions" -> "실시간 자막"
-                                "media-captions" -> "미디어 자막"
+                                "media-captions" -> "미디어 번역·자막"
                                 "korean-wake" -> "한국어 호출"
                                 "korean-glyphs" -> "한글 표시 검사"
                                 "phone-notifications" -> "휴대폰 알림"
