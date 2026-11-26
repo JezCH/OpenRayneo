@@ -125,7 +125,7 @@ internal fun OnboardingScreen(
                     ) {
                         configure("computer")
                     }
-                    Note("로컬 Agent의 의미 전략과 모델은 DSH Go에서 설정합니다. 기록 요약 모델은 '음성 및 요약' 설정에서 따로 설정할 수 있습니다. 휴대폰 음성 입력은 휴대폰의 인식 서비스를 사용합니다.")
+                    Note("로컬 Agent의 의미 전략과 모델은 DSH Go에서 설정합니다. 기록 요약 모델은 '음성 및 요약' 설정에서 따로 설정할 수 있습니다. 휴대폰 음성 입력은 앱 내장 음성 인식 모델을 사용합니다.")
                 }
                 4 -> {
                     ContentCard {
@@ -318,7 +318,7 @@ internal fun SettingsScreen(
         SectionLabel("앱 정보")
         SettingsRow("사용 안내 다시 보기", "안경 연결, 내비게이션 데모 및 어시스턴트 설정", Icons.Outlined.Explore, replay)
         Note(
-            "OpenRayneo ${BuildConfig.VERSION_NAME} · 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})\n기록 오디오는 휴대폰에 암호화 저장되며 전사와 화자 분석이 끝난 뒤 전달됩니다. 시스템 음성 입력은 휴대폰 인식 서비스를 사용합니다.",
+            "OpenRayneo ${BuildConfig.VERSION_NAME} · 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})\n기록 오디오는 휴대폰에 암호화 저장되며 전사와 화자 분석이 끝난 뒤 전달됩니다. 휴대폰 음성 입력은 앱 내장 모델을 사용합니다.",
             Modifier.padding(vertical = 12.dp),
         )
     }
