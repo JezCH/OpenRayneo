@@ -2,7 +2,9 @@
 package com.openrayneo.android
 
 internal object MediaTranslationRoute {
+    const val BILINGUAL = "ko-en-bidi"
     fun steps(language: String): List<String> = when (language) {
+        BILINGUAL -> listOf("en-ko", "ko-en")
         "ko" -> emptyList()
         "en" -> listOf("en-ko")
         "ja" -> listOf("ja-en", "en-ko")

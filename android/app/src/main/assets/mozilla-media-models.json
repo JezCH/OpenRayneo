@@ -118,6 +118,42 @@
           "f921a605-3891-4f85-abad-0fda6863ced9"
         ]
       ]
+    },
+    {
+      "source": "ko",
+      "target": "en",
+      "architecture": "base-memory",
+      "version": "3.1",
+      "directory": "models/ko-en/cjk_retrain_base-memory_QgYNtG3BTzKBFSV1wl06Pg/exported/",
+      "files": [
+        [
+          "lexicalShortlist",
+          "lex.50.50.koen.s2t.bin",
+          4381854,
+          8617516,
+          "b26291f063ce216a74239275f0485534a38111203e59d42a2a56ba62d6eeb196",
+          "1763760490433667",
+          "c21d1181-bbde-4a8e-a85b-ebcaa63c1489"
+        ],
+        [
+          "model",
+          "model.koen.intgemm.alphas.bin",
+          32152814,
+          43977787,
+          "7cb30cbc0a86e242084756445268a2346136771c92b884d9b4ebb077f67d5507",
+          "1763760497319427",
+          "137171e0-6e21-4ab6-a35a-6906b587fca3"
+        ],
+        [
+          "vocab",
+          "vocab.koen.spm",
+          706864,
+          1410063,
+          "1c72b740ab793cdc3a8f16913dd6b4e806c77421077dd2d85edeb7be38418598",
+          "1763760489641042",
+          "baad84dd-1ad9-4abe-a436-7446fa9bd8e8"
+        ]
+      ]
     }
   ],
   "rawAttachments": {}

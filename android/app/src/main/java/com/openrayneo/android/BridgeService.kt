@@ -1402,7 +1402,7 @@ internal class BridgeService : Service() {
             !translator.active && !voiceTransport.nativeActive && teleprompter.state.active == null && !teleprompter.state.busy) { "다른 화면과 음성 기능을 먼저 종료하세요" }
         check(sendCompanionNotification("한글 표시 검사", text, FocusPolicy.Output.DIRECT_ANSWER)) { "안경을 먼저 연결하세요" }
     }
-    fun checkTranslation(local: Boolean) {
+    fun checkTranslation(local: Boolean, bundled: Boolean = false, requirePrepared: Boolean = true) {
         check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         requirePrompterFree()
         requireCaptureFree()
@@ -1411,14 +1411,15 @@ internal class BridgeService : Service() {
             !state.navigation.enabled && audioOwner == null && !agent.running && !codex.running && !speechOutput.speaking) {
             "현재 기록·화면·AI·음성 재생을 먼저 종료하세요"
         }
-        translator.validate(settings.read(), local)
+        check(!translator.mediaTranslation.state.preparing) { "내장 번역 엔진 준비 중" }
+        translator.validate(settings.read(), local, bundled, requirePrepared)
     }
-    fun startTranslation(local: Boolean = false) {
-        checkTranslation(local)
+    fun startTranslation(local: Boolean = false, bundled: Boolean = false) {
+        checkTranslation(local, bundled)
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
         try {
-            translator.start(settings.read(), local = local)
+            translator.start(settings.read(), local = local, bundled = bundled)
             dispatch(GlassesEvent.StartTranslation)
             check(translator.active && state.intent == DisplayIntent.Translation) { "번역 화면을 시작하지 못했습니다" }
         } catch (error: Exception) {

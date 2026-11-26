@@ -90,7 +90,7 @@ internal class MozillaMediaModels(private val context: Context) {
             val row = routes.getJSONObject(index)
             val source = row.getString("source").let { if (it == "zh-Hans") "zh" else it }
             val id = source + "-" + row.getString("target")
-            require(id in setOf("en-ko", "ja-en", "zh-en"))
+            require(id in setOf("en-ko", "ja-en", "zh-en", "ko-en"))
             require(row.getString("version") == "3.1")
             val directory = row.getString("directory")
             require(directory.startsWith("models/") && directory.endsWith("/exported/") &&
@@ -116,7 +116,7 @@ internal class MozillaMediaModels(private val context: Context) {
             require(files.map { it.role }.toSet().let { roles -> roles.size == files.size &&
                 roles in setOf(setOf("model", "lex", "vocab"), setOf("model", "lex", "srcvocab", "trgvocab")) })
             id to Model(id, source, files)
-        }.also { require(it.keys == setOf("en-ko", "ja-en", "zh-en")) }
+        }.also { require(it.keys == setOf("en-ko", "ja-en", "zh-en", "ko-en")) }
     }
 
     private fun verify(target: File, file: Component, cancelled: () -> Boolean): Boolean {
