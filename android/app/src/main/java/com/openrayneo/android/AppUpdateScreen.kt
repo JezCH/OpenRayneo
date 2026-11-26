@@ -37,7 +37,7 @@ internal fun AppUpdateScreen(model: AppModel) {
 
     fun idle(): Boolean {
         val s = model.state
-        return model.recommendedEditable && !s.captionActive && !s.mediaCaption.busy &&
+        return model.recommendedEditable && !s.deviceSettings.busy && !s.captionActive && !s.mediaCaption.busy &&
             !s.mediaTranslation.preparing && !s.offlinePreparing && !s.speechPlaying &&
             !s.chatContinuityBusy && s.approvals.isEmpty() && s.agentReviews.isEmpty() &&
             !s.agentServer.enabled && !s.recordSync.enabled && !s.glasses.navigation.enabled &&
@@ -177,6 +177,7 @@ internal fun AppUpdateScreen(model: AppModel) {
             val s = model.state
             Text("설치 차단 원인: " + buildList {
                 if (!s.available) add("연결 서비스 준비 중")
+                if (s.deviceSettings.busy) add("안경 상태·설정 동기화")
                 if (s.glasses.link.reconnectWaiting) add("자동 재연결 대기")
                 if (s.glasses.disconnecting || s.glasses.link.phase !in setOf(LinkPhase.DISCONNECTED, LinkPhase.FULL, LinkPhase.BLE_ONLY)) add("연결 전환")
                 if (s.conversation.running || s.conversation.stopping || s.conversation.summarizing || s.alwaysOnResumePending) add("기록·요약·자동 재개")

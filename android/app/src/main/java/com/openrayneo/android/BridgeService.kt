@@ -2311,7 +2311,13 @@ internal class BridgeService : Service() {
     // Fixed vocabulary only: no transcript, question, identity or credential on lock screen.
     private fun summary(): String {
         val c = conversations.state
-        val link = SystemStatusPolicy.link(state.link.phase.name, state.link.reconnectWaiting, state.disconnecting)
+        val link = if (state.link.phase == LinkPhase.FULL && !state.disconnecting)
+            when (deviceSettings.state.readback) {
+                DeviceReadback.VERIFIED -> SystemStatusPolicy.Status(SystemStatusPolicy.Phase.READY, "기기 응답 확인")
+                DeviceReadback.FAILED -> SystemStatusPolicy.Status(SystemStatusPolicy.Phase.ERROR, "기기 응답 실패")
+                else -> SystemStatusPolicy.Status(SystemStatusPolicy.Phase.WAITING, "기기 응답 대기")
+            }
+        else SystemStatusPolicy.link(state.link.phase.name, state.link.reconnectWaiting, state.disconnecting)
         val capture = SystemStatusPolicy.capture(c.running, c.stopping, c.reprocessing, c.liveTranscriptOnly,
             alwaysOnResumePending, audioLevels.coordinatorState().phase.name, c.mode == ConversationMode.ENROLL)
         val activities = buildList {

@@ -19,6 +19,9 @@ internal class GlassesVoiceTransport(
     var source: ConversationSource? = null; private set
     var wakeId: String? = null; private set
     var nativeActive = false; private set
+    // Real type-1 frames only. Follow-up turns and local software wake do not
+    // masquerade as a firmware wake. This is evidence for the current link.
+    var nativeWakeObserved = false; private set
     private var nativeCode = 0
     private var sequence = 0x7100
     private var lifeTask: String? = null
@@ -61,7 +64,7 @@ internal class GlassesVoiceTransport(
         if (previous == ConversationSource.ALWAYS_ON) send(0x0f, 20, JSONObject().put("cmd", "life_log_switch")
             .put("payload", JSONObject().put("value", 0).put("mode", 0).put("data", "")))
     }
-    fun disconnected() { source = null; nativeActive = false; wakeId = null; lifeTask = null; answering = false }
+    fun disconnected() { source = null; nativeActive = false; nativeWakeObserved = false; wakeId = null; lifeTask = null; answering = false }
     fun receive(frame: ProtocolCodec.Frame) {
         if (frame.protocol == 0x0f) {
             val message = ProtocolCodec.message(frame.payload); val body = message.json?.let(::JSONObject) ?: return
@@ -78,6 +81,7 @@ internal class GlassesVoiceTransport(
             1 -> {
                 val code = body.optInt("rc")
                 if (code !in 1..6) { trace("지원되지 않는 안경 깨우기 이벤트 rc=$code"); return }
+                nativeWakeObserved = true
                 nativeActive = true; nativeCode = code; wakeId = UUID.randomUUID().toString()
                 lastReply = null; advancedReply = null; answering = false
                 wake()

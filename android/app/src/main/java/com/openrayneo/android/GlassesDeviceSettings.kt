@@ -5,7 +5,8 @@ package com.openrayneo.android
 import org.json.JSONObject
 
 internal data class DeviceSettingsState(val status: JSONObject = JSONObject(), val settings: JSONObject = JSONObject(),
-    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기")
+    val loaded: Boolean = false, val busy: Boolean = false, val notice: String = "안경 연결 후 설정 읽기",
+    val readback: DeviceReadback = DeviceReadback.NONE)
 internal fun JSONObject.deviceInt(key: String): Int? = (opt(key) as? Number)?.toInt()
 internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = opt(key)) {
     is Boolean -> value; is Number -> value.toInt() == 1; else -> null
@@ -13,8 +14,37 @@ internal fun JSONObject.deviceFlag(key: String): Boolean? = when (val value = op
 internal class GlassesDeviceSettings(private val requests: GlassesRequests, private val changed: () -> Unit) {
     @Volatile var state = DeviceSettingsState(); private set
     private val reported = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    fun refresh() = perform { readAll(); "안경의 현재 설정을 읽음" }
-    fun disconnected() { state = DeviceSettingsState(); reported.clear(); changed() }
+    private var revision = 0L
+    /** Two independent, correlated business replies from this connection.
+     * A rejected or timed-out read does not make the transport disconnect,
+     * and a successful socket write does not become device-readback success. */
+    fun refresh() {
+        check(!state.busy) { "현재 기기 작업을 기다리세요" }
+        val token = ++revision
+        state = state.copy(busy = true, readback = DeviceReadback.PENDING, notice = "안경 상태와 설정을 각각 읽는 중…"); changed()
+        requests.perform({
+            val status = runCatching {
+                requests.request(15, 1, envelope("request_general_status")) { type, body ->
+                    type == 1 && body.optJSONObject("generalStatus")?.length()?.let { it > 0 } == true
+                }?.optJSONObject("generalStatus")
+            }.getOrNull()
+            val settings = runCatching {
+                readSettingsForVoice()
+            }.getOrNull()
+            val battery = (status?.opt("battery") as? Number)?.toDouble()
+            val brightness = (status?.opt("brightness") as? Number)?.toDouble()
+            val meaningfulStatus = battery?.let { it in 0.0..100.0 && it == it.toInt().toDouble() } == true ||
+                brightness?.let { it in 1.0..17.0 && it == it.toInt().toDouble() } == true
+            DeviceReadback.from(meaningfulStatus, settings?.length()?.let { it > 0 } == true)
+        }) { result ->
+            if (token == revision) {
+                val readback = result.getOrDefault(DeviceReadback.FAILED)
+                state = state.copy(busy = false, readback = readback, notice = readback.label)
+                changed()
+            }
+        }
+    }
+    fun disconnected() { revision++; state = DeviceSettingsState(); reported.clear(); changed() }
     private fun readAll() {
         requests.request(15, 1, envelope("request_general_status")) { type, body -> type == 1 && body.has("generalStatus") }
         requests.request(15, 4, envelope("request_general_settings")) { type, body -> type == 4 && body.has("generalSettings") }
@@ -129,7 +159,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
 
     private fun readSettingsForVoice(): JSONObject? =
         requests.request(15, 4, envelope("request_general_settings")) { type, body ->
-            type == 4 && body.has("generalSettings")
+            type == 4 && body.optJSONObject("generalSettings")?.length()?.let { it > 0 } == true
         }?.optJSONObject("generalSettings")
     private fun exactInt(value: Any?): Int? {
         val number = (value as? Number)?.toDouble() ?: return null
@@ -238,9 +268,12 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     private fun perform(work: () -> String) {
         check(!state.busy) { "현재 기기 작업을 기다리세요" }
+        val token = ++revision
         state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
         requests.perform(work) { result ->
-            state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
+            if (token == revision) {
+                state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
+            }
         }
     }
     fun observe(type: Int, body: JSONObject) {

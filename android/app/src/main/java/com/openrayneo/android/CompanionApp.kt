@@ -333,7 +333,7 @@ private fun GlassesScreen(
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "연결됨 · 휴대폰 직접 연결" else state.link.detail)
+                        Note(if (linked) "BLE·SPP 연결 · " + model.state.deviceSettings.readback.label else state.link.detail)
                     }
                     ToolOutlinedButton(
                         onClick =

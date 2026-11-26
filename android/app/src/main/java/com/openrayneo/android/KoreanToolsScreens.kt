@@ -44,7 +44,9 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             val firmware = s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")
             val mic = s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")
             fun flag(value: Boolean?) = when (value) { true -> "켜짐"; false -> "꺼짐"; null -> "기기 보고 없음" }
-            Note("안경 연결: " + if (linked) "완전 연결" else s.glasses.link.detail)
+            Note("안경 연결: " + if (linked) "BLE 인증·SPP 연결" else s.glasses.link.detail)
+            Note("실제 기기 응답: " + s.deviceSettings.readback.label)
+            Note("현재 연결의 기본 호출 이벤트: " + if (s.nativeWakeObserved) "수신 확인" else "미수신")
             Note("안경 마이크: " + flag(mic))
             Note("펌웨어 AI 활성화: " + flag(firmware?.deviceFlag("enabled")))
             Note("호스트 상태 동기화: " + s.hostVisibilityStatus)

@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StandaloneDeviceProtocolTest {
+    @Test fun distinguishReadbackFromTransportAndPartialReplies() {
+        assertEquals(DeviceReadback.FAILED, DeviceReadback.from(false, false))
+        assertEquals(DeviceReadback.STATUS_ONLY, DeviceReadback.from(true, false))
+        assertEquals(DeviceReadback.SETTINGS_ONLY, DeviceReadback.from(false, true))
+        assertEquals(DeviceReadback.VERIFIED, DeviceReadback.from(true, true))
+        assertEquals(1.toByte(), ProtocolCodec.pairingIntent(false))
+        assertEquals(2.toByte(), ProtocolCodec.pairingIntent(true))
+    }
     @Test fun hostVisibilityUsesDocumentedRawCommand() {
         for (visible in listOf(true, false)) {
             val frame = ProtocolCodec.StreamDecoder().append(ProtocolCodec.hostVisibility(0x6800, visible)).single()
