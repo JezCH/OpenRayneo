@@ -186,7 +186,7 @@ internal class MediaPlaybackCaptureService : Service() {
         finally {
             recorder?.let { record ->
                 runCatching { if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) record.stop() }
-                record.release()
+                runCatching { record.release() }
             }
             val reason = failure ?: stopReason
             main.post { finish(reason) }
