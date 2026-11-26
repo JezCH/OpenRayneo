@@ -43,6 +43,8 @@ android {
     buildFeatures { compose = true; buildConfig = true }
     androidResources { noCompress += "onnx" }
     sourceSets.getByName("main").assets.srcDir("../../ThirdParty/SherpaOnnx")
+    sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/mozilla/jni"))
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/mozilla/assets"))
 }
 
 val prepareVoiceModels by tasks.registering(Exec::class) {
@@ -52,6 +54,19 @@ val prepareVoiceModels by tasks.registering(Exec::class) {
         file("src/main/assets/voice-models/segmentation.int8.onnx"))
 }
 tasks.named("preBuild") { dependsOn(prepareVoiceModels) }
+
+// Build exact upstream native source; translation weights are downloaded by the user.
+val mozillaAbis = providers.gradleProperty("openrayneo.abis").orElse("arm64-v8a")
+val prepareMozillaNative by tasks.registering(Exec::class) {
+    val script = rootProject.file("../scripts/prepare-android-mozilla.py")
+    val output = layout.buildDirectory.dir("generated/mozilla")
+    inputs.file(script)
+    inputs.property("abis", mozillaAbis)
+    outputs.dir(output)
+    commandLine("python3", script.absolutePath, "--cache", rootProject.file("../.build/android-mozilla").absolutePath,
+        "--output", output.get().asFile.absolutePath, "--abis", mozillaAbis.get())
+}
+tasks.named("preBuild") { dependsOn(prepareMozillaNative) }
 
 dependencies {
     implementation(files("libs/sherpa-onnx-2.0.1.aar"))

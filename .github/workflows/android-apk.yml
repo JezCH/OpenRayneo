@@ -6,6 +6,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
@@ -15,6 +16,7 @@ on:
     paths:
       - "android/**"
       - "scripts/prepare-android-voice.sh"
+      - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
@@ -136,6 +138,10 @@ jobs:
             --fixed-signing-key "${OPENRAYNEO_FIXED_SIGNING:-false}" \
             --out "$RUNNER_TEMP/openrayneo-install"
 
+      - name: Include exact Mozilla corresponding source
+        if: env.DISTRIBUTE_APK == 'true'
+        run: cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-install/"
+
       - uses: actions/upload-artifact@v4
         if: env.DISTRIBUTE_APK == 'true'
         with:
@@ -163,3 +169,4 @@ jobs:
           upload android/app/build/outputs/apk/release/app-release.apk "openrayneo-$version-$short.apk"
           upload android/app/build/outputs/apk/validation/app-validation.apk "openrayneo-$version-$short-validation.apk"
           upload "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "openrayneo-dsh-$short.tgz"
+          upload .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "mozilla-native-8eada038-r2-$short.sources.tar.gz"
