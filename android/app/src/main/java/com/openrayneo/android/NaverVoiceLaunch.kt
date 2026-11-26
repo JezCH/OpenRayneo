@@ -15,12 +15,17 @@ import java.lang.ref.WeakReference
 internal object NaverVoiceLaunch {
     private var activity: WeakReference<Activity>? = null
     private var pending: PendingIntent? = null
+    private var pendingLaunch: Pair<String, Intent>? = null
+    private var pendingAt = 0L
+    private var pendingRoute = false
+    var onOpened: ((Long) -> Unit)? = null
     private const val ID = 7922
     fun resumed(value: Activity) { activity = WeakReference(value) }
     fun paused(value: Activity) { if (activity?.get() === value) activity = null }
     data class Result(val opened: Boolean, val message: String)
     fun clear(context: Context) {
         pending?.cancel(); pending = null
+        pendingLaunch = null; pendingAt = 0L; pendingRoute = false
         context.getSystemService(NotificationManager::class.java).cancel(ID)
     }
     fun open(context: Context, request: NaverVoiceCommand.Request, place: NaverPlacePolicy.Place? = null): Result {
@@ -60,7 +65,13 @@ internal object NaverVoiceLaunch {
             manager.createNotificationChannel(NotificationChannel("naver_voice", "네이버지도 음성 요청", NotificationManager.IMPORTANCE_DEFAULT))
             if (manager.getNotificationChannel("naver_voice")?.importance == NotificationManager.IMPORTANCE_NONE)
                 return Result(false, "네이버지도 음성 요청 알림을 허용하거나 휴대폰에서 다시 요청하세요.")
-            val action = PendingIntent.getActivity(context, ID, intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            val token = java.util.UUID.randomUUID().toString()
+            pendingLaunch = token to intent
+            pendingAt = android.os.SystemClock.elapsedRealtime()
+            pendingRoute = request.routeRequested
+            val handoff = Intent(context, NaverVoiceHandoffActivity::class.java).putExtra("token", token)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_HISTORY)
+            val action = PendingIntent.getActivity(context, ID, handoff,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_CANCEL_CURRENT)
             pending = action
             manager.notify(ID, Notification.Builder(context, "naver_voice")
@@ -69,6 +80,24 @@ internal object NaverVoiceLaunch {
                 .setContentIntent(action).setAutoCancel(true).setTimeoutAfter(60_000L)
                 .setVisibility(Notification.VISIBILITY_PRIVATE).build())
             Result(false, "휴대폰 알림을 눌러 네이버지도를 여세요. 아직 안내가 시작되지 않았습니다.")
-        }.getOrElse { Result(false, "네이버지도 열기 실패 · 휴대폰에서 확인하세요.") }
+        }.getOrElse { clear(context); Result(false, "네이버지도 열기 실패 · 휴대폰에서 확인하세요.") }
+    }
+    fun consume(activity: Activity, token: String?) {
+        val handoff = pendingLaunch ?: return
+        if (token != handoff.first || android.os.SystemClock.elapsedRealtime() - pendingAt !in 0L..60_000L) return
+        val route = pendingRoute
+        val launch = handoff.second
+        clear(activity)
+        val requestedAt = System.currentTimeMillis()
+        if (runCatching { activity.startActivity(launch) }.isSuccess && route) onOpened?.invoke(requestedAt)
+    }
+}
+
+/** Only the immutable notification action can reach this non-exported activity. */
+internal class NaverVoiceHandoffActivity : Activity() {
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        NaverVoiceLaunch.consume(this, intent.getStringExtra("token"))
+        finish()
     }
 }

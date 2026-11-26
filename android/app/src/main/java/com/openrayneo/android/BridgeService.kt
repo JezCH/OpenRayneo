@@ -206,6 +206,8 @@ internal class BridgeService : Service() {
             if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
             pollNavigationSwitch()
             pollVoiceNavigation()
+            pollNavigationVoiceHandoff()
+            pollEndedNavigation()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
             updateNotification()
             main.postDelayed(this, 1_000)
@@ -302,6 +304,13 @@ internal class BridgeService : Service() {
         navigation.initialize(this)
         navigation.stop()
         navigation.observers.add(navigationObserver)
+        NaverVoiceLaunch.onOpened = { requestedAt ->
+            // Recheck the actual current feed before arming after a notification tap.
+            if (!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                navigation.connected && !navigation.enabled && navigation.entries.isEmpty() &&
+                navigation.activeNavigationCount == 0)
+                voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
+        }
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         if (settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
@@ -373,6 +382,7 @@ internal class BridgeService : Service() {
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     cancelNavigationSwitch()
                     clearVoiceNavigation()
+                    navigationVoiceHandoff = null
                     val active = conversations.state
                     val eligible = foreground && !previous.disconnecting && !state.disconnecting && state.link.reconnectWaiting
                     val suspended = resumeAlwaysOn
@@ -394,6 +404,7 @@ internal class BridgeService : Service() {
                     content.connected(); runCatching { deviceSettings.refresh() }
                     if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
                 }
+                if (currentEvent is GlassesEvent.ExternalPage) navigationVoiceHandoff = null
                 if (currentEvent is GlassesEvent.ExternalPage && prompterLaunchPending) cancelPrompterLaunch()
                 if (currentEvent is GlassesEvent.ExternalPage && conversations.state.running && !conversations.state.stopping) {
                     // A firmware-owned prompter was actually observed. Stop our capture,
@@ -499,6 +510,75 @@ internal class BridgeService : Service() {
     }
     // Arm automatic HUD selection only for a NEW, uniquely observed Naver notification
     // after a foreground voice search. Never attach an existing route or infer a destination.
+    // The navigation prompt and native assistant cannot own the glasses audio/page
+    // concurrently. Suspend the exact selected page, wait for close acknowledgement,
+    // then receive an explicit native wake; do not steal yielded firmware pages.
+    private data class NavigationVoiceHandoff(val key: String, val wake: String, val closeDeadline: Long,
+        val started: Boolean = false)
+    private var navigationVoiceHandoff: NavigationVoiceHandoff? = null
+    private var missingNavigationSince: Long? = null
+    private fun pollNavigationVoiceHandoff() {
+        val handoff = navigationVoiceHandoff ?: return
+        val now = SystemClock.elapsedRealtime()
+        val current = !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+            state.ownership == DisplayOwnership.APP && state.navigation.enabled &&
+            state.navigation.key == handoff.key && navigation.selectedKey == handoff.key
+        if (!current || state.error != null || state.intent != DisplayIntent.Idle) {
+            navigationVoiceHandoff = null; return
+        }
+        if (!handoff.started) {
+            if (now >= handoff.closeDeadline || !voiceTransport.nativeActive || voiceTransport.wakeId != handoff.wake ||
+                !settings.read().optBoolean("nativeAutoAnswer") || translator.active || mediaCaptionState.busy || prompterReserved ||
+                conversations.state.running || conversations.state.stopping || voiceTransport.source != null) {
+                navigationVoiceHandoff = null
+                nativeWakeStatus = "길 안내 음성 전환 취소 · 필요하면 안경 내비게이션을 재개하세요"; notifyUI(); return
+            }
+            if (state.session != null) return
+            navigationVoiceHandoff = handoff.copy(started = true)
+            nativeWake()
+            return
+        }
+        if (voiceTransport.nativeActive || voiceTransport.source != null || conversations.state.running ||
+            conversations.state.stopping || state.session != null || speechOutput.speaking || agent.running || codex.running) return
+        navigationVoiceHandoff = null
+        if (navigation.connected && navigation.selected?.safeInstruction != null &&
+            !translator.active && !mediaCaptionState.busy && !prompterReserved && !wakePending) {
+            dispatch(GlassesEvent.ResumeNavigation(handoff.key))
+        } else {
+            navigationSwitchStatus = "음성 대화 종료 · 최신 안내를 확인한 후 재개하세요."; notifyUI()
+        }
+    }
+    private fun pollEndedNavigation() {
+        // A missing selected key with other active navigation may mean rerouting or
+        // provider notification replacement; never silently attach another route.
+        val missing = navigation.enabled && navigation.connected && navigation.activeNavigationCount == 0 &&
+            navigation.selected == null
+        if (!missing) { missingNavigationSince = null; return }
+        val now = SystemClock.elapsedRealtime()
+        val since = missingNavigationSince ?: now.also { missingNavigationSince = it }
+        if (now - since < 5_000L) return
+        missingNavigationSince = null
+        stopNavigation()
+        navigationSwitchStatus = "네이버지도 길 안내 알림 종료 · 안경 표시 종료"; notifyUI()
+    }
+    private fun executeNavigationControl(command: NaverVoiceCommand.Control): String = when (command) {
+        NaverVoiceCommand.Control.STOP_HUD -> {
+            val active = navigation.enabled || state.navigation.enabled
+            stopNavigation()
+            if (active) "안경 길 안내를 종료했습니다. 네이버지도 안내는 휴대폰에서 계속됩니다."
+            else "안경 길 안내가 실행 중이지 않습니다."
+        }
+        NaverVoiceCommand.Control.CANCEL_REQUEST -> {
+            clearVoiceNavigation()
+            navigationSwitchStatus = "길 안내 요청 취소 · 이미 열린 지도 앱은 변경하지 않습니다."; notifyUI()
+            navigationSwitchStatus
+        }
+        NaverVoiceCommand.Control.STATUS -> if (navigation.enabled) navigation.status
+            else if (voiceNavigationLookup != null || voiceNavigation != null) "목적지 또는 신규 안내 확인 중"
+            else "안경 길 안내가 실행 중이지 않습니다."
+        NaverVoiceCommand.Control.STOP_MAP_UNSUPPORTED ->
+            "네이버지도 안내 종료는 공개 연결 기능에서 지원되지 않습니다. 안경 안내만 종료하려면 안경 길 안내 종료라고 말하세요."
+    }
     private data class VoiceNavigation(val requestedAt: Long, val deadline: Long)
     private var voiceNavigation: VoiceNavigation? = null
     private var voiceNavigationLookup: okhttp3.Call? = null
@@ -656,6 +736,8 @@ internal class BridgeService : Service() {
         }
     }
     fun stopNavigation() {
+        navigationVoiceHandoff = null
+        missingNavigationSince = null
         clearVoiceNavigation()
         cancelNavigationSwitch()
         dispatch(GlassesEvent.StopNavigation)
@@ -791,6 +873,19 @@ internal class BridgeService : Service() {
         if (prompterReserved) {
             if (teleprompter.state.smartFollow) teleprompter.suspendFollow("음성 깨우기 감지: 따라 읽기 중지. 원고 상태를 확인하세요")
             nativeWakeStatus += " · 프롬프터 사용 중"; notifyUI(); return
+        }
+        if (state.intent == DisplayIntent.Navigation && state.navigation.enabled && navigation.enabled &&
+            state.ownership == DisplayOwnership.APP && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+            settings.read().optBoolean("nativeAutoAnswer") && foreground && !migration.state.busy &&
+            !conversations.state.running && !conversations.state.stopping && voiceTransport.source == null &&
+            state.session?.let { it.mode == PageMode.NAVIGATION && it.phase == PagePhase.READY } == true) {
+            val key = state.navigation.key
+            val wake = voiceTransport.wakeId
+            if (key != null && wake != null && navigation.selectedKey == key) {
+                navigationVoiceHandoff = NavigationVoiceHandoff(key, wake, SystemClock.elapsedRealtime() + 8_000L)
+                dispatch(GlassesEvent.PauseDisplay)
+                nativeWakeStatus = "길 안내 화면 닫기 · 음성 호출 전환 대기"; notifyUI(); return
+            }
         }
         if (state.session != null || state.intent != DisplayIntent.Idle) {
             nativeWakeStatus += " · 기존 화면 사용 중"; notifyUI(); return
@@ -967,7 +1062,8 @@ internal class BridgeService : Service() {
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
         val navCommand = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.parse(request.text) else null
-        if (navCommand != null) {
+        val navControl = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.control(request.text) else null
+        if (navCommand != null || navControl != null) {
             val active = conversations.state
             val wake = request.wakeId
             val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
@@ -979,7 +1075,9 @@ internal class BridgeService : Service() {
                 active.source == ConversationSource.NATIVE && request.recordId != null &&
                 active.activeRecord?.id == request.recordId && !destroyed && foreground &&
                 state.link.phase == LinkPhase.FULL && !state.disconnecting) {
-                val answer = if (unmixed) requestVoiceNavigation(navCommand) else "겹친 발화입니다. 다시 요청하세요."
+                val answer = if (!unmixed) "겹친 발화입니다. 다시 요청하세요."
+                    else if (navControl != null) executeNavigationControl(navControl)
+                    else requestVoiceNavigation(checkNotNull(navCommand))
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
                 deliverExternalVoice(request.text, answer, input)
             }
@@ -1532,6 +1630,12 @@ internal class BridgeService : Service() {
             else -> null
         }
         if (local != null) { answer(local); return true }
+        val navControl = NaverVoiceCommand.control(question)
+        if (navControl != null) {
+            answer(if (source == ConversationSource.REALTIME && segment.sourceChannel == 1 && !segment.mixed)
+                executeNavigationControl(navControl) else "안경 기본 호출 또는 전용 한국어 호출로 요청하세요.")
+            return true
+        }
         val navCommand = NaverVoiceCommand.parse(question)
         if (navCommand != null) {
             // Only a live, explicitly addressed wearer-channel command can launch another app.
@@ -1572,9 +1676,10 @@ internal class BridgeService : Service() {
     private fun handleKoreanWake(question: String, allowAI: Boolean) {
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle ||
             conversations.state.running || voiceTransport.nativeActive || translator.active) return
+        val navControl = NaverVoiceCommand.control(question)
         val navCommand = NaverVoiceCommand.parse(question)
-        if (navCommand != null) {
-            wakeResult = requestVoiceNavigation(navCommand)
+        if (navCommand != null || navControl != null) {
+            wakeResult = if (navControl != null) executeNavigationControl(navControl) else requestVoiceNavigation(checkNotNull(navCommand))
             runCatching { sendCompanionNotification("한국어 호출", wakeResult, FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
         }
@@ -2160,6 +2265,7 @@ internal class BridgeService : Service() {
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         clearVoiceNavigation()
+        NaverVoiceLaunch.onOpened = null
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()

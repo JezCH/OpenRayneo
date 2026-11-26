@@ -71,6 +71,14 @@ internal object GlassesCoordinator {
                 state = state.copy(navigation = event.state)
                 effects += GlassesEffect.FollowNavigation(checkNotNull(event.state.key))
             }
+            is GlassesEvent.ResumeNavigation -> {
+                // A temporary native voice handoff may restore only its exact selected feed.
+                if (state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                    state.ownership == DisplayOwnership.APP && state.intent == DisplayIntent.Idle &&
+                    state.session == null && state.error == null && state.navigation.enabled &&
+                    state.navigation.key == event.key && state.navigation.frame != null)
+                    setIntent(DisplayIntent.Navigation)
+            }
             GlassesEvent.StopNavigation -> {
                 val current = state.intent
                 val next = if (current is DisplayIntent.Answer && current.returnTo == ReturnTarget.NAVIGATION)

@@ -35,6 +35,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".NaverVoiceHandoffActivity" android:exported="false" android:noHistory="true" />
         <service android:name=".MediaPlaybackCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
         <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="connectedDevice|location" />
         <service android:name=".NavigationNotifications" android:exported="true"
