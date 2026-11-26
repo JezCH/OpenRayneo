@@ -2,16 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "android/**"
-      - "scripts/prepare-android-voice.sh"
-      - "scripts/prepare-android-mozilla.py"
-      - "scripts/build-install-bundle.py"
-      - "scripts/validation-update-manifest.py"
-      - "ThirdParty/SherpaOnnx/**"
-      - "integrations/dsh-go/**"
-      - ".github/workflows/android-apk.yml"
+    branches: [main, wearable/validation-package, wearable/validation-publish]
   pull_request:
     branches: [main]
     paths:
@@ -46,7 +37,7 @@ jobs:
   apk:
     runs-on: ubuntu-24.04
     env:
-      DISTRIBUTE_APK: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+      DISTRIBUTE_APK: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && github.repository == 'JezCH/OpenRayneo' && (github.ref == 'refs/heads/wearable/validation-package' || github.ref == 'refs/heads/wearable/validation-publish')) }}
       APK_TARGET: ${{ inputs.target || 'validation' }}
       # New validation lineage starts at #144; never substitute another registered key.
       VALIDATION_BASELINE_SIGNER: "ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965"
@@ -54,6 +45,23 @@ jobs:
       VALIDATION_SIGNER_CONFIRMATION: ${{ inputs.validation_signer || '' }}
     steps:
       - uses: actions/checkout@v4
+
+      # A delivery ref must point at the current reviewed main commit. Check before reading any signing secret.
+      - name: Verify explicit validation promotion
+        if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "JezCH/OpenRayneo"
+          case "$GITHUB_REF" in
+            refs/heads/wearable/validation-package|refs/heads/wearable/validation-publish) ;;
+            *) exit 1 ;;
+          esac
+          main_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          test "$main_sha" = "$GITHUB_SHA" || { echo "::error::Promotion ref must point at the current main commit."; exit 1; }
+          test "$APK_TARGET" = "validation"
 
       - uses: actions/setup-java@v4
         with:
@@ -63,7 +71,7 @@ jobs:
       - name: Install Android SDK Platform 36 / Build-Tools 36.0.0
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
 
-      # Explicit main workflow dispatch is the only distribution path. Push/PR runs compile only.
+      # Main/PR runs compile only. Explicit main dispatch or reviewed validation promotion refs distribute.
       # Store base64 of ~/.android/debug.keystore as repository secret ANDROID_DEBUG_KEYSTORE_B64.
       # Trusted main pushes also inspect the registered key without distributing an APK.
       # PRs never receive the signing secret. Report only the public certificate fingerprint.
@@ -239,7 +247,7 @@ jobs:
           upload .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "mozilla-native-8eada038-r2-$short.sources.tar.gz"
 
   publish-validation:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.target == 'validation' && inputs.publish_validation == true
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.target == 'validation' && inputs.publish_validation == true) || (github.event_name == 'push' && github.repository == 'JezCH/OpenRayneo' && github.ref == 'refs/heads/wearable/validation-publish')
     needs: apk
     runs-on: ubuntu-24.04
     permissions:
@@ -262,6 +270,10 @@ jobs:
           code=$(jq -er '.versionCode | select(type == "number" and . > 0)' update-manifest.json)
           signer=$(jq -er '.signerSha256 | select(test("^[0-9a-f]{64}$"))' update-manifest.json)
           tag="validation-v$code"
+          test "$signer" = "ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965"
+          test "$code" -gt 1144
+          test "$(jq -r .channel update-manifest.json)" = "validation"
+          test "$(jq -r .packageName update-manifest.json)" = "com.openrayneo.android.validation"
           test "$(jq -r .commitSha update-manifest.json)" = "$GITHUB_SHA"
           test "$(sha256sum OpenRayneo-validation.apk | cut -d' ' -f1)" = "$(jq -r .apkSha256 update-manifest.json)"
           test "$(stat -c %s OpenRayneo-validation.apk)" = "$(jq -r .apkSize update-manifest.json)"

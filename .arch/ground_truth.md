@@ -26,7 +26,7 @@
 | Mac分析 | 离线连续PCM整段SDK聚类，保持SDK成员关系；实时仍用原8秒VAD批次。最新原生会话流式WAV＋latest索引，导出含只读`matchingDiagnostics`标量，无原始向量。 |
 | 当前产物 | Mac `.build/speaker-match-diagnostics/OpenRayneoBridge.app`（同签名Debug）；Android CI构建versionCode=1000+GITHUB_RUN_NUMBER（本地37）、BuildConfig.GIT_COMMIT显示于设置、versionName=1.(run-23).0逐次递增并用于Nextcloud文件名（本地1.2.0-beta.4），DSH0.1.8。上一Mac自动保存候选、Android36 release作回退，路径见[运行指南](../docs/runbook.md)。 |
 | 验证范围 | 构建／签名、存储／API／同步及定点生产类检查完成，独立审查已闭环。声音模型、真实持续吞吐、功耗及各固件硬件行为按实际输入继续验收。 |
-| Fork Android 安装路径（2026-11-25） | main 分支 Android APK #43 已完成APK／DSH plugin／manifest 验证与分发；无固定签名 secret，main #41 和 #43 的签名SHA-256不同，原包不可直接覆盖升级。PR #20 已合入 main：新增 applicationId=com.openrayneo.android.validation 的独立 validation 变体，原 applicationId=com.openrayneo.android 保持不变。构建时校验变体身份、版本、证书及摘要并与DSH插件同包。validation 与旧安装可共存，但用户数据／设置隔离、BLE／本地端口需互斥，真实手机／眼镜／AI调用仍须验收。临时签名不保证 validation 后续原位升级。 |
+| Fork Android 安装路径（2026-11-26） | 用户选择 #144 为新的 validation 签名基线，applicationId=com.openrayneo.android.validation，versionCode=1144，证书SHA-256 ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965。PR48/49/50 已合入 main，#144 APK构建通过，但与旧validation安装冲突，实际新安装和数据保留尚未验收。旧包不可擅自卸载或清数据；正式包com.openrayneo.android保持原签名策略。更新仅允许同证书且更高versionCode；应用内下载和PackageInstaller已实现，公开Releases和连续真机更新未验收。普通main/PR仅编译，显式main dispatch或当前main的validation-package分支生成artifact；公开范围获准后才使用validation-publish或dispatch的发布开关。 |
 
 | Fork Android 韩语功能（2026-11-25） | PR #23 独立本地字幕已合入，Android #52／main #53构建成功。PR #24（main 3c6a7ba）手机系统语音输入默认ko-KR、保留可选英文／中文；本地韩语数字命令、语言／历史人物与记忆标签显示、韩文Smart Follow字符边界及韩语导航文本解析；国内地图仅显式选择的实验性系统navigation通知，方向与距离严格匹配，冲突拒绝，15秒过期，不保证实际各应用通知格式。保留原协议`zh-CN`页面设置及设备报告语言白名单，不发送未经确认的韩语固件唤醒词／AI语言值；官方AI权限、韩语固件TTS、字体和硬件表现未验证。74项定点JVM断言及Android #54双APK构建、签名、DSH打包与安装包组装通过；用户设备未安装，固定签名仍未设置。 |
 
