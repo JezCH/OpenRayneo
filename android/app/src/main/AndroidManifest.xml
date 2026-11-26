@@ -18,9 +18,10 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
-        <package android:name="com.autonavi.minimap" />
+        <package android:name="com.nhn.android.nmap" />
         <package android:name="com.google.android.youtube" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -35,6 +36,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".NaverVoiceHandoffActivity" android:exported="false" android:noHistory="true" />
         <service android:name=".MediaPlaybackCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
         <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="connectedDevice|location" />
         <service android:name=".NavigationNotifications" android:exported="true"

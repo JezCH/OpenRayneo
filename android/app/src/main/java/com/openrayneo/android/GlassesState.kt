@@ -85,6 +85,7 @@ internal sealed interface GlassesEvent {
     data class LinkChanged(val state: LinkState) : GlassesEvent
     data class NavigationChanged(val state: NavigationState) : GlassesEvent
     data class SelectNavigation(val state: NavigationState) : GlassesEvent
+    data class ResumeNavigation(val key: String) : GlassesEvent
     data object StopNavigation : GlassesEvent
     data object PauseDisplay : GlassesEvent
     data object OpenStandby : GlassesEvent

@@ -138,7 +138,16 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
             MediaCapturePhase.STOPPING -> status(Phase.BUSY,"종료 중")
             MediaCapturePhase.ERROR -> status(Phase.ERROR,"오류")
         }, "휴대폰 재생음 · 안경 마이크와 별도", "media-captions")
-        addRow("번역·도구", "길 안내", allowed(s.glasses.navigation.enabled, linked, s.glasses.navigation.enabled && linked && s.glasses.session?.phase == PagePhase.READY), "내비게이션 HUD 세션", "navigation")
+        val selectedNav = s.navigationEntries.firstOrNull { it.key == s.glasses.navigation.key }
+        addRow("번역·도구", "길 안내", when {
+            s.navigationSwitchPending -> status(Phase.BUSY, "기록 종료·전환 대기")
+            !s.glasses.navigation.enabled -> off
+            !model.notificationAllowed || !s.notificationConnected || !linked -> status(Phase.BLOCKED, "연결 대기")
+            selectedNav?.safeInstruction == null -> status(Phase.WAITING,"최신 안내 대기")
+            s.glasses.session?.mode == PageMode.NAVIGATION && s.glasses.session?.phase == PagePhase.READY -> status(Phase.ACTIVE,"안내 전송")
+            else -> status(Phase.BUSY,"화면 준비")
+        }, if(s.navigationSwitchStatus.isNotBlank()) s.navigationSwitchStatus else if(s.glasses.navigation.enabled) s.navigationStatus else "네이버지도 안내 연동 · 경로 계산은 네이버지도", "navigation",
+            needsAction = s.glasses.navigation.enabled && (!model.notificationAllowed || !s.notificationConnected))
         addRow("번역·도구", "프롬프터", when {
             s.teleprompter.busy -> status(Phase.BUSY,"전송 중")
             s.teleprompter.active != null && s.teleprompter.paused -> status(Phase.BLOCKED,"일시정지")

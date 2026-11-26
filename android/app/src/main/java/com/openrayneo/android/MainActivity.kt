@@ -148,6 +148,56 @@ internal class MainActivity : ComponentActivity() {
         } catch (failure: Exception) { pendingMediaCaption = null; throw failure }
     }
 
+    private var naverAssociationPending = false
+    private val naverAssociationConsent = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode != RESULT_OK) {
+            naverAssociationPending = false
+            model.notice = "안경 부속 기기 등록이 취소되었습니다."
+        }
+    }
+    private fun registerNaverCompanion() = model.attempt {
+        check(visible && !naverAssociationPending) { "등록 화면을 확인하세요." }
+        val address = checkNotNull(model.service().authenticatedNavigationDevice) { "먼저 안경을 완전히 연결하세요." }
+        val manager = checkNotNull(getSystemService(android.companion.CompanionDeviceManager::class.java)) { "이 휴대폰은 부속 기기 등록을 지원하지 않습니다." }
+        val existing = NaverCompanionAccess.matching(this, address).firstOrNull()
+        if (existing != null) {
+            NaverCompanionAccess.enable(this, address, existing, false)
+            model.notice = "현재 안경의 백그라운드 지도 실행 사용 설정 완료 · 실제 실행 확인 필요"
+        } else {
+            val request = android.companion.AssociationRequest.Builder()
+                .addDeviceFilter(android.companion.BluetoothDeviceFilter.Builder().setAddress(address.uppercase(java.util.Locale.ROOT)).build())
+                .setSingleDevice(true).build()
+            naverAssociationPending = true
+            try {
+                manager.associate(request, mainExecutor, object : android.companion.CompanionDeviceManager.Callback() {
+                    override fun onAssociationPending(intentSender: android.content.IntentSender) {
+                        if (!visible || isDestroyed || !naverAssociationPending) { naverAssociationPending = false; return }
+                        runCatching {
+                            naverAssociationConsent.launch(androidx.activity.result.IntentSenderRequest.Builder(intentSender).build())
+                        }.onFailure { naverAssociationPending = false; model.notice = "시스템 등록 화면 실행 실패" }
+                    }
+                    override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
+                        val authorized = !isDestroyed && naverAssociationPending &&
+                            runCatching { model.service().authenticatedNavigationDevice.equals(address, ignoreCase = true) }.getOrDefault(false)
+                        naverAssociationPending = false
+                        if (authorized && runCatching { NaverCompanionAccess.enable(this@MainActivity, address, associationInfo, true) }.isSuccess)
+                            model.notice = "안경 부속 기기 등록 완료 · 백그라운드 지도 실행 시험 가능"
+                        else {
+                            runCatching { manager.disassociate(associationInfo.id) }
+                            if (!isDestroyed) model.notice = "연결 상태가 변경되어 부속 기기 등록을 적용하지 않았습니다."
+                        }
+                    }
+                    override fun onFailure(errorMessage: CharSequence?) {
+                        naverAssociationPending = false
+                        if (!isDestroyed) model.notice = "안경 부속 기기 등록 실패 · 기존 연결 및 지도 기능 유지"
+                    }
+                })
+            } catch (error: Exception) {
+                naverAssociationPending = false
+                throw error
+            }
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         acceptStatusIntent(intent)
@@ -193,17 +243,19 @@ internal class MainActivity : ComponentActivity() {
                                 )
                             )
                         },
-                        openGaode = {
+                        openNaverMap = {
                             model.attempt {
-                                startActivity(
-                                    checkNotNull(
-                                        packageManager.getLaunchIntentForPackage(
-                                            NavigationFeed.PACKAGE
-                                        )
-                                    ) {
-                                        "먼저 휴대폰에 Amap(가오더 지도)을 설치하세요"
-                                    }
-                                )
+                                startActivity(checkNotNull(packageManager.getLaunchIntentForPackage(NavigationFeed.PACKAGE)) {
+                                    "네이버지도 앱을 휴대폰에 설치하세요."
+                                })
+                            }
+                        },
+                        registerNaverCompanion = ::registerNaverCompanion,
+                        revokeNaverCompanion = {
+                            model.attempt {
+                                model.service().cancelVoiceNavigationRequest()
+                                NaverCompanionAccess.disable(this)
+                                model.notice = "백그라운드 지도 실행 사용 중지 · 기존 블루투스 연결은 유지됩니다."
                             }
                         },
                         importConfig = {
@@ -239,6 +291,7 @@ internal class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         visible = true
+        NaverVoiceLaunch.resumed(this)
         startPendingVoice()
         model.refreshPermissions()
         model.updateCheck.refresh(false)
@@ -246,6 +299,7 @@ internal class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         visible = false
+        NaverVoiceLaunch.paused(this)
         cancelVoice()
         super.onPause()
     }
@@ -267,7 +321,9 @@ internal data class UiActions(
     val notificationAccess: () -> Unit,
     val notificationPermission: () -> Unit,
     val appSettings: () -> Unit,
-    val openGaode: () -> Unit,
+    val openNaverMap: () -> Unit,
+    val registerNaverCompanion: () -> Unit,
+    val revokeNaverCompanion: () -> Unit,
     val importConfig: () -> Unit,
     val voice: (AnswerSource) -> Unit,
     val mediaCaption: (MediaCaptionOptions) -> Unit,
