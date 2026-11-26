@@ -31,6 +31,9 @@ internal data class CompanionState(
     val recordSync: AgentServerState = AgentServerState(notice = "근거리 동기화가 꺼져 있음"),
     val migration: MigrationState = MigrationState(),
     val phoneEphemeral: Boolean = false,
+    val chatContinuity: ChatContinuity.State = ChatContinuity.State(),
+    val chatContinuityError: String = "",
+    val chatContinuityBusy: Boolean = false,
     val nativeWakeAvailable: Boolean = false,
     val devices: List<RayneoConnection.Device> = emptyList(),
     val navigationEntries: List<NavigationFeed.Entry> = emptyList(),
@@ -199,6 +202,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 recordSync = s.recordSync.state,
                 migration = s.migration.state,
                 phoneEphemeral = s.agent.ephemeral,
+                chatContinuity = s.chatContinuity.state,
+                chatContinuityError = s.chatContinuity.error,
+                chatContinuityBusy = s.chatContinuityBusy,
                 nativeWakeAvailable = s.voiceTransport.nativeActive,
                 devices = s.devices.values.toList(),
                 navigationEntries = s.navigation.entries.values.toList(),
@@ -301,15 +307,15 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         if (computerChanged) updated.remove("codexThread")
         updated.remove("amapKey")
         updated.remove("amapConsent")
+        if (mobileChanged) {
+            if (bridge != null) service().clearAgent() else ChatContinuityStore.open(context).clear()
+        }
         settings.save(updated)
         if (listOf("ambientWakeEnabled", "ambientWakeContext", "wakePhrases", "wakeSeconds", "wakeFollowSeconds", "fastRealtimeHints", "nativeAutoAnswer", "modelUrl", "modelName", "modelKey", "mobileAgentBackend", "answerLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.resetAmbientWake()
         if (listOf("voiceAlwaysOnStart", "nativeAutoAnswer", "audioRetention", "asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage").any { old.optString(it) != updated.optString(it) }) bridge?.cancelVoiceAlwaysOnStart()
         if (old.optString("fastRealtimeHints") != updated.optString("fastRealtimeHints")) bridge?.cancelRealtimeStream()
         if (listOf("audioRetention", "asrEngine").any { old.optString(it) != updated.optString(it) }) bridge?.cancelAlwaysOnRecovery()
-        if (mobileChanged) {
-            bridge?.clearAgent()
-            phoneHistory = emptyList()
-        }
+        if (mobileChanged) phoneHistory = emptyList()
         if (computerChanged) {
             bridge?.closeCodex()
             computerHistory = emptyList()
