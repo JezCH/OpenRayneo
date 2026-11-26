@@ -140,12 +140,13 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         }, "휴대폰 재생음 · 안경 마이크와 별도", "media-captions")
         val selectedNav = s.navigationEntries.firstOrNull { it.key == s.glasses.navigation.key }
         addRow("번역·도구", "길 안내", when {
+            s.navigationSwitchPending -> status(Phase.BUSY, "기록 종료·전환 대기")
             !s.glasses.navigation.enabled -> off
             !model.notificationAllowed || !s.notificationConnected || !linked -> status(Phase.BLOCKED, "연결 대기")
             selectedNav?.safeInstruction == null -> status(Phase.WAITING,"최신 안내 대기")
             s.glasses.session?.mode == PageMode.NAVIGATION && s.glasses.session?.phase == PagePhase.READY -> status(Phase.ACTIVE,"안내 전송")
             else -> status(Phase.BUSY,"화면 준비")
-        }, if(s.glasses.navigation.enabled) s.navigationStatus else "지도 앱 알림 추종 · 경로 계산은 지도 앱", "navigation",
+        }, if(s.navigationSwitchStatus.isNotBlank()) s.navigationSwitchStatus else if(s.glasses.navigation.enabled) s.navigationStatus else "지도 앱 알림 추종 · 경로 계산은 지도 앱", "navigation",
             needsAction = s.glasses.navigation.enabled && (!model.notificationAllowed || !s.notificationConnected))
         addRow("번역·도구", "프롬프터", when {
             s.teleprompter.busy -> status(Phase.BUSY,"전송 중")

@@ -246,7 +246,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                         OutlinedCard(
                             enabled = current && s.notificationConnected,
                             onClick = {
-                                if (s.conversation.running || s.alwaysOnResumePending) {
+                                if (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending) {
                                     pendingNavigation = entry.key
                                     sources = false
                                 } else model.attempt {
@@ -283,10 +283,10 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         AlertDialog(
             onDismissRequest = { pendingNavigation = null },
             title = { Text("기록을 종료하고 길 안내를 시작할까요?") },
-            text = { Text("현재 기록과 자동 재개를 중단합니다.") },
+            text = { Text("현재 기록과 자동 재개를 중단합니다. 기록을 마친 뒤 같은 알림의 최신 방향·거리가 확인될 때만 30초 이내에 전환합니다. 전환에 실패해도 종료한 기록은 자동 재시작하지 않습니다.") },
             confirmButton = { TextButton(onClick = {
                 pendingNavigation = null
-                model.attempt { model.service().followNavigation(key) }
+                model.attempt { model.service().requestNavigationSwitch(key) }
             }) { Text("기록 종료 및 전환") } },
             dismissButton = { TextButton(onClick = { pendingNavigation = null }) { Text("취소") } }
         )
@@ -624,6 +624,11 @@ private fun NavigationScreen(
                     TextButton(onClick = actions.appSettings) { Text("앱 설정 확인") }
                 }
                 Note(s.navigationStatus)
+                if (s.navigationSwitchStatus.isNotBlank()) Note(s.navigationSwitchStatus)
+                if (s.navigationSwitchPending) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    ToolOutlinedButton(onClick = { model.attempt { model.service().cancelNavigationSwitch() } }) { Text("길 안내 전환 취소") }
+                }
                 if (entry != null && nav.enabled) {
                     val age = ((time - entry.updatedAt).coerceAtLeast(0) / 1000)
                     Note("최근 알림 수신: ${if (age < 60) "${age}초 전" else "${age / 60}분 전"} · 휴대폰 지도 앱의 실시간 안내를 기준으로 하세요")
@@ -635,7 +640,7 @@ private fun NavigationScreen(
                     ) {
                         Text("알림 접근 허용")
                     }
-                else if (!nav.enabled)
+                else if (!nav.enabled && !s.navigationSwitchPending)
                     Column {
                         Note("1. 설치된 지도 앱에서 실제 길 안내를 시작하세요. 2. 돌아와 최신 방향·거리 알림을 선택하세요.")
                         val installed = NavigationFeed.sources.filterKeys { it in model.installedMaps }

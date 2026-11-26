@@ -204,6 +204,7 @@ internal class BridgeService : Service() {
                 ambientWakeStatus = "후속 질문 시간 만료 · 다음 호출 대기"; notifyUI()
             }
             if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
+            pollNavigationSwitch()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
             updateNotification()
             main.postDelayed(this, 1_000)
@@ -369,6 +370,7 @@ internal class BridgeService : Service() {
                 state = transition.state
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
+                    cancelNavigationSwitch()
                     val active = conversations.state
                     val eligible = foreground && !previous.disconnecting && !state.disconnecting && state.link.reconnectWaiting
                     val suspended = resumeAlwaysOn
@@ -493,20 +495,74 @@ internal class BridgeService : Service() {
         stopConversation()
         dispatch(GlassesEvent.Disconnect)
     }
-    fun followNavigation(key: String) {
+    private data class NavigationSwitch(val key: String, val recordGeneration: Int, val deadline: Long)
+    private var navigationSwitch: NavigationSwitch? = null
+    val navigationSwitchPending get() = navigationSwitch != null
+    var navigationSwitchStatus = ""; private set
+    private fun navigationCandidate(key: String): NavigationFeed.Entry {
         requirePrompterFree()
-        requireCaptureFree()
         check(!state.disconnecting) { "연결 해제가 끝날 때까지 기다리세요" }
         val entry = checkNotNull(navigation.entries[key]) { "해당 알림이 사라졌습니다. 지도 앱에서 길 안내를 시작하세요" }
         check(navigation.connected && entry.safeInstruction != null) { "알림 리스너 연결 및 최신 길 안내 방향·거리를 확인하세요." }
+        return entry
+    }
+    fun followNavigation(key: String) {
+        val entry = navigationCandidate(key)
+        requireCaptureFree()
+        val instruction = checkNotNull(entry.safeInstruction) { "최신 안내가 만료되었습니다." }
+        navigationSwitch = null
+        navigationSwitchStatus = ""
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
-        if (conversations.state.running) conversations.stop()
-        val frame = entry.safeInstruction?.let { NavigationFrame.render(it.direction, it.meters, if (entry.experimental) entry.sourceName else entry.title) }
-            ?: NavigationFrame.status("안내 미인식", "휴대폰 확인")
+        val frame = NavigationFrame.render(instruction.direction, instruction.meters, if (entry.experimental) entry.sourceName else entry.title)
         dispatch(GlassesEvent.SelectNavigation(NavigationState(true, key, frame)))
     }
-    fun stopNavigation() = dispatch(GlassesEvent.StopNavigation)
+    // Only an explicitly confirmed request can end an existing recording.
+    fun requestNavigationSwitch(key: String) {
+        navigationCandidate(key)
+        check(foreground && state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP) { "안경 연결과 화면 상태를 먼저 확인하세요." }
+        check(!migration.state.busy && !translator.active && !mediaCaptionState.busy && !voiceTransport.nativeActive && !wakePending) { "다른 음성·기록 기능을 먼저 종료하세요." }
+        val c = conversations.state
+        check(!c.reprocessing && c.mode != ConversationMode.ENROLL || !c.running && !c.stopping) { "재전사 또는 목소리 등록을 먼저 마치세요." }
+        if (!c.running && !c.stopping) { followNavigation(key); return }
+        stopConversation()
+        navigationSwitch = NavigationSwitch(key, conversations.activityGeneration, SystemClock.elapsedRealtime() + 30_000)
+        navigationSwitchStatus = "기록 마무리 후 최신 길 안내 대기 중"
+        notifyUI()
+    }
+    fun cancelNavigationSwitch() {
+        if (navigationSwitch == null) return
+        navigationSwitch = null
+        navigationSwitchStatus = "길 안내 전환 취소됨 · 종료한 기록은 자동 재시작하지 않습니다."
+        notifyUI()
+    }
+    private fun pollNavigationSwitch() {
+        val pending = navigationSwitch ?: return
+        val c = conversations.state
+        val failure = when {
+            SystemClock.elapsedRealtime() >= pending.deadline -> "전환 시간 초과 · 최신 안내를 다시 선택하세요."
+            !foreground || state.disconnecting || state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP -> "안경 상태가 바뀌어 전환 취소됨"
+            !navigation.connected -> "알림 리스너 연결이 끊겨 전환 취소됨"
+            conversations.activityGeneration != pending.recordGeneration -> "다른 기록이 시작되어 전환 취소됨"
+            migration.state.busy || translator.active || mediaCaptionState.busy || voiceTransport.nativeActive || wakePending || prompterReserved -> "다른 기능이 시작되어 전환 취소됨"
+            !c.running && !c.stopping && c.error != null -> "기록 오류 확인 후 길 안내를 다시 선택하세요."
+            else -> null
+        }
+        if (failure != null) {
+            navigationSwitch = null; navigationSwitchStatus = failure; notifyUI(); return
+        }
+        if (c.running || c.stopping || voiceTransport.source != null) return
+        if (navigation.entries[pending.key]?.safeInstruction == null) return
+        navigationSwitch = null
+        runCatching { followNavigation(pending.key) }.onFailure {
+            navigationSwitchStatus = it.message ?: "길 안내 전환 실패"
+            notifyUI()
+        }
+    }
+    fun stopNavigation() {
+        cancelNavigationSwitch()
+        dispatch(GlassesEvent.StopNavigation)
+    }
     fun reopenNavigation() {
         val key = navigation.selectedKey ?: error("먼저 따라갈 길 안내 알림을 선택하세요")
         followNavigation(key)
@@ -602,6 +658,7 @@ internal class BridgeService : Service() {
         if (pending) { updateNotification(); notifyUI() }
     }
     fun stopConversation() {
+        cancelNavigationSwitch()
         resetAmbientWake()
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         resumeAlwaysOn = null
