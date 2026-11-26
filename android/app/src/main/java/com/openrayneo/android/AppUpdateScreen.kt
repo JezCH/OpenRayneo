@@ -28,6 +28,7 @@ internal fun AppUpdateScreen(model: AppModel) {
     val updates = model.updateCheck
     var downloadedFor by remember { mutableStateOf<AppUpdate.Candidate?>(null) }
     val candidate = downloadedFor ?: updates.candidate
+    val currentCandidate = candidate != null && candidate == updates.candidate && updates.error.isBlank() && !updates.checking
     var downloaded by remember { mutableStateOf<File?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("업데이트를 확인하세요") }
@@ -76,12 +77,16 @@ internal fun AppUpdateScreen(model: AppModel) {
     }
 
     suspend fun requestInstall(item: AppUpdate.Candidate, apk: File) {
+        if (updates.checking || updates.error.isNotBlank() || updates.candidate != item) {
+            status = "업데이트 정보가 변경되었습니다. 다시 확인한 뒤 설치하세요."
+            return
+        }
         if (!idle()) {
             status = "다운로드 완료 · 새 작업이 시작되어 설치를 보류합니다"
             return
         }
         openConfirmation = true
-        try { AppUpdateInstall.install(app, item, apk, ::idle) }
+        try { AppUpdateInstall.install(app, item, apk) { idle() && !updates.checking && updates.error.isBlank() && updates.candidate == item } }
         catch (e: Exception) { openConfirmation = false; throw e }
     }
 
@@ -125,6 +130,7 @@ internal fun AppUpdateScreen(model: AppModel) {
             status = ""
             updates.refresh(true)
         }, enabled = !busy && !updates.checking && AppUpdateInstall.sessionId == null) { Text("업데이트 확인") }
+        if (downloadedFor != null && !currentCandidate) Text("다운로드한 파일의 최신 배포 상태를 다시 확인해야 합니다.")
         candidate?.let { item ->
             Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
             Text(item.notes.ifBlank { "배포 변경사항 없음" })
@@ -133,9 +139,9 @@ internal fun AppUpdateScreen(model: AppModel) {
                 Button(onClick = {
                     if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
                     else launchWork { requestInstall(item, fetchApk(item)) }
-                }, enabled = !busy && !updates.checking && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
+                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
                 TextButton(onClick = { launchWork { fetchApk(item) } },
-                    enabled = !busy && !updates.checking && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
+                    enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
             }
             if (progress > 0) LinearProgressIndicator(progress = { (progress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth())
@@ -143,7 +149,7 @@ internal fun AppUpdateScreen(model: AppModel) {
                 Button(onClick = {
                     if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
                     else launchWork { requestInstall(item, apk) }
-                }, enabled = !busy && !updates.checking && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
+                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
             }
         }
         if (busy) TextButton(onClick = { job?.cancel() }) { Text("작업 취소") }

@@ -31,7 +31,7 @@ on:
         options: [validation, release]
         default: validation
       validation_signer:
-        description: "Installed validation APK certificate SHA-256 (64 hex characters)"
+        description: "Optional confirmation of fixed #144 validation certificate; cannot override it"
         type: string
         required: false
       publish_validation:
@@ -48,7 +48,10 @@ jobs:
     env:
       DISTRIBUTE_APK: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
       APK_TARGET: ${{ inputs.target || 'validation' }}
-      VALIDATION_EXPECTED_SIGNER: ${{ inputs.validation_signer || '' }}
+      # New validation lineage starts at #144; never substitute another registered key.
+      VALIDATION_BASELINE_SIGNER: "ed9341632021ba4129608624a86309155b8373f01ec9b16dff2e5863eb440965"
+      VALIDATION_BASELINE_VERSION: "1144"
+      VALIDATION_SIGNER_CONFIRMATION: ${{ inputs.validation_signer || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,14 +80,22 @@ jobs:
             restored_signer=$(keytool -exportcert -keystore "$signing_file" -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')
             echo "Restored signing certificate SHA-256: $restored_signer"
             if [ "$DISTRIBUTE_APK" != "true" ]; then
+              if [ "$restored_signer" != "$VALIDATION_BASELINE_SIGNER" ]; then
+                echo "::warning::Registered key differs from #144 validation baseline; validation distribution blocked until restored."
+              fi
               echo "Registered signing certificate inspected; no APK distribution requested."
               rm -f "$signing_file"
               exit 0
             fi
             if [ "$APK_TARGET" = "validation" ]; then
-              expected=$(printf '%s' "$VALIDATION_EXPECTED_SIGNER" | tr -d ':' | tr '[:upper:]' '[:lower:]')
-              if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-                echo "::error::Enter the installed validation app certificate SHA-256 before updating."
+              expected="$VALIDATION_BASELINE_SIGNER"
+              confirmation=$(printf '%s' "$VALIDATION_SIGNER_CONFIRMATION" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+              if [ -n "$confirmation" ] && [ "$confirmation" != "$expected" ]; then
+                echo "::error::Certificate confirmation differs from the fixed #144 validation lineage."
+                exit 1
+              fi
+              if [ "$((1000 + GITHUB_RUN_NUMBER))" -le "$VALIDATION_BASELINE_VERSION" ]; then
+                echo "::error::Validation version must exceed the #144 baseline."
                 exit 1
               fi
             elif [ "$APK_TARGET" = "release" ]; then
@@ -94,7 +105,7 @@ jobs:
               exit 1
             fi
             if [ "$restored_signer" != "$expected" ]; then
-              echo "::error::Registered key does not match the selected installed app. Do not uninstall or change the certificate pin to bypass this check."
+              echo "::error::Registered key does not match the fixed distribution lineage. Restore the correct key; do not change the pin to bypass this check."
               exit 1
             fi
             echo "OPENRAYNEO_EXPECTED_SIGNER=$expected" >> "$GITHUB_ENV"
