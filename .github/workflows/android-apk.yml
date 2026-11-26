@@ -14,6 +14,8 @@ on:
       - "scripts/prepare-android-mozilla.py"
       - "scripts/build-install-bundle.py"
       - "scripts/validation-update-manifest.py"
+      - "scripts/apk-delta.py"
+      - "scripts/prepare-validation-deltas.py"
       - "ThirdParty/SherpaOnnx/**"
       - "integrations/dsh-go/**"
       - ".github/workflows/android-apk.yml"
@@ -35,6 +37,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   apk:
@@ -229,6 +232,12 @@ jobs:
           cp "$RUNNER_TEMP"/openrayneo-dsh-*.tgz "$RUNNER_TEMP/openrayneo-validation-update/"
           cp .build/android-mozilla/mozilla-native-8eada038-r2.sources.tar.gz "$RUNNER_TEMP/openrayneo-validation-update/"
           python3 scripts/validation-update-manifest.py "$RUNNER_TEMP/openrayneo-validation-update"
+      - name: Generate and verify differential APK updates
+        if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'validation'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/prepare-validation-deltas.py "$RUNNER_TEMP/openrayneo-validation-update" "$ANDROID_HOME/build-tools/36.0.0"
       - uses: actions/upload-artifact@v4
         if: env.DISTRIBUTE_APK == 'true' && env.APK_TARGET == 'validation'
         with:
@@ -304,5 +313,14 @@ jobs:
             test "$(jq -r .signerSha256 "$RUNNER_TEMP/previous-validation.json")" = "$signer" || { echo "::error::Previous release signer differs."; exit 1; }
           fi
           gh release create "$tag" --target "$GITHUB_SHA" --title "OpenRayneo validation $code" --generate-notes --draft --prerelease
-          gh release upload "$tag" OpenRayneo-validation.apk update-manifest.json openrayneo-certs.txt openrayneo-badging.txt openrayneo-dsh-*.tgz mozilla-native-8eada038-r2.sources.tar.gz
+          # Only manifest-listed, hash-verified delta assets are published.
+          patches=()
+          while IFS="$(printf '\t')" read -r name size digest; do
+            test -n "$name" || continue
+            [[ "$name" =~ ^delta-[0-9]+-to-$code\.orp$ ]]
+            test "$(stat -c %s "$name")" = "$size"
+            test "$(sha256sum "$name" | cut -d' ' -f1)" = "$digest"
+            patches+=("$name")
+          done < <(jq -r '(.deltas // [])[] | [.patchAssetName,.patchSize,.patchSha256] | @tsv' update-manifest.json)
+          gh release upload "$tag" OpenRayneo-validation.apk update-manifest.json openrayneo-certs.txt openrayneo-badging.txt openrayneo-dsh-*.tgz mozilla-native-8eada038-r2.sources.tar.gz "${patches[@]}"
           gh release edit "$tag" --draft=false

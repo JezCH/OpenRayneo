@@ -28,16 +28,18 @@ internal class AppUpdateCheck(context: Context) {
     var downloadCandidate by mutableStateOf<AppUpdate.Candidate?>(null); private set
     var downloaded by mutableStateOf<File?>(null); private set
     var downloadProgress by mutableStateOf(0L); private set
+    var downloadTotal by mutableStateOf(0L); private set
     var downloadStatus by mutableStateOf(""); private set
 
-    fun startDownload(item: AppUpdate.Candidate) {
+    fun startDownload(item: AppUpdate.Candidate, forceFull: Boolean = false) {
         check(!checking && error.isBlank() && candidate == item && downloadJob == null) { "최신 업데이트 정보를 확인하세요" }
         downloadCandidate = item; downloaded = null; downloadProgress = 0L
-        downloadStatus = "APK 확보 및 무결성 확인 중"
+        downloadTotal = if (forceFull) item.size else item.transferSize
+        downloadStatus = if (!forceFull && item.delta != null) "변경 패치 다운로드 및 APK 복원 중" else "APK 확보 및 무결성 확인 중"
         downloading = true
         val work = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                downloaded = AppUpdate.download(app, item) { count ->
+                downloaded = AppUpdate.download(app, item, forceFull) { count ->
                     kotlinx.coroutines.withContext(Dispatchers.Main) { downloadProgress = count }
                 }
                 downloadStatus = "다운로드 및 인증서 검증 완료"
@@ -74,7 +76,8 @@ internal class AppUpdateCheck(context: Context) {
                 url == "https://github.com/JezCH/OpenRayneo/releases/download/validation-v$code/OpenRayneo-validation.apk" &&
                 size in 1..AppUpdate.MAX_APK && Regex("[0-9a-f]{64}").matches(digest) &&
                 Regex("[0-9a-f]{64}").matches(signer) && name.length <= 100)
-            AppUpdate.Candidate(code, name, json.getString("notes").take(4000), url, size, digest, signer)
+            AppUpdate.Candidate(code, name, json.getString("notes").take(4000), url, size, digest, signer,
+                json.optJSONObject("delta")?.let { runCatching { AppUpdate.parseDelta(it, code, size) }.getOrNull() })
         }.getOrNull()
     }
 
@@ -114,7 +117,7 @@ internal class AppUpdateCheck(context: Context) {
                 if (result == null) editor.remove("candidate") else editor.putString("candidate", JSONObject()
                     .put("code", result.code).put("name", result.name).put("notes", result.notes)
                     .put("url", result.url).put("size", result.size).put("digest", result.digest)
-                    .put("signer", result.signer).toString())
+                    .put("signer", result.signer).put("delta", result.delta?.json()).toString())
                 editor.apply()
             } catch (e: CancellationException) {
                 throw e
