@@ -511,12 +511,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             ) {
                 Text("오디오 디코딩 재시작 (페이지 유지)")
             }
-            ToolOutlinedButton(
-                onClick = { model.attempt { model.service().disconnect() } },
-                enabled = ready || s.glasses.link.phase == LinkPhase.CONNECTING,
-            ) {
-                Text("안경 연결 해제")
-            }
+            ConnectionReleaseControls(model)
         }
         ContentCard {
             Text("고급 연결 진단", style = MaterialTheme.typography.titleMedium)
