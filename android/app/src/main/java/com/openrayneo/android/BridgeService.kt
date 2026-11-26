@@ -501,23 +501,63 @@ internal class BridgeService : Service() {
     // after a foreground voice search. Never attach an existing route or infer a destination.
     private data class VoiceNavigation(val requestedAt: Long, val deadline: Long)
     private var voiceNavigation: VoiceNavigation? = null
+    private var voiceNavigationLookup: okhttp3.Call? = null
+    private var voiceNavigationGeneration = 0L
     private fun clearVoiceNavigation() {
+        voiceNavigationGeneration++
+        voiceNavigationLookup?.cancel(); voiceNavigationLookup = null
         voiceNavigation = null
         NaverVoiceLaunch.clear(this)
     }
-    private fun requestVoiceNavigation(request: NaverVoiceCommand.Request): String {
-        clearVoiceNavigation()
+    fun cancelVoiceNavigationRequest() { clearVoiceNavigation(); notifyUI() }
+    private fun voiceNavigationBlock(): String? {
         if (!foreground || destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting)
             return "안경 연결 상태를 먼저 확인하세요."
-        if (state.navigation.enabled || navigation.entries.isNotEmpty())
+        // Refresh even rejected/unsupported current notifications before accepting a new route.
+        NavigationNotifications.refresh(this)
+        if (state.navigation.enabled || navigation.entries.isNotEmpty() || navigation.activeNavigationCount > 0)
             return "기존 지도 안내를 먼저 종료한 뒤 다시 요청하세요."
         if (migration.state.busy || translator.active || mediaCaptionState.busy || prompterReserved)
             return "현재 화면·번역 기능을 먼저 종료하세요."
+        return null
+    }
+    private fun launchVoiceNavigation(request: NaverVoiceCommand.Request, place: NaverPlacePolicy.Place? = null): String {
+        voiceNavigationBlock()?.let { return it }
         val requestedAt = System.currentTimeMillis()
-        val result = NaverVoiceLaunch.open(this, request)
-        if (result.opened && navigation.connected)
+        val result = NaverVoiceLaunch.open(this, request, place)
+        if (request.routeRequested && result.opened && navigation.connected)
             voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
         return result.message
+    }
+    private fun requestVoiceNavigation(request: NaverVoiceCommand.Request): String {
+        clearVoiceNavigation()
+        voiceNavigationBlock()?.let { return it }
+        val config = runCatching { NaverPlaceLookup.read(this) }.getOrNull()
+        val effective = if (request.mode == NaverVoiceCommand.Mode.UNSPECIFIED && config?.enabled == true)
+            request.copy(mode = config.defaultMode) else request
+        if (!request.routeRequested || config?.enabled != true || NaverPlacePolicy.path(effective.mode) == null)
+            return launchVoiceNavigation(effective)
+        val generation = voiceNavigationGeneration
+        val expires = SystemClock.elapsedRealtime() + 10_000L
+        return runCatching {
+            voiceNavigationLookup = NaverPlaceLookup.search(config, effective.destination) { place ->
+                main.post {
+                    if (destroyed || generation != voiceNavigationGeneration) return@post
+                    voiceNavigationLookup = null
+                    if (SystemClock.elapsedRealtime() >= expires || runCatching { NaverPlaceLookup.read(this) }.getOrNull() != config) {
+                        navigationSwitchStatus = "목적지 확인 요청 만료 또는 설정 변경 · 다시 요청하세요."; notifyUI(); return@post
+                    }
+                    val result = runCatching { launchVoiceNavigation(effective, place) }.getOrElse { "네이버지도 경로 요청 실패 · 다시 요청하세요." }
+                    navigationSwitchStatus = if (place == null) "정확한 단일 장소 확인 실패 · $result" else result
+                    if (state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
+                        !conversations.state.stopping && !voiceTransport.nativeActive && !prompterReserved && !translator.active)
+                        runCatching { sendCompanionNotification("길 안내", navigationSwitchStatus, FocusPolicy.Output.DIRECT_ANSWER) }
+                    notifyUI()
+                }
+            }
+            navigationSwitchStatus = "네이버 지역 검색으로 목적지 좌표 확인 중"; notifyUI()
+            "네이버지도 목적지를 확인 중입니다. 안내 시작은 아직 확인되지 않았습니다."
+        }.getOrElse { launchVoiceNavigation(effective) }
     }
     private fun pollVoiceNavigation() {
         val pending = voiceNavigation ?: return
@@ -529,7 +569,8 @@ internal class BridgeService : Service() {
         val candidates = navigation.entries.values.filter {
             NavigationFeed.isNavigationSource(it.packageName) && it.updatedAt >= pending.requestedAt && it.safeInstruction != null
         }
-        if (candidates.size > 1) { voiceNavigation = null; return }
+        if (candidates.size > 1 || navigation.activeNavigationCount > 1) { voiceNavigation = null; return }
+        if (navigation.activeNavigationCount != 1) return
         val entry = candidates.singleOrNull() ?: return
         // Preserve the recording and native wake lifecycle. Never interrupt an ongoing capture.
         if (state.ownership != DisplayOwnership.APP || state.intent != DisplayIntent.Idle ||
@@ -557,7 +598,7 @@ internal class BridgeService : Service() {
         return entry
     }
     fun followNavigation(key: String) {
-        voiceNavigation = null
+        clearVoiceNavigation()
         val entry = navigationCandidate(key)
         requireCaptureFree()
         val instruction = checkNotNull(entry.safeInstruction) { "최신 안내가 만료되었습니다." }

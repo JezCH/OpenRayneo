@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -722,6 +723,7 @@ private fun NavigationScreen(
                 ToolOutlinedButton(onClick = { model.attempt { NavigationNotifications.refresh(model.getApplication(), foreground = true) } }, enabled = model.notificationAllowed) { Text("현재 알림 다시 확인") }
             }
         }
+        item { NaverPlaceLookupSettings(model) }
         item {
             Note("네이버지도의 시스템 길 안내 알림에서 명확한 방향·거리가 확인될 때만 안경에 표시합니다. 실제 알림 형식은 아직 실기기 검증 전이며, 안내가 없거나 오래되면 휴대폰 네이버지도를 확인하세요.")
             ToolOutlinedButton(
@@ -737,5 +739,43 @@ private fun NavigationScreen(
             Note("알림 권한과 추종 선택을 유지한 채 리스너를 다시 연결하고 현재 알림을 읽습니다.")
             Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 지도 앱 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
         }
+    }
+}
+
+@Composable
+private fun NaverPlaceLookupSettings(model: AppModel) {
+    val context = model.getApplication<android.app.Application>()
+    var saved by remember { mutableStateOf(runCatching { NaverPlaceLookup.read(context) }.getOrDefault(NaverPlaceLookup.Config())) }
+    var id by remember { mutableStateOf(saved.id) }
+    var secret by remember { mutableStateOf(saved.secret) }
+    var mode by remember { mutableStateOf(saved.defaultMode) }
+    ContentCard {
+        Text("음성 길찾기 목적지 자동 확인 (선택)", style = MaterialTheme.typography.titleMedium)
+        Note(if (saved.enabled) "지역 검색 API 설정됨 · 실제 인증 및 응답은 호출 시 확인합니다." else "기본값: 별도 API 없이 네이버지도 검색을 사용합니다.")
+        Note("NAVER API HUB 인증 정보를 저장하면 명시적 길찾기 요청의 장소 이름만 네이버 지역 검색에 전달합니다. 서비스는 한시적 무료이며 향후 유료화될 수 있습니다. 직접 요금 조건을 확인하고 사용하세요. 현재 위치·대화 기록은 보내지 않습니다.")
+        OutlinedTextField(id, { id = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Client ID") }, singleLine = true)
+        OutlinedTextField(secret, { secret = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Client Secret") },
+            singleLine = true, visualTransformation = PasswordVisualTransformation())
+        Text("이동 수단을 말하지 않았을 때", fontWeight = FontWeight.Medium)
+        for ((option, label) in listOf(NaverVoiceCommand.Mode.UNSPECIFIED to "지도 검색 화면", NaverVoiceCommand.Mode.WALK to "도보",
+            NaverVoiceCommand.Mode.CAR to "자동차", NaverVoiceCommand.Mode.PUBLIC to "대중교통")) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = mode == option, onClick = { mode = option })
+                Text(label, modifier = Modifier.clickable { mode = option })
+            }
+        }
+        ToolButton(onClick = { model.attempt {
+            require(id.isNotBlank() && secret.isNotBlank()) { "인증 정보를 모두 입력하세요." }
+            val next = NaverPlaceLookup.Config(id.trim(), secret.trim(), mode)
+            NaverPlaceLookup.save(context, next)
+            runCatching { model.service().cancelVoiceNavigationRequest() }
+            saved = next
+        } }, modifier = Modifier.fillMaxWidth()) { Text("인증 정보 저장 및 사용") }
+        ToolOutlinedButton(onClick = { model.attempt {
+            NaverPlaceLookup.save(context, NaverPlaceLookup.Config())
+            runCatching { model.service().cancelVoiceNavigationRequest() }
+            saved = NaverPlaceLookup.Config(); id = ""; secret = ""; mode = saved.defaultMode
+        } }, modifier = Modifier.fillMaxWidth()) { Text("지역 검색 사용 중지 및 인증 정보 삭제") }
+        Note("복수·불일치 결과는 임의 선택하지 않고 네이버지도 검색 화면으로 전환합니다. 앱 호출은 실제 길 안내 시작과 다릅니다.")
     }
 }
