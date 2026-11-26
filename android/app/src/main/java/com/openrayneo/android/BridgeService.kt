@@ -302,7 +302,7 @@ internal class BridgeService : Service() {
                 voiceTransport.receive(frame)
                 display.receive(frame, source)
             }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
-        requests = GlassesRequests(main, connection::sendFrame)
+        requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
         teleprompter = TeleprompterLibrary(this, requests, ::notifyUI) {

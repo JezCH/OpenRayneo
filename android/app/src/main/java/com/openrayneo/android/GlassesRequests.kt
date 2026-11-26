@@ -10,7 +10,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** One device-operation queue for both UI and Agent calls; wire callbacks remain on the main thread. */
-internal class GlassesRequests(private val main: Handler, private val write: (ByteArray, (Result<Unit>) -> Unit) -> Unit) {
+internal class GlassesRequests(private val main: Handler, private val write: (ByteArray, (Result<Unit>) -> Unit) -> Unit,
+    private val writeBle: (ByteArray, (Result<Unit>) -> Unit) -> Unit = write) {
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var generation = 0
     private var operationGeneration = 0
@@ -34,7 +35,7 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
             main.post { completion(result) }
         }
     }
-    fun request(protocol: Int, type: Int, body: JSONObject?, wait: Boolean = true,
+    fun request(protocol: Int, type: Int, body: JSONObject?, wait: Boolean = true, overBle: Boolean = false,
                 matches: (Int, JSONObject) -> Boolean = { reply, _ -> reply == type }): JSONObject? {
         check(Looper.myLooper() != Looper.getMainLooper()) { "기기 요청이 UI를 막아서는 안 됨" }
         val operation = Pending(protocol, matches, CountDownLatch(1))
@@ -42,7 +43,8 @@ internal class GlassesRequests(private val main: Handler, private val write: (By
         main.post {
             if (token != generation || !allowed()) { operation.error = IllegalStateException("기기 연결이 전환되어 이전 작업이 취소됨"); operation.latch.countDown(); return@post }
             if (wait) pending = operation
-            try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body?.toString().orEmpty(),
+            val sender = if (overBle) writeBle else write
+            try { sender(ProtocolCodec.display(protocol, sequence++ and 65535, type, body?.toString().orEmpty(),
                 if (protocol == 0x0e || protocol == 0x09) byteArrayOf() else null)) { result ->
                 if (result.isFailure) { operation.error = result.exceptionOrNull(); operation.latch.countDown() }
                 else if (!wait) operation.latch.countDown()

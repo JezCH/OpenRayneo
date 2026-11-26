@@ -159,10 +159,11 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     /** Explicit, read-first initialization of the two documented firmware
      * switches. Never changes microphone privacy, binding, firmware or cloud
      * account. Stop after an unconfirmed write rather than trying guessed commands. */
-    fun prepareNativeAssistant() {
-        check(state.loaded)
+    fun prepareNativeAssistant(overBle: Boolean = false) {
+        if (!overBle) check(state.loaded)
         perform {
-            var fresh = checkNotNull(readSettingsForVoice()) { "기기 설정 회신 없음 · 초기화하지 않았습니다." }
+            val route = if (overBle) "BLE" else "SPP"
+            var fresh = checkNotNull(readSettingsForVoice(overBle)) { "$route 기기 설정 회신 없음 · 초기화하지 않았습니다." }
             check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
                 "안경 마이크 허용 상태가 꺼져 있거나 미확인입니다. 개인정보 설정을 먼저 확인하세요."
             }
@@ -173,13 +174,15 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             for ((field, command) in listOf("enabled" to "set_ai_state", "voiceWakeup" to "set_ai_voice_wakeup")) {
                 val current = fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field)
                     ?: error("기기 상태가 변경되어 나머지 초기화 중단")
-                if (current) continue
+                // AIX IO arms wake on each standby setup even if the saved flag
+                // was already on. Explicit BLE experiment reasserts only wake=on.
+                if (current && !(overBle && field == "voiceWakeup")) continue
                 try {
-                    requests.request(15, 16, JSONObject().put("cmd", command).put("payload", payload(mode = 1))) { type, body ->
+                    requests.request(15, 16, JSONObject().put("cmd", command).put("payload", payload(mode = 1)), overBle = overBle) { type, body ->
                         type == 17 && body.optString("cmd") in setOf(command, "sync_ai_settings")
                     }
                 } catch (_: IllegalStateException) { /* Do not repeat ambiguous writes. */ }
-                fresh = checkNotNull(readSettingsForVoice()) { "$field 변경 후 새 상태 미확인 · 나머지 초기화 중단" }
+                fresh = checkNotNull(readSettingsForVoice(overBle)) { "$route $field 변경 후 새 상태 미확인 · 나머지 초기화 중단" }
                 check(fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field) == true) {
                     "$field 활성화가 재조회에서 확인되지 않아 나머지 초기화를 중단했습니다."
                 }
@@ -191,7 +194,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             check(final?.deviceFlag("enabled") == true && final.deviceFlag("voiceWakeup") == true) {
                 "두 스위치가 동시에 활성화되었는지 확인하지 못했습니다."
             }
-            "펌웨어 AI·깨우기 설정 확인 · 이제 실제 호출 이벤트를 시험하세요."
+            "$route 펌웨어 AI·깨우기 설정 재조회 확인 · 실제 호출 이벤트는 별도 확인하세요."
         }
     }
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
@@ -241,8 +244,8 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     fun readBatteryForVoice(): Int? = readStatusIntForVoice("battery", 0..100)
 
-    private fun readSettingsForVoice(): JSONObject? =
-        requests.request(15, 4, envelope("request_general_settings")) { type, body ->
+    private fun readSettingsForVoice(overBle: Boolean = false): JSONObject? =
+        requests.request(15, 4, envelope("request_general_settings"), overBle = overBle) { type, body ->
             type == 4 && body.optJSONObject("generalSettings")?.length()?.let { it > 0 } == true
         }?.optJSONObject("generalSettings")
     private fun exactInt(value: Any?): Int? {

@@ -22,6 +22,8 @@
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <package android:name="com.nhn.android.nmap" />
+        <package android:name="com.rayneo.venus" />
+        <package android:name="com.rayneo.venus.pub" />
         <package android:name="com.google.android.youtube" />
         <intent>
             <action android:name="android.intent.action.MAIN" />

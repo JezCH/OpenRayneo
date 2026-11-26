@@ -42,6 +42,18 @@ class StandaloneDeviceProtocolTest {
         assertEquals(1.toByte(), ProtocolCodec.pairingIntent(false))
         assertEquals(2.toByte(), ProtocolCodec.pairingIntent(true))
     }
+    @Test fun manualExistingBondUsesReconnectAndFreshRegistrationRemainsSeparate() {
+        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(false, true, true))
+        assertEquals(2.toByte(), ProtocolCodec.pairingIntentForLink(true, true, true))
+        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, false, false))
+        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, true, false))
+        assertEquals(1.toByte(), ProtocolCodec.pairingIntentForLink(false, false, true))
+        assertTrue(runCatching { ProtocolCodec.pairingIntentForLink(true, true, false) }.isFailure)
+        assertTrue(runCatching { ProtocolCodec.pairingIntentForLink(true, false, true) }.isFailure)
+        assertEquals(2, ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 1, 2)))
+        assertEquals(1, ProtocolCodec.pairingStatus(byteArrayOf(22, 0, 1, 1)))
+        assertNull(ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 2, 2)))
+    }
     @Test fun hostVisibilityUsesDocumentedRawCommand() {
         for (visible in listOf(true, false)) {
             val frame = ProtocolCodec.StreamDecoder().append(ProtocolCodec.hostVisibility(0x6800, visible)).single()
