@@ -592,7 +592,7 @@ internal class BridgeService : Service() {
         }
         if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
-        if (conversations.state.source == ConversationSource.ALWAYS_ON && conversations.state.stopping) {
+        if (conversations.state.stopping) {
             // A second wake while the old record is flushing must not overwrite the
             // suspended recording or install a second continuation. Use the latest wake below.
             nativeWakeStatus += " · 기존 기록 저장 대기"; notifyUI(); return
