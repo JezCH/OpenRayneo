@@ -326,7 +326,12 @@ internal class BridgeService : Service() {
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     val active = conversations.state
-                    reconnectCapture.linkLost(foreground && !previous.disconnecting && !state.disconnecting &&
+                    val eligible = foreground && !previous.disconnecting && !state.disconnecting && state.link.reconnectWaiting
+                    val suspended = resumeAlwaysOn
+                    if (suspended != null) {
+                        reconnectCapture.suspendedLinkLost(eligible, suspended.mode == ConversationMode.DAILY && suspended.reconnect,
+                            active.running || active.stopping)
+                    } else reconnectCapture.linkLost(eligible &&
                         active.running && !active.stopping && active.mode == ConversationMode.DAILY &&
                         active.source == ConversationSource.ALWAYS_ON && voiceTransport.source == ConversationSource.ALWAYS_ON)
                     resumeAlwaysOn = null
@@ -417,13 +422,13 @@ internal class BridgeService : Service() {
     fun scan() {
         resetAgentProbe()
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
-        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); devices.clear(); supervisor.scan()
+        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); resumeAlwaysOn = null; devices.clear(); supervisor.scan()
         updateNotification(); notifyUI()
     }
     fun connect(device: RayneoConnection.Device, bleOnly: Boolean) {
         resetAgentProbe()
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "연결 시도가 끝나거나 취소된 후 다시 연결하세요" }
-        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        resetFocus(); localClock.clear(); cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(); resumeAlwaysOn = null
         startForegroundService(Intent(this, BridgeService::class.java))
         dispatch(GlassesEvent.BeginConnection)
         supervisor.connect(device, bleOnly)
@@ -530,13 +535,14 @@ internal class BridgeService : Service() {
         check(!resumeOnReconnect || (foreground && mode == ConversationMode.DAILY && source == ConversationSource.ALWAYS_ON)) {
             "종일 일상 기록의 재연결 복구는 연결 서비스가 실행 중일 때만 허용됩니다"
         }
-        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+        cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery(preserveSuspendedConsent = source == ConversationSource.NATIVE)
         conversations.start(mode, source, target, if (source == ConversationSource.NATIVE) voiceTransport.wakeId else null)
         if (resumeOnReconnect) reconnectCapture.arm()
     }
-    fun cancelAlwaysOnRecovery() {
+    fun cancelAlwaysOnRecovery(preserveSuspendedConsent: Boolean = false) {
         val wasPending = reconnectCapture.pending
         reconnectCapture.cancel()
+        if (!preserveSuspendedConsent) resumeAlwaysOn = resumeAlwaysOn?.copy(reconnect = false)
         if (wasPending) { updateNotification(); notifyUI() }
     }
     fun cancelVoiceAlwaysOnStart() {
@@ -586,17 +592,23 @@ internal class BridgeService : Service() {
         }
         if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
+        if (conversations.state.stopping) {
+            // A second wake while the old record is flushing must not overwrite the
+            // suspended recording or install a second continuation. Use the latest wake below.
+            nativeWakeStatus += " · 기존 기록 저장 대기"; notifyUI(); return
+        }
         resetAmbientWake(); cancelNativeChat(); nativeWakeStatus += " · 음성 수신 전환"; notifyUI()
         val reconnectAllowed = reconnectCapture.armed
-        cancelAlwaysOnRecovery()
+        cancelAlwaysOnRecovery(preserveSuspendedConsent = conversations.state.running && conversations.state.source == ConversationSource.NATIVE)
         if (conversations.state.running) {
             if (conversations.state.source == ConversationSource.ALWAYS_ON) {
                 resumeAlwaysOn = conversations.state.mode.takeUnless { conversations.state.stopping }?.let { BackgroundResume(it, reconnectAllowed) }
-                val wake = voiceTransport.wakeId
                 conversations.handoffForWake {
-                    if (voiceTransport.nativeActive && voiceTransport.wakeId == wake && state.link.phase == LinkPhase.FULL && !state.disconnecting)
-                        startConversation(ConversationMode.DAILY, ConversationSource.NATIVE)
-                    else resumeBackground()
+                    if (reconnectCapture.pending) onConversationStopped()
+                    else if (resumeAlwaysOn != null && voiceTransport.nativeActive && state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                        runCatching { startConversation(ConversationMode.DAILY, ConversationSource.NATIVE) }
+                            .onFailure { resumeAlwaysOn = null; conversations.report(it.message ?: "기본 호출 전환 실패") }
+                    } else resumeBackground()
                 }
                 return
             }
