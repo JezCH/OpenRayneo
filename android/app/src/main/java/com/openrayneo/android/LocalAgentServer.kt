@@ -168,8 +168,19 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
                 config.put("localAgentToken", it); settings.save(config)
             }
         }
-        config.put("localAgentEnabled", true); settings.save(config)
-        val server = ServerSocket(config.optInt("localAgentPort", 8766), 8, InetAddress.getByName("127.0.0.1")); socket = server
+        val port = config.optInt("localAgentPort", 8766)
+        val server = try {
+            require(port in 1024..65535) { "로컬 포트 범위 오류" }
+            ServerSocket(port, 8, InetAddress.getByName("127.0.0.1"))
+        } catch (error: Exception) {
+            token = ""
+            state = AgentServerState(notice = "AI 연결 포트 $port 사용 불가 · 기존 연결 앱을 확인하세요")
+            changed()
+            throw error
+        }
+        try { config.put("localAgentEnabled", true); settings.save(config) }
+        catch (error: Exception) { server.close(); token = ""; throw error }
+        socket = server
         state = AgentServerState(true, server.localPort, "로컬에서만 수신 · 요청에는 전용 Bearer 토큰 필요"); changed()
         network.execute {
             try { while (!server.isClosed) { val client = server.accept(); if (!slots.tryAcquire()) client.close() else {

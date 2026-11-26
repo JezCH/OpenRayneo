@@ -37,6 +37,8 @@ internal class ConnectionSupervisor(
     private var watchScheduled = false
     private var watching = false
     private var connectedAt = 0L
+    private val remembered = AppSettings(context, "last_authenticated_glasses")
+    private var restoreAttempted = false
     private val history = ConnectionHealth(context)
     val health: String get() = history.summary()
     private val cooldowns = longArrayOf(1_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000)
@@ -65,9 +67,42 @@ internal class ConnectionSupervisor(
     private fun publish(next: LinkState) {
         if (state != next) { state = next; changed(state) }
     }
-    fun scan() { cancelRetries(); transport.scan() }
+    /** Restore only on an explicitly opened app, for the previously authenticated,
+     * still-bonded device. Never restore a recording or create a new system bond. */
+    fun restoreLast(): Boolean {
+        if (closed || restoreAttempted || state.phase != LinkPhase.DISCONNECTED || target != null || !recoveryPermissions()) return false
+        val saved = runCatching { remembered.read() }.getOrElse { report("이전 연결 설정 읽기 실패"); return false }
+        val classic = saved.optString("classic")
+        val ble = saved.optString("ble")
+        if (!BluetoothAdapter.checkBluetoothAddress(classic) || !BluetoothAdapter.checkBluetoothAddress(ble)) {
+            restoreAttempted = true; return false
+        }
+        val adapter = context.getSystemService(BluetoothManager::class.java).adapter ?: return false
+        if (!adapter.isEnabled) return false
+        restoreAttempted = true
+        val device = runCatching {
+            val paired = adapter.getRemoteDevice(classic)
+            if (paired.bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) null
+            else RayneoConnection.Device(saved.optString("name", "RayNeo iO"), adapter.getRemoteDevice(ble), classic)
+        }.getOrNull() ?: return false
+        target = device; bleOnly = false; failures = 0
+        scheduleWatch(1_000)
+        return true
+    }
+    private fun rememberAuthenticated(device: RayneoConnection.Device) {
+        val classic = device.classicAddress ?: return
+        runCatching {
+            remembered.save(org.json.JSONObject().put("name", device.name).put("classic", classic).put("ble", device.bluetooth.address))
+        }.onFailure { report("자동 연결 설정 저장 실패") }
+    }
+    fun forgetRecovery() {
+        restoreAttempted = true
+        runCatching { remembered.save(org.json.JSONObject()) }.onFailure { report("자동 연결 설정 해제 실패") }
+        cancelRetries()
+    }
+    fun scan() { forgetRecovery(); transport.scan() }
     fun connect(device: RayneoConnection.Device, diagnostic: Boolean) {
-        cancelRetries(); bleOnly = diagnostic
+        forgetRecovery(); bleOnly = diagnostic
         if (!diagnostic) target = device
         try { transport.connect(device, diagnostic) }
         catch (failure: Exception) { transport.abortConnection(failure.message ?: "초기 연결 실패") }
@@ -136,6 +171,7 @@ internal class ConnectionSupervisor(
                 history.event(if (recovered) "자동 재연결 성공" else "연결 성공", active = true)
             }
             target = target?.copy(classicAddress = transport.resolvedClassicAddress ?: target?.classicAddress)
+            if (!bleOnly) target?.let(::rememberAuthenticated)
             publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
             return
         }

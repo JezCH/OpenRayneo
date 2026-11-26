@@ -263,7 +263,9 @@ internal class BridgeService : Service() {
         navigation.stop()
         navigation.observers.add(navigationObserver)
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
-        if (settings.read().optBoolean("localAgentEnabled")) agentServer.start()
+        if (settings.read().optBoolean("localAgentEnabled")) {
+            runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
+        }
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("bridge", "백그라운드 서비스", NotificationManager.IMPORTANCE_LOW).apply {
@@ -419,6 +421,13 @@ internal class BridgeService : Service() {
 
     val connectionHealth: String get() = supervisor.health
     fun refreshConnectionPermissions() = supervisor.permissionsChanged()
+    fun restoreLastConnection() {
+        if (destroyed || !initialized || state.disconnecting || state.link.phase != LinkPhase.DISCONNECTED) return
+        if (supervisor.restoreLast()) {
+            runCatching { startForegroundService(Intent(this, BridgeService::class.java)) }
+                .onFailure { supervisor.cancelRetries(); onLog("자동 연결 서비스 시작 실패") }
+        }
+    }
     fun scan() {
         resetAgentProbe()
         check(!ready && state.link.phase != LinkPhase.CONNECTING && !state.disconnecting) { "먼저 현재 연결을 끊으세요" }
@@ -436,7 +445,7 @@ internal class BridgeService : Service() {
     fun disconnect() {
         resetAgentProbe()
         resetFocus(); localClock.clear()
-        supervisor.cancelRetries()
+        supervisor.forgetRecovery()
         agentServer.cancelOutstanding("안경 연결 해제")
         cancelPrompterLaunch()
         stopConversation()
