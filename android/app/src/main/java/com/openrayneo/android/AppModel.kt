@@ -81,6 +81,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private val context = application
     private val preferences = context.getSharedPreferences("companion_ui", Context.MODE_PRIVATE)
     private val settings = AppSettings(context)
+    val updateCheck = AppUpdateCheck(context)
     @SuppressLint(
         "StaticFieldLeak"
     ) // Application-bound service; the binding and observer are released in onCleared.
@@ -444,6 +445,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() {
+        updateCheck.close()
         bridge?.observers?.remove(observer)
         if (bound) context.unbindService(connection)
         files.shutdown()

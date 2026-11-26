@@ -182,6 +182,7 @@ internal class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         model.refreshPermissions()
+        model.updateCheck.refresh(false)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
