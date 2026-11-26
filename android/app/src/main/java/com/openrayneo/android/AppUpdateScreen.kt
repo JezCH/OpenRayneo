@@ -31,6 +31,7 @@ internal fun AppUpdateScreen(model: AppModel) {
     var status by remember { mutableStateOf("업데이트를 확인하세요") }
     var progress by remember { mutableStateOf(0L) }
     var signer by remember { mutableStateOf("") }
+    var openConfirmation by remember { mutableStateOf(false) }
     val busy = job != null
 
     fun idle(): Boolean {
@@ -40,7 +41,8 @@ internal fun AppUpdateScreen(model: AppModel) {
             !s.chatContinuityBusy && s.approvals.isEmpty() && s.agentReviews.isEmpty() &&
             !s.agentServer.enabled && !s.recordSync.enabled && !s.glasses.navigation.enabled &&
             s.glasses.link.phase in setOf(LinkPhase.DISCONNECTED, LinkPhase.FULL, LinkPhase.BLE_ONLY) &&
-            !LocalModels.zipformer.downloading && !LocalModels.senseVoice.downloading && !LocalModels.nemotron.downloading
+            !LocalModels.zipformer.downloading && !LocalModels.senseVoice.downloading && !LocalModels.nemotron.downloading &&
+            !KoreanKeywordModels.model.downloading
     }
 
     fun launchWork(work: suspend () -> Unit) {
@@ -53,6 +55,42 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         job = workJob
         workJob.start()
+    }
+
+    fun requestPermission() {
+        status = "이 앱의 APK 설치를 허용한 뒤 다시 눌러 주세요"
+        runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:" + app.packageName))) }
+            .onFailure { status = "외부 APK 설치 설정을 열 수 없습니다" }
+    }
+
+    suspend fun fetchApk(item: AppUpdate.Candidate): File {
+        status = "APK 다운로드 및 무결성 확인 중"
+        val apk = AppUpdate.download(app, item) { count -> withContext(Dispatchers.Main) { progress = count } }
+        downloaded = apk
+        status = "다운로드 및 인증서 검증 완료"
+        return apk
+    }
+
+    suspend fun requestInstall(item: AppUpdate.Candidate, apk: File) {
+        if (!idle()) {
+            status = "다운로드 완료 · 새 작업이 시작되어 설치를 보류합니다"
+            return
+        }
+        openConfirmation = true
+        try { AppUpdateInstall.install(app, item, apk, ::idle) }
+        catch (e: Exception) { openConfirmation = false; throw e }
+    }
+
+    val pendingConfirmation = AppUpdateInstall.confirmation
+    LaunchedEffect(pendingConfirmation, busy) {
+        // Only the current, explicit in-app install action may open Android's approval UI.
+        // On recreation or when another activity is running, the manual confirmation button remains.
+        if (pendingConfirmation != null && !busy && openConfirmation) {
+            openConfirmation = false
+            if (idle()) runCatching { context.startActivity(pendingConfirmation) }
+                .onFailure { status = "Android 설치 확인 버튼으로 다시 시도하세요" }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -83,22 +121,20 @@ internal fun AppUpdateScreen(model: AppModel) {
             Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
             Text(item.notes.ifBlank { "배포 변경사항 없음" })
             Text("APK 크기: " + (item.size / 1024 / 1024) + " MB")
-            if (downloaded == null) Button(onClick = {
-                status = "APK 다운로드 및 무결성 확인 중"
-                launchWork {
-                    downloaded = AppUpdate.download(app, item) { count -> withContext(Dispatchers.Main) { progress = count } }
-                    status = "다운로드 및 인증서 검증 완료"
-                }
-            }, enabled = !busy && AppUpdateInstall.sessionId == null) { Text("다운로드") }
+            if (downloaded == null) {
+                Button(onClick = {
+                    if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
+                    else launchWork { requestInstall(item, fetchApk(item)) }
+                }, enabled = !busy && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
+                TextButton(onClick = { launchWork { fetchApk(item) } },
+                    enabled = !busy && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
+            }
             if (progress > 0) LinearProgressIndicator(progress = { (progress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth())
             downloaded?.let { apk ->
                 Button(onClick = {
-                    if (!app.packageManager.canRequestPackageInstalls()) {
-                        runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:" + app.packageName))) }
-                            .onFailure { status = "외부 APK 설치 설정을 열 수 없습니다" }
-                    } else launchWork { AppUpdateInstall.install(app, item, apk, ::idle) }
+                    if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
+                    else launchWork { requestInstall(item, apk) }
                 }, enabled = !busy && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
             }
         }
