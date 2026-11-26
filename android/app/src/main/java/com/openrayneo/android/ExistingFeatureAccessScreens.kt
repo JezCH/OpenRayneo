@@ -16,6 +16,10 @@ internal fun PersonalizationScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AboutYouSection()
+        HorizontalDivider()
+        Text("자동 기억 참조", style = MaterialTheme.typography.titleMedium)
+        Note("일반 질문에 자동으로 참고할 개인화 정보 및 기록 범위를 선택합니다.")
+        OrdinaryContextButton()
     }
 }
 
