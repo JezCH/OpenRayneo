@@ -599,7 +599,7 @@ internal class BridgeService : Service() {
         }
         resetAmbientWake(); cancelNativeChat(); nativeWakeStatus += " · 음성 수신 전환"; notifyUI()
         val reconnectAllowed = reconnectCapture.armed
-        cancelAlwaysOnRecovery()
+        cancelAlwaysOnRecovery(preserveSuspendedConsent = conversations.state.running && conversations.state.source == ConversationSource.NATIVE)
         if (conversations.state.running) {
             if (conversations.state.source == ConversationSource.ALWAYS_ON) {
                 resumeAlwaysOn = conversations.state.mode.takeUnless { conversations.state.stopping }?.let { BackgroundResume(it, reconnectAllowed) }
