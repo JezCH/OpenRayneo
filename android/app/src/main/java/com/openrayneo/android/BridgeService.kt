@@ -62,6 +62,9 @@ internal class BridgeService : Service() {
     private var initialized = false
     private var foreground = false
     val foregroundRunning get() = foreground && !stopAfterDisconnect
+    val authenticatedNavigationDevice: String? get() = connection.resolvedClassicAddress.takeIf {
+        !destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting
+    }
     val timerRunning get() = localClock.timerRunning
     val stopwatchRunning get() = localClock.watchRunning
     private var stopAfterDisconnect = false
@@ -304,6 +307,7 @@ internal class BridgeService : Service() {
         navigation.initialize(this)
         navigation.stop()
         navigation.observers.add(navigationObserver)
+        NaverVoiceLaunch.authorizeHandoff = { voiceNavigationBlock() == null }
         NaverVoiceLaunch.onOpened = { requestedAt ->
             // Recheck the actual current feed before arming after a notification tap.
             if (!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
@@ -604,7 +608,8 @@ internal class BridgeService : Service() {
     private fun launchVoiceNavigation(request: NaverVoiceCommand.Request, place: NaverPlacePolicy.Place? = null): String {
         voiceNavigationBlock()?.let { return it }
         val requestedAt = System.currentTimeMillis()
-        val result = NaverVoiceLaunch.open(this, request, place)
+        val result = NaverVoiceLaunch.open(this, request, place,
+            NaverCompanionAccess.allowed(this, authenticatedNavigationDevice))
         if (request.routeRequested && result.opened && navigation.connected)
             voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
         return result.message
@@ -2266,6 +2271,7 @@ internal class BridgeService : Service() {
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         clearVoiceNavigation()
         NaverVoiceLaunch.onOpened = null
+        NaverVoiceLaunch.authorizeHandoff = null
         navigation.observers.remove(navigationObserver)
         PhoneNotificationForwarding.deliver = null
         PhoneNotificationForwarding.reset()

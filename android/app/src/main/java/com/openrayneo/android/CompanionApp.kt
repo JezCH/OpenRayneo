@@ -723,6 +723,20 @@ private fun NavigationScreen(
                 ToolOutlinedButton(onClick = { model.attempt { NavigationNotifications.refresh(model.getApplication(), foreground = true) } }, enabled = model.notificationAllowed) { Text("현재 알림 다시 확인") }
             }
         }
+        item {
+            ContentCard {
+                Text("안경으로 지도 자동 실행 (선택)", style = MaterialTheme.typography.titleMedium)
+                val address = runCatching { model.service().authenticatedNavigationDevice }.getOrNull()
+                val associated = NaverCompanionAccess.allowed(model.getApplication(), address)
+                Note(if (associated) "현재 연결된 안경의 시스템 부속 기기 등록 확인됨" else "현재 안경의 자동 실행 등록 없음")
+                Note("한 번 시스템 등록을 승인하면 안경의 명시적 길찾기 요청으로 네이버지도 백그라운드 실행을 시도합니다. 잠금 화면을 해제하거나 우회하지 않습니다. 등록은 기존 블루투스 연결과 별개입니다.")
+                ToolButton(onClick = actions.registerNaverCompanion, enabled = address != null && !associated,
+                    modifier = Modifier.fillMaxWidth()) { Text("현재 안경 시스템 등록 및 사용") }
+                ToolOutlinedButton(onClick = actions.revokeNaverCompanion,
+                    modifier = Modifier.fillMaxWidth()) { Text("자동 실행 사용 중지 및 등록 해제") }
+                Note("실제 안내는 네이버지도에서 확인된 신규 알림만 안경에 표시합니다. 실행이 제한된 경우 휴대폰 알림을 사용합니다.")
+            }
+        }
         item { NaverPlaceLookupSettings(model) }
         item {
             Note("네이버지도의 시스템 길 안내 알림에서 명확한 방향·거리가 확인될 때만 안경에 표시합니다. 실제 알림 형식은 아직 실기기 검증 전이며, 안내가 없거나 오래되면 휴대폰 네이버지도를 확인하세요.")
