@@ -4,6 +4,9 @@ package com.openrayneo.android
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -16,15 +19,29 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
     val voiceKeys = listOf("asrEngine", "asrKey", "asrUrl", "asrModel", "asrLanguage", "phoneSpeechLanguage", "answerLanguage", "ttsRate", "ttsPitch", "ttsOutput", "memorySuggestOnSend", "memorySuggestionDays", "memorySuggestionLimit", "nativeAutoAnswer", "voiceAlwaysOnStart", "fastRealtimeHints", "audioChannel", "speakerThreshold", "memoryPrompt", "memoryAutoSummary", "audioRetention", "answerClearSeconds", "answerMaxChars", "glassesVoiceGate", "selfVoiceMarginDb", "selfVoiceFloorDb", "selfVoiceHoldMs", "bargeInLevelDb", "bargeInMinMs", "asrKeepLoaded")
     var error by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    val jumps = remember { List(6) { BringIntoViewRequester() } }
+    val jumpScope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().imePadding()) {
+      Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("음성 및 기억 설정", style = MaterialTheme.typography.headlineSmall)
         Text("앱 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
         Note("음성 특징과 화자 처리는 이 기기에서 실행되며 ASR과 기록 요약은 설정한 서비스를 사용합니다. 답변, 짧은 힌트, 작업 판단은 휴대폰 로컬 Agent가 맡고 키는 Android Keystore로 암호화 저장됩니다.")
+        Note("아래 항목을 눌러 이동하세요. 변경한 음성·언어·기억 설정은 화면 아래 저장 버튼을 눌러 적용합니다.")
+        listOf(listOf("음성 모델", "언어·재생", "호출·알림"), listOf("녹음·화자", "기억·개인화", "요약 모델")).forEachIndexed { row, names ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                names.forEachIndexed { index, title ->
+                    OutlinedButton(onClick = { jumpScope.launch { jumps[row * 3 + index].bringIntoView() } },
+                        modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)) { Text(title) }
+                }
+            }
+        }
+        Box(Modifier.bringIntoViewRequester(jumps[1])) { SectionLabel("언어 및 음성 재생") }
         SectionLabel("휴대폰 음성 질문 언어")
         val phoneLanguage = KoreanLanguage.phoneInput(drafts["phoneSpeechLanguage"].orEmpty())
         KoreanLanguage.phoneInputOptions.forEach { (code, label) ->
@@ -60,12 +77,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Slider(value = pitch, onValueChange = { drafts["ttsPitch"] = it.toString() }, valueRange = 0.75f..1.25f, steps = 9)
         TextButton(onClick = { drafts["ttsRate"] = "1.0"; drafts["ttsPitch"] = "1.0"; drafts["ttsOutput"] = "headphones" }) { Text("음성 기본값 복원") }
         Note("저장 후 다음 재생부터 적용됩니다. 실제 출력은 휴대폰의 미디어 연결에 따릅니다.")
-        SectionLabel("안경 음성 인식 엔진 (ASR)")
-        var engine by remember(model.config) { mutableStateOf(SpeechRounds.engine(model.config)) }
+        Box(Modifier.bringIntoViewRequester(jumps[0])) { SectionLabel("안경 음성 인식 모델") }
+        val engine = SpeechRounds.engine(JSONObject().put("asrEngine", drafts["asrEngine"].orEmpty()))
         Column {
             listOf("cloud" to "클라우드 (Bailian Qwen)", "nemotron" to "기기 내장 · 실시간 다국어 (Nemotron)", "stream" to "기기 내장 · 실시간 한국어 (zipformer)",
                 "local" to "기기 내장 · 문장 단위 (SenseVoice)").forEach { (key, label) ->
-                Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { engine = key; drafts["asrEngine"] = key }); Text(label) }
+                Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(engine == key, { drafts["asrEngine"] = key }); Text(label) }
             }
         }
         Note("클라우드는 정확도가 가장 높고 말 다듬기(군말 제거)를 하지만 네트워크 지연이 있습니다. 실시간 기기 내장은 말하는 동안 글자가 나오고 고쳐집니다. Nemotron은 한국어·영어 등 다국어(언어 힌트가 하나면 그 언어로 고정, 아니면 자동 감지)이며 무겁고, zipformer는 가볍지만 한국어 전용입니다. 문장 단위 기기 내장은 문장이 끝난 뒤 인식하고 언어를 자동 감지해, 아래 언어 힌트 밖의 결과를 버립니다. 기기 내장은 모두 잡음 제거 후 인식합니다. 실시간 번역은 영어도 들어야 해서 한국어 전용 모델 대신 설치된 SenseVoice 또는 Nemotron을 사용합니다. 둘 다 없으면 로컬 모델을 준비해야 하며 클라우드로 자동 전환하지 않습니다.")
@@ -97,21 +114,19 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             if (local.downloading) LinearProgressIndicator(progress = { local.progress }, modifier = Modifier.fillMaxWidth())
             local.message?.takeIf { !local.downloading }?.let { Note(it) }
         }
-        var keepLoaded by remember(model.config) { mutableStateOf(model.config.optString("asrKeepLoaded", "true") != "false") }
+        val keepLoaded = drafts["asrKeepLoaded"] != "false"
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(keepLoaded, { keepLoaded = it; drafts["asrKeepLoaded"] = it.toString() }); Text("기기 내장 ASR 모델을 항상 메모리에 유지")
+            Checkbox(keepLoaded, { drafts["asrKeepLoaded"] = it.toString() }); Text("기기 내장 ASR 모델을 항상 메모리에 유지")
         }
         Note("켜면 고른 기기 내장 모델을 미리 올려 두어 깨울 때 불러오기 지연(Nemotron은 수 초)이 없습니다. 휴대폰 메모리를 계속 차지합니다(Nemotron 약 700MB, SenseVoice 약 250MB). 끄면 1분 동안 쓰지 않을 때 내립니다.")
         SectionLabel("Bailian ASR")
         VoiceField(model, "asrKey", "API Key", secret = true)
         VoiceField(model, "asrUrl", "WSS 주소", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
         VoiceField(model, "asrModel", "모델", "qwen-audio-3.1-asr-flash-message")
-        var asrLanguages by remember(model.config) {
-            mutableStateOf(SpeechRounds.languageHints(model.config).split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
-        }
+        val asrLanguages = drafts["asrLanguage"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         fun toggleLanguage(code: String, on: Boolean) {
-            asrLanguages = if (on) asrLanguages + code else asrLanguages - code
-            drafts["asrLanguage"] = listOf("ko", "en").filter { it in asrLanguages }.joinToString(",")
+            val selected = if (on) asrLanguages + code else asrLanguages - code
+            drafts["asrLanguage"] = listOf("ko", "en").filter { it in selected }.joinToString(",")
         }
         Text("인식 언어 힌트")
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -119,8 +134,9 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Checkbox("en" in asrLanguages, { toggleLanguage("en", it) }); Text("영어")
         }
         Note("선택하지 않으면 자동 감지합니다. 클라우드는 language_hints로 전달하고, 기기 내장은 고른 언어 밖의 결과(예: 잡음을 중국어로 읽은 결과)를 버립니다.")
-        var auto by remember(model.config) { mutableStateOf(model.config.optBoolean("nativeAutoAnswer")) }
-        Row { Checkbox(auto, { auto = it; drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
+        Box(Modifier.bringIntoViewRequester(jumps[2])) { SectionLabel("기본 호출 및 알림") }
+        val auto = drafts["nativeAutoAnswer"] == "true"
+        Row { Checkbox(auto, { drafts["nativeAutoAnswer"] = it.toString() }); Text("음성 깨우기로 깨우면 자동 응답") }
         Note("기본 음성 깨우기에서 한국어 안경 배터리·밝기·화면 높이/거리·자동 절전 명령은 기기에서 바로 처리합니다. 다른 질문은 도구 없는 기본 AI로 전달하고 정상 답변 최근 4턴을 현재 연결 동안 참고합니다. 업무 실행은 “업무 실행 일정 등록해줘”처럼 업무 실행 뒤에 내용을 말하세요. 쓰기 작업에는 기존 승인 절차가 적용됩니다.")
         Note("휴대폰 기반 타이머·스톱워치: 안경 타이머 5분 시작해줘 / 안경 타이머 남은 시간 알려줘 / 안경 타이머 취소해줘 / 안경 스톱워치 시작해줘 / 안경 스톱워치 시간 알려줘 / 안경 스톱워치 중지해줘 / 안경 스톱워치 초기화해줘. 숫자와 시간·분·초 단위의 전사를 지원합니다.")
         Note("안경 내장 기능이 아니라 연결 서비스의 타이머 1개와 스톱워치입니다. 타이머 완료는 휴대폰 알림과 연결 중인 안경 알림으로 요청합니다. 절전 중 알림은 늦어질 수 있고 서비스 종료·수동 연결 해제·기기 변경 시 초기화됩니다. 중요 안전 알람으로 사용하지 마세요. 스톱워치 재시작은 이전 측정값에 이어서 계산합니다.")
@@ -142,20 +158,21 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             Text("OpenRayneo 안경 알림 전송")
         }
         Note("안경 집중 모드 켜줘 / 안경 집중 모드 꺼줘 / 안경 집중 모드 상태 알려줘 / 안경 알림 꺼줘 / 안경 알림 켜줘 / 안경 알림 상태 알려줘. 변경은 즉시 적용됩니다. 집중 모드는 새 종일 AI 힌트와 일반 앱 알림을 막고, 이미 대기 중인 선제 힌트를 취소합니다. 안경 알림 전송을 끄면 타이머 안경 알림도 끄지만 휴대폰 타이머 알림은 유지합니다. 직접 요청한 답변, 녹음·전사·요약, 실시간 화면, 내비게이션은 그대로입니다. 이미 전송한 알림과 다른 앱·기기 자체 알림·명시적 테스트 알림은 제어하지 않습니다. 제조사 방해 금지 설정이 아닙니다. 수동 연결 해제·새 기기 선택·서비스 종료 시 기본값으로 돌아갑니다.")
-        var voiceAlwaysOnStart by remember(model.config) { mutableStateOf(model.config.optBoolean("voiceAlwaysOnStart")) }
+        val voiceAlwaysOnStart = drafts["voiceAlwaysOnStart"] == "true"
         Row {
-            Checkbox(voiceAlwaysOnStart, { voiceAlwaysOnStart = it; drafts["voiceAlwaysOnStart"] = it.toString() })
+            Checkbox(voiceAlwaysOnStart, { drafts["voiceAlwaysOnStart"] = it.toString() })
             Text("음성 깨우기에서 종일 기록 시작 허용")
         }
         Note("예: 안경 종일 기록 시작해줘 / 안경 종일 기록 중지해줘. 시작은 이 허용을 저장한 후 음성 대화를 90초 안에 정상 종료해야 적용됩니다. 기존 기록 마무리 후에 시작하며, 음성 명령은 착용자 인증을 보장하지 않습니다. 주변 참여자의 동의 및 장소 보안 규칙을 확인하세요. 중지 명령은 깨우기 때문에 잠시 멈춘 종일 기록의 재개를 취소합니다. 이 명령으로 시작한 기록은 재연결 자동 복구나 재부팅 후 자동 시작을 허용하지 않습니다.")
-        var fastRealtimeHints by remember(model.config) { mutableStateOf(model.config.optBoolean("fastRealtimeHints")) }
+        val fastRealtimeHints = drafts["fastRealtimeHints"] == "true"
         Row {
-            Checkbox(fastRealtimeHints, { fastRealtimeHints = it; drafts["fastRealtimeHints"] = it.toString() })
+            Checkbox(fastRealtimeHints, { drafts["fastRealtimeHints"] = it.toString() })
             Text("실시간 힌트 화면: 빠른 스트리밍 (도구 없는 답변)")
         }
         Note("실시간 힌트는 켜짐/꺼짐 모두 도구 없는 질문 경로입니다. 선택하면 작성 중에도 갱신하고, 끄면 최종 힌트만 표시합니다. 새 발화·화면 전환·만료 시 이전 요청을 중단합니다. 기억 조회·실시간 검색·업무 실행은 일반 Agent 화면 또는 직접 깨우기를 사용하세요. 이전 플러그인은 최종 답변만 표시할 수 있습니다.")
-        var voiceGate by remember(model.config) { mutableStateOf(model.config.optString("glassesVoiceGate", "true") != "false") }
-        Row { Checkbox(voiceGate, { voiceGate = it; drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
+        Box(Modifier.bringIntoViewRequester(jumps[3])) { SectionLabel("녹음 보존 및 화자 분리") }
+        val voiceGate = drafts["glassesVoiceGate"] != "false"
+        Row { Checkbox(voiceGate, { drafts["glassesVoiceGate"] = it.toString() }); Text("종일 기록: 안경 음성 감지(VPU/VAD) 구간만 인식") }
         Note("안경이 말소리로 표시한 구간만 ASR에 보내고 나머지는 무음 처리해 잡음 전사를 줄입니다. 원본 저장 모드의 오디오는 그대로입니다. 기록 화면의 감지 비율이 0%에 가깝다면 꺼 주세요.")
         SectionLabel("Hey RayNeo: 답변 중 말로 끊기 감도")
         Note("안경 설정의 \"대화 끊기\"가 켜져 있을 때, 답변 중 마이크 소리가 기준보다 큰 상태가 정해진 시간 이상 이어지면 바로 끊습니다(글자 인식을 기다리지 않음). 앱 로그의 \"대화 끊기 진단: 답변 중 마이크 최대 N dBFS\"로 답변 소리 크기를 보고 맞추세요.")
@@ -171,12 +188,12 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             "주변이 시끄러워 잡음에도 무음 처리되면 올리고(예: -40), 작게 말할 때 걸러지지 않으면 내리세요.")
         GateSlider(drafts, "selfVoiceHoldMs", "말이 끝난 뒤 유지 시간", 300f, 0f..1000f, 9, { "${it.toInt()} ms" },
             "본인 말 끝부분이 채널 2에 남으면 늘리고, 바로 이어지는 상대 말이 잘리면 줄이세요.")
-        var autoMemory by remember(model.config) { mutableStateOf(SummaryDispatchPolicy.autoEnabled(model.config.optString("memoryAutoSummary"))) }
-        Row { Checkbox(autoMemory, { autoMemory = it; drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
+        val autoMemory = SummaryDispatchPolicy.autoEnabled(drafts["memoryAutoSummary"].orEmpty())
+        Row { Checkbox(autoMemory, { drafts["memoryAutoSummary"] = it.toString() }); Text("롤링·하루 마감·기록 종료 요약 자동 생성") }
         Note("끄고 음성 설정을 저장하면 새 자동 요약 요청을 보내지 않습니다. 수동 요약은 가능하며 이미 전송된 요청은 취소되지 않을 수 있습니다. ASR·Agent 전송 설정과는 별개입니다.")
-        var transcriptOnly by remember(model.config) { mutableStateOf(AudioRetentionPolicy.transcriptOnly(model.config.optString("audioRetention"))) }
+        val transcriptOnly = AudioRetentionPolicy.transcriptOnly(drafts["audioRetention"].orEmpty())
         Row {
-            Checkbox(transcriptOnly, { transcriptOnly = it; drafts["audioRetention"] = if (it) "transcript_only" else "raw_audio" })
+            Checkbox(transcriptOnly, { drafts["audioRetention"] = if (it) "transcript_only" else "raw_audio" })
             Text("새 대화 기록: 원본 음성을 저장하지 않고 전사만 보존")
         }
         Note("미보존 모드는 기기 내장 ASR이 준비된 경우에만 시작합니다. 완료된 전사와 화자 특징·기억은 기존처럼 보존되며 설정한 Agent·요약 서비스에 텍스트가 전달될 수 있습니다. 휴대폰 절전 모드만으로 직접 시작한 전사를 차단하지 않습니다. 심각한 발열·배터리 부족·처리 오류로 중단되면 누락된 음성은 복구할 수 없습니다. 기존 저장 음성 및 진행 중 기록은 변경하지 않습니다. 번역·목소리 등록에는 별도 처리 경로가 적용됩니다.")
@@ -190,7 +207,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Note("일반 2채널 동시 처리: 채널 1은 기본 본인, 채널 2는 별도 식별. 종일 기록과 기타 모노 오디오는 전체 화자 식별. 이 옵션은 직접 등록에만 쓰이며 기록 정책은 바뀌지 않습니다.")
         VoiceField(model, "audioChannel", "등록 진단 채널: 0/1 채널 1, 2 채널 2", "0")
         VoiceField(model, "speakerThreshold", "목소리 매칭 임계값 (내 목소리로 보정 필요)", "0.7")
-        SectionLabel("AI 기억 추천")
+        Box(Modifier.bringIntoViewRequester(jumps[4])) { SectionLabel("기억 추천 및 개인화") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(drafts["memorySuggestOnSend"] == "true", { drafts["memorySuggestOnSend"] = it.toString() })
             Text("질문 작성 중 관련 기록 자동 추천")
@@ -207,13 +224,17 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         TextButton(onClick = { drafts["memorySuggestOnSend"] = "true"; drafts["memorySuggestionDays"] = "30"; drafts["memorySuggestionLimit"] = "3" }) { Text("기억 추천 기본값 복원") }
         AboutYouSection()
         OrdinaryContextButton()
-        SectionLabel("기록 요약")
+        Box(Modifier.bringIntoViewRequester(jumps[5])) { SectionLabel("기록 요약 모델") }
         VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
         VoiceField(model, "modelName", "요약 모델 이름")
         VoiceField(model, "modelKey", "요약 모델 API Key", secret = true)
         StructuredVoicePrompt(model, "memoryPrompt", "기억 귀속 및 정리", ConversationPrompts.memory)
         Note("실시간 번역(한국어 ↔ 영어)도 이 모델과 위에서 고른 ASR 엔진을 사용합니다.")
         Note("이 모델은 앱 내 기록 요약에 사용됩니다.원문, 화자, 서술 대상은 따로 저장되며 가져올 수 있는 모든 전사는 장기 보관됩니다.")
+      }
+      HorizontalDivider()
+      Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         ToolButton(onClick = {
             val invalid = listOf("speakerThreshold")
@@ -224,7 +245,9 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
             else if (drafts["selfVoiceMarginDb"].orEmpty().isNotBlank() && drafts["selfVoiceMarginDb"]?.toDoubleOrNull()?.let { it in 0.0..30.0 } != true) error = "본인 목소리 판단 기준은 0~30 dB여야 함"
             else if (drafts["answerClearSeconds"].orEmpty().isNotBlank() && drafts["answerClearSeconds"]?.toIntOrNull() !in 0..3600) error = "화면 지우기 지연은 0~3600초여야 함"
             else { error = null; model.saveVoiceDrafts(voiceKeys + listOf("modelUrl", "modelName", "modelKey")) }
-        }, modifier = Modifier.fillMaxWidth()) { Text("음성 설정 저장") }
+        }, modifier = Modifier.fillMaxWidth()) { Text("변경한 음성·기억 설정 저장") }
+        }
+      }
     }
 }
 

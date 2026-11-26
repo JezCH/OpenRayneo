@@ -56,7 +56,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                     Column(Modifier.weight(1f)) {
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "완전 연결 · BLE 인증 + SPP" else s.glasses.link.detail)
+                        Note(if (linked) "안경 연결됨" else s.glasses.link.detail)
                         if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
                         if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
                     }
@@ -71,8 +71,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
                     Text(activity, style = MaterialTheme.typography.headlineSmall)
                 }
-                Note("음성 수신: " + s.glasses.audio.detail)
-                Note("음성 인식: " + if (c.modelReady) "준비됨" else "설정 또는 모델 준비 필요")
+                Note("음성 인식: " + if (c.modelReady) "준비됨" else "음성 모델 준비 필요")
                 if (model.config.optBoolean("ambientWakeEnabled") && c.running && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
                 Note("AI: " + s.agentServer.receiverStatus)
                 if (c.running || s.alwaysOnResumePending) {
@@ -106,11 +105,12 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                         Text(when { !linked -> "안경 연결"; !c.modelReady -> "음성 인식 준비"; otherMode -> "현재 화면 제어"; else -> "일상 기록 시작" })
                     }
                 }
-                if (!s.agentServer.enabled) TextButton(onClick = { open("agent-api") }) { Text("AI 연결 설정") }
+                if (!s.agentServer.pollRecent) TextButton(onClick = { open("agent-api") }) { Text("AI 연결 상태 확인") }
                 if (!linked) TextButton(onClick = { open("diagnostics") }) { Text("연결 상태와 오류 확인") }
             }
         }
-        item { FeatureTile("유튜브·미디어 자막", "이어폰 재생음 직접 수집 · 원문/한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
+        item { SectionLabel("바로 사용") }
+        item { FeatureLink("유튜브·영상 자막", "휴대폰에서 재생하는 영상의 한국어 자막을 안경에 표시", Icons.Outlined.Translate) { open("media-captions") } }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FeatureTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, Modifier.weight(1f)) { navigate(1) }
@@ -128,9 +128,11 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
                     else if (!s.agentServer.enabled) open("agent-api") else hintRequested = true
                 }
-                FeatureTile("실시간 번역", "한국어 ↔ 영어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
+                FeatureTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, Modifier.weight(1f)) { open("korean-wake") }
             }
         }
+        item { FeatureLink("주변 대화 자막", "안경 마이크로 대화 인식", Icons.Outlined.GraphicEq) { open("captions") } }
+        item { FeatureLink("모든 도구 보기", "대화 번역 · 프롬프터 · 길 안내 · 일정 · 타이머", Icons.Outlined.Dashboard) { navigate(3) } }
         if (model.recommendedPending) item { RecommendedSettingsCard(model) }
         item { HomeFeatureDashboard(model, navigate, open, connect) }
         item {
@@ -183,22 +185,22 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
 
 @Composable
 internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Note("필요한 기능을 선택하세요. 안경 화면과 마이크를 공유하는 기능은 동시에 실행되지 않을 수 있습니다.") }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FeatureTile("실시간 번역", "한국어 ↔ 영어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
-            FeatureTile("프롬프터", "원고 · 따라 읽기", Icons.Outlined.Description, Modifier.weight(1f)) { open("teleprompter") }
-        } }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FeatureTile("길 안내", "Amap · 국내 지도 실험", Icons.Outlined.NearMe, Modifier.weight(1f)) { open("navigation") }
-            FeatureTile("회의 기록", "기록 화면 열기", Icons.Outlined.GraphicEq, Modifier.weight(1f)) { navigate(2) }
-        } }
-        item { FeatureTile("한국어 호출", "종일 호출 · 호출어 설정", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("korean-wake") } }
-        item { FeatureTile("유튜브·미디어 자막", "휴대폰 내부 재생음 · 원문/한국어 번역", Icons.Outlined.Translate, Modifier.fillMaxWidth()) { open("media-captions") } }
-        item { FeatureTile("주변 대화 자막", "안경 마이크 · 유튜브 내부 재생음 아님", Icons.Outlined.GraphicEq, Modifier.fillMaxWidth()) { open("captions") } }
-        item { FeatureTile("할 일 · 일정 · 날씨", "안경 콘텐츠 관리", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
-        item { FeatureTile("타이머 · 스톱워치", "기존 휴대폰 타이머 · 직접 조작 및 상태 확인", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("local-clock") } }
-        item { FeatureTile("안경 출력 확인", "화면 미리보기 · 지우기 · 오디오", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { SectionLabel("자막 및 번역") }
+        item { FeatureLink("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") } }
+        item { FeatureLink("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") } }
+        item { FeatureLink("주변 대화 번역", "한국어 ↔ 영어 · 별도 번역 모델 또는 AI 연결 필요", Icons.Outlined.Translate) { open("translation") } }
+        item { Spacer(Modifier.height(8.dp)); SectionLabel("AI 및 기록") }
+        item { FeatureLink("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") } }
+        item { FeatureLink("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) } }
+        item { Spacer(Modifier.height(8.dp)); SectionLabel("생활 및 업무") }
+        item { FeatureLink("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") } }
+        item { FeatureLink("길 안내", "휴대폰 내비게이션 알림을 안경에 표시", Icons.Outlined.NearMe) { open("navigation") } }
+        item { FeatureLink("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") } }
+        item { FeatureLink("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") } }
+        item { Spacer(Modifier.height(8.dp)); SectionLabel("안경 확인") }
+        item { FeatureLink("안경 화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
+        item { Note("안경 화면과 마이크를 공유하는 기능은 동시에 사용하지 못할 수 있습니다. 실행 중인 기능은 홈에서 중지하세요.") }
     }
 }
 
@@ -265,13 +267,13 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
             val managing = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
             ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리 · 해제 및 전환" else "안경 연결") }
         } }
-        item { FeatureTile("연결 해제 및 공식 앱 전환", "기존 페어링 및 기록 유지", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
-        item { FeatureTile("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings, Modifier.fillMaxWidth()) { open("device-settings") } }
-        item { FeatureTile("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone, Modifier.fillMaxWidth()) { open("phone-notifications") } }
-        item { FeatureTile("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard, Modifier.fillMaxWidth()) { open("content") } }
-        item { FeatureTile("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("display-controls") } }
-        item { FeatureTile("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility, Modifier.fillMaxWidth()) { open("korean-glyphs") } }
-        item { FeatureTile("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune, Modifier.fillMaxWidth()) { open("diagnostics") } }
+        item { FeatureLink("연결 해제 및 공식 앱 전환", "기존 페어링 및 기록 유지", Icons.Outlined.Visibility) { open("display-controls") } }
+        item { FeatureLink("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") } }
+        item { FeatureLink("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") } }
+        item { FeatureLink("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") } }
+        item { FeatureLink("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
+        item { FeatureLink("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility) { open("korean-glyphs") } }
+        item { FeatureLink("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune) { open("diagnostics") } }
     }
 }
 

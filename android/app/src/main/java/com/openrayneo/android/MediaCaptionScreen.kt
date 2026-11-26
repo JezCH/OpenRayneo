@@ -18,6 +18,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
     var scope by rememberSaveable { mutableStateOf(MediaCaptionScope.YOUTUBE.name) }
     var language by rememberSaveable { mutableStateOf("en") }
     var korean by rememberSaveable { mutableStateOf(true) }
+    var details by rememberSaveable { mutableStateOf(false) }
     val options = MediaCaptionOptions(MediaCaptionScope.valueOf(scope), language, korean)
     val needsTranslation = MediaTranslationRoute.required(language, korean)
     val problem = if (capture.busy) null else if (!s.available) "연결 서비스 준비 중" else
@@ -31,13 +32,20 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                 s.glasses.link.lastFailure?.let { Note("최근 원인: $it") }
                 ToolOutlinedButton(onClick = connect) { Text("안경 연결 확인") }
             }
-            Note("이어폰으로 원본 소리를 듣는 동안 휴대폰 재생음을 로컬 ASR로 인식합니다. 내장 번역 모델 준비 후 한국어 자막을 표시하며 별도 서버나 API Key가 필요하지 않습니다.")
+            Note("휴대폰 영상 소리를 글자로 바꿔 안경에 표시합니다. 이어폰 소리는 그대로 들을 수 있고, 별도 AI 구독이나 서버는 필요하지 않습니다.")
             Note(capture.detail)
             if (capture.busy) {
                 val translating = MediaTranslationRoute.required(capture.options.language, capture.options.translateToKorean)
                 Note((if (capture.options.scope == MediaCaptionScope.YOUTUBE) "YouTube만" else "허용된 전체 미디어") +
                     " · " + labels.first { it.first == capture.options.language }.second +
                     (if (translating) " → 한국어" else " 원문"))
+                Text("현재 진행 상태", style = MaterialTheme.typography.titleMedium)
+                Note("1. 영상 소리: " + if (capture.heardNonzero) "수신됨" else "재생음 대기 · 영상을 재생하세요")
+                Note("2. 음성 인식: " + if (s.mediaFinalCount > 0L) "완료 ${s.mediaFinalCount}문장" else "문장 인식 대기")
+                if (translating) Note("3. 한국어 번역: " + if (mt.completed > 0) "완료 ${mt.completed}문장" else "번역 대기")
+                Note("안경 화면: " + s.glasses.displayDescription + " · 실제 표시를 확인하세요")
+                TextButton(onClick = { details = !details }) { Text(if (details) "상세 진단 접기" else "상세 진단 보기 (소리·인식·번역)") }
+                if (details) {
                 Note("PCM 수집: " + (capture.samples / 16000) + "초 · ASR 미수용: " + capture.dropped + "샘플")
                 Note("첫 PCM: " + (capture.firstPcmMs?.let { "$it ms" } ?: "대기") +
                     " · " + if (capture.heardNonzero) "재생음 감지됨" else "유효한 재생음 대기")
@@ -47,29 +55,32 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                 }
                 Note("ASR 입력 수락: " + ((capture.samples - capture.dropped).coerceAtLeast(0) / 16000) + "초")
                 Note("음성 인식: " + s.mediaAsrStatus + " · 확정 문장 " + s.mediaFinalCount + "개")
-                Note("HUD: " + s.glasses.displayDescription)
+                }
                 if (capture.heardNonzero && s.mediaFinalCount == 0L) Note("소리는 들어오고 있지만 아직 확정 문장이 없습니다. 원문 언어와 설치된 음성 모델을 확인하세요.")
                 ToolButton(onClick = { model.attempt { model.service().stopMediaCaption() } },
                     enabled = capture.phase != MediaCapturePhase.STOPPING, modifier = Modifier.fillMaxWidth()) { Text("미디어 자막 종료") }
             } else {
-                Text("수집 범위", style = MaterialTheme.typography.titleMedium)
+                Text(if (problem == null) "시작 준비 완료" else "시작 전 확인 필요", style = MaterialTheme.typography.titleMedium)
+                if (problem != null) Note(problem)
+                Text("1. 어떤 영상 소리를 들을까요?", style = MaterialTheme.typography.titleMedium)
                 listOf(MediaCaptionScope.YOUTUBE to "YouTube만", MediaCaptionScope.ALL_MEDIA to "캡처가 허용된 미디어·게임").forEach { (value, label) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(scope == value.name, { scope = value.name }, enabled = !mt.preparing); Text(label)
                     }
                 }
-                Text("원문 언어", style = MaterialTheme.typography.titleMedium)
+                Text("2. 영상에서 나오는 언어", style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     labels.forEach { (code, label) ->
                         FilterChip(language == code, { language = code }, label = { Text(label) }, enabled = !mt.preparing)
                     }
                 }
+                Text("3. 안경에 표시할 언어", style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(korean, { korean = true }, enabled = !mt.preparing); Text("한국어 번역")
                     RadioButton(!korean, { korean = false }, enabled = !mt.preparing); Text("원문 자막")
                 }
                 Note("영어·일본어·중국어에는 SenseVoice 모델을 준비하세요. 설치된 Nemotron은 영어, 한국어 모델은 한국어에 재사용할 수 있습니다. 일상 음성 설정은 변경하지 않습니다.")
-                ToolOutlinedButton(onClick = voiceSettings, enabled = !mt.preparing) { Text("음성 모델 준비") }
+                ToolOutlinedButton(onClick = voiceSettings, enabled = !mt.preparing, modifier = Modifier.fillMaxWidth()) { Text("음성 모델 다운로드 화면 열기") }
                 if (language == "ko" && korean) Note("한국어 음성은 번역 모델 없이 원문을 표시합니다.")
                 if (needsTranslation || mt.preparing) {
                     Text("내장 번역 모델", style = MaterialTheme.typography.titleMedium)
@@ -90,7 +101,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                 if (mt.phase == LocalMediaTranslationPhase.READY && !mt.preparing)
                     TextButton(onClick = { model.attempt { model.service().releaseMediaTranslation() } }) { Text("번역 모델 메모리 해제") }
                 if (capture.phase == MediaCapturePhase.ERROR) Note("최근 종료: " + capture.detail + " · 수집 " + capture.samples + "샘플 · 확정 문장 " + s.mediaFinalCount + "개")
-                if (problem != null) Note(problem)
+                if (problem != null) Note("시작할 수 없는 이유: " + problem)
                 ToolButton(onClick = { start(options) }, enabled = problem == null && s.available && !mt.preparing,
                     modifier = Modifier.fillMaxWidth()) { Text("시스템 승인 후 자막 시작") }
             }

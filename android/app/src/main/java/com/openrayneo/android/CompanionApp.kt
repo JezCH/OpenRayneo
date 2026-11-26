@@ -70,15 +70,15 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                                 "app-update" -> "앱 업데이트"
                                 "local-clock" -> "타이머 및 스톱워치"
                                 "about-you" -> "개인화 정보"
-                                "model" -> "휴대폰 모델"
+                                "model" -> "기록 요약 모델"
                                 "computer" -> "컴퓨터 연결"
                                 "diagnostics" -> "기기 및 진단"
-                                "voice-settings" -> "음성 및 프롬프트"
+                                "voice-settings" -> "음성·기억 설정"
                                 "voice-profiles" -> "목소리 및 인물"
                                 "device-settings" -> "안경 설정"
                                 "content" -> "홈 화면 및 콘텐츠"
                                 "teleprompter" -> "프롬프터 자료"
-                                "agent-api" -> "DSH Go 및 외부 Agent"
+                                "agent-api" -> "AI 연결 및 동기화"
                                 "navigation" -> "길 안내"
                                 "display-controls" -> "안경 화면 및 오디오"
                                 "translation" -> "실시간 번역"
@@ -457,6 +457,18 @@ internal fun FeatureTile(
             Text(title, style = MaterialTheme.typography.titleMedium)
             Note(subtitle)
         }
+    }
+}
+
+/** Compact action with a readable label, purpose and navigation affordance. */
+@Composable
+internal fun FeatureLink(title: String, subtitle: String, icon: ImageVector, click: () -> Unit) {
+    OutlinedCard(onClick = click, modifier = Modifier.fillMaxWidth()) {
+        ListItem(headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
+            supportingContent = { Text(subtitle) },
+            leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
+            trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent))
     }
 }
 

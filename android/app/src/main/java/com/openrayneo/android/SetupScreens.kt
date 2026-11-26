@@ -247,7 +247,8 @@ internal fun SettingsScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SectionLabel("서비스 연결")
+        if (AppUpdate.supported) SettingsRow("앱 업데이트", model.updateCheck.summary, Icons.Outlined.Settings) { open("app-update") }
+        SectionLabel("AI 연결")
         SettingsRow(
             "기록 요약 모델",
             if (!model.mobileModelConfigured) "아직 설정되지 않음"
@@ -263,18 +264,21 @@ internal fun SettingsScreen(
         ) {
             open("computer")
         }
-        SettingsRow("DSH Go 및 외부 Agent", "음성 작업 위임, 안경 도구 및 로컬 API", Icons.Outlined.Hub) { open("agent-api") }
-        SectionLabel("개인화")
+        SettingsRow("AI 연결 · DSH Go", model.state.agentServer.receiverStatus + " · 연결 및 동기화", Icons.Outlined.Hub) { open("agent-api") }
+        SectionLabel("음성·기억 설정")
+        SettingsRow("음성·기억 설정", "음성 모델 다운로드 · 언어 · 기억 및 요약", Icons.Outlined.Mic) { open("voice-settings") }
         SettingsRow("About You · 개인화 정보", "승인한 프로필·선호·관심사 관리", Icons.Outlined.People) { open("about-you") }
-        SettingsRow("호출어 및 대기 시간", "한국어 소프트웨어 호출 설정", Icons.Outlined.Mic) { open("korean-wake") }
+        SettingsRow("한국어 호출어", "내 호출어 · 듣기 시작 및 중지", Icons.Outlined.Mic) { open("korean-wake") }
+        SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }
         SectionLabel("기록 및 데이터")
         SettingsRow("기존 기록 가져오기", "다른 설치본에서 전사·요약·음성 이전", Icons.Outlined.FolderOpen) { open("record-migration") }
-        SectionLabel("권한 및 기기")
-        SettingsRow("음성 및 요약", "안경 ASR, 인물 분석 및 기록 요약", Icons.Outlined.Mic) { open("voice-settings") }
+        SectionLabel("안경 설정")
         SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
         SettingsRow("홈 화면 및 콘텐츠", "위젯, 할 일, 일정 및 날씨", Icons.Outlined.Dashboard) { open("content") }
         SettingsRow("프롬프터 원고함", "로컬 원고, 안경 재생 및 제어", Icons.Outlined.Description) { open("teleprompter") }
-        SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }
+
+        SettingsRow("기기 및 진단", "연결 로그, 테스트 알림 및 오디오 복구", Icons.Outlined.Tune) { open("diagnostics") }
+        SectionLabel("휴대폰 권한")
         SettingsRow(
             "근처 기기",
             if (model.bluetoothAllowed) "허용됨" else "안경 연결 시 필요",
@@ -298,7 +302,7 @@ internal fun SettingsScreen(
             if (model.backgroundNotifications) actions.appSettings()
             else actions.notificationPermission()
         }
-        SettingsRow("기기 및 진단", "연결 로그, 테스트 알림 및 오디오 복구", Icons.Outlined.Tune) { open("diagnostics") }
+
         SectionLabel("화면 모드")
         ContentCard {
             listOf("system" to "시스템 설정 따르기", "light" to "라이트", "dark" to "다크").forEach { (key, title) ->
@@ -311,8 +315,7 @@ internal fun SettingsScreen(
                 }
             }
         }
-        SectionLabel("정보: OpenRayneo")
-        if (AppUpdate.supported) SettingsRow("앱 업데이트", model.updateCheck.summary, Icons.Outlined.Settings) { open("app-update") }
+        SectionLabel("앱 정보")
         SettingsRow("사용 안내 다시 보기", "안경 연결, 내비게이션 데모 및 어시스턴트 설정", Icons.Outlined.Explore, replay)
         Note(
             "OpenRayneo ${BuildConfig.VERSION_NAME} · 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})\n기록 오디오는 휴대폰에 암호화 저장되며 전사와 화자 분석이 끝난 뒤 전달됩니다. 시스템 음성 입력은 휴대폰 인식 서비스를 사용합니다.",
