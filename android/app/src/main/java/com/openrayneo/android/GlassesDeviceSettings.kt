@@ -58,6 +58,28 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         values.forEach { (key, value) -> require(key in setOf("mic_switch", "led_light", "led_auto_light", "log_switch")); data.put(key, if (value) 1 else 0) }
         apply("privacy_config", 5, 6, payload(data = data.toString()), "privacyConfig") { s -> values.all { (key, value) -> s.settings.optJSONObject("privacyConfig")?.deviceFlag(key) == value } }
     }
+    /** Explicit device-side AI switch, independent of the phone's response setting.
+     * Require a fresh reported value; never treat an ACK or cached merged value as success. */
+    fun assistantEnabled(enabled: Boolean) {
+        check(state.loaded)
+        perform {
+            val before = readSettingsForVoice()?.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled")
+                ?: error("안경이 AI 활성화 상태를 보고하지 않았습니다. 변경하지 않았습니다.")
+            if (before == enabled) return@perform "안경 AI가 이미 " + if (enabled) "켜져 있습니다." else "꺼져 있습니다."
+            try {
+                requests.request(15, 16, JSONObject().put("cmd", "set_ai_state")
+                    .put("payload", payload(mode = if (enabled) 1 else 0))) { type, body ->
+                    type == 17 && body.optString("cmd") in setOf("set_ai_state", "sync_ai_settings")
+                }
+            } catch (_: IllegalStateException) { /* A fresh full read is the confirmation. */ }
+            val actual = readSettingsForVoice()?.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled")
+            when (actual) {
+                enabled -> "안경 AI 활성화 설정 재조회 일치 · 실제 호출은 별도 확인하세요."
+                null -> "안경 AI 변경 후 새 상태를 확인하지 못했습니다."
+                else -> "안경 AI 재조회 값이 요청과 다릅니다."
+            }
+        }
+    }
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
         it.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") == enabled
     }

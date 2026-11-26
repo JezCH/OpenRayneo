@@ -31,6 +31,10 @@ internal object ProtocolCodec {
     fun transportAcknowledgements(frames: List<Frame>): List<ByteArray> =
         frames.filter { it.requiresAcknowledgement }.map(::acknowledgement)
 
+    /** Documented raw host visibility command 31; not a TLV or business ACK. */
+    fun hostVisibility(sequence: Int, visible: Boolean): ByteArray =
+        frame(0x10, sequence, byteArrayOf(0x1f, 0, 1, if (visible) 2 else 1))
+
     fun pairing(sequence: Int, command: Int, fields: List<Pair<Int, ByteArray>>): ByteArray {
         val tlvs = ByteArrayOutputStream()
         fields.forEach { (tag, value) ->

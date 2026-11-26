@@ -46,9 +46,16 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             fun flag(value: Boolean?) = when (value) { true -> "켜짐"; false -> "꺼짐"; null -> "기기 보고 없음" }
             Note("안경 연결: " + if (linked) "완전 연결" else s.glasses.link.detail)
             Note("안경 마이크: " + flag(mic))
+            Note("펌웨어 AI 활성화: " + flag(firmware?.deviceFlag("enabled")))
+            Note("호스트 상태 동기화: " + s.hostVisibilityStatus)
             Note("펌웨어 호출: " + flag(firmware?.deviceFlag("voiceWakeup")) + " · " + when (firmware?.deviceInt("wakeupWord")) { 1 -> "샤오레이 샤오레이"; 2 -> "Hey RayNeo"; else -> "호출어 미확인" })
             Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
             Note("최근 기본 호출: " + s.nativeWakeStatus)
+            Note("기본 호출은 실제 펌웨어 이벤트가 필요합니다. 공식 앱을 종료하고 안경 AI 상태를 읽은 뒤 테스트하세요. 이벤트가 없으면 아래 독립 한국어 호출을 사용해 마이크·HUD를 별도로 확인하세요.")
+            if (firmware?.deviceFlag("enabled") == false)
+                ToolButton(onClick = { model.attempt { model.service().deviceSettings.assistantEnabled(true) } },
+                    enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) { Text("안경 AI 자체 활성화") }
+            ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } }, enabled = linked && !s.deviceSettings.busy) { Text("안경 상태 다시 읽기") }
             Note("음성 모델: " + if (speechReady && s.conversation.modelReady) "준비됨" else "설정 또는 다운로드 필요")
             Note("기록 오디오: ${s.conversation.decodedSeconds.toInt()}초 · " + (s.conversation.error ?: s.conversation.status))
             Note(s.audioLevels.timingSummary())

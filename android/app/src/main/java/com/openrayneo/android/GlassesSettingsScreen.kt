@@ -119,6 +119,14 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.privacy(values.toMap()) } }, enabled = editable) { Text("개인정보 설정 적용") }
                 }
             }
+            settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled")?.let { current ->
+                var enabled by remember(current) { mutableStateOf(current) }
+                SettingsSection("안경 AI 자체 활성화") {
+                    SettingsToggle("펌웨어 AI 허용", enabled, editable) { enabled = it }
+                    Note("공식 앱 없이 기본 호출을 사용하려면 이 기기 스위치와 음성 깨우기, 앱 자동 응답이 모두 필요합니다. 계정 연결이나 실제 호출 성공을 보장하지 않습니다.")
+                    ToolButton(onClick = { model.attempt { model.service().deviceSettings.assistantEnabled(enabled) } }, enabled = editable && model.recommendedEditable) { Text("안경 AI 활성화 적용") }
+                }
+            }
             settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup")?.let { current ->
                 var enabled by remember(current) { mutableStateOf(current) }
                 SettingsSection("음성 깨우기") {

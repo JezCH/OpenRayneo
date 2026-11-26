@@ -60,6 +60,29 @@ internal class BridgeService : Service() {
     private var dispatching = false
     private var destroyed = false
     private var initialized = false
+    private var hostVisible = false
+    private var hostVisibilityRevision = 0L
+    private var hostVisibilitySequence = 0x6800
+    var hostVisibilityStatus = "연결 후 전송 대기"; private set
+    fun setHostVisible(visible: Boolean) {
+        if (hostVisible == visible) return
+        hostVisible = visible
+        syncHostVisibility()
+    }
+    private fun syncHostVisibility() {
+        if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) return
+        val revision = ++hostVisibilityRevision
+        val label = if (hostVisible) "전경" else "백그라운드"
+        hostVisibilityStatus = "$label 상태 전송 중"
+        runCatching {
+            connection.sendFrame(ProtocolCodec.hostVisibility(hostVisibilitySequence++ and 65535, hostVisible)) { result ->
+                if (revision != hostVisibilityRevision || destroyed || state.link.phase != LinkPhase.FULL) return@sendFrame
+                hostVisibilityStatus = if (result.isSuccess) "$label 상태 전송됨 · 기기 적용 미확인" else "$label 상태 전송 실패"
+                notifyUI()
+            }
+        }.onFailure { hostVisibilityStatus = "$label 상태 전송 실패" }
+        notifyUI()
+    }
     private var foreground = false
     val foregroundRunning get() = foreground && !stopAfterDisconnect
     val authenticatedNavigationDevice: String? get() = connection.resolvedClassicAddress.takeIf {
@@ -384,6 +407,9 @@ internal class BridgeService : Service() {
                 state = transition.state
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
+                    hostVisibilityRevision++
+                    hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
+                    cancelKoreanWake()
                     cancelNavigationSwitch()
                     clearVoiceNavigation()
                     navigationVoiceHandoff = null
@@ -405,6 +431,8 @@ internal class BridgeService : Service() {
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
+                    nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
+                    syncHostVisibility()
                     content.connected(); runCatching { deviceSettings.refresh() }
                     if (reconnectCapture.pending) main.post { tryResumeAlwaysOn() }
                 }
@@ -1739,6 +1767,29 @@ internal class BridgeService : Service() {
             wakeResult = if (navControl != null) executeNavigationControl(navControl) else requestVoiceNavigation(checkNotNull(navCommand))
             runCatching { sendCompanionNotification("한국어 호출", wakeResult, FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
+        }
+        val device = LocalDeviceQuery.parseExplicit(question)
+        if (device != null) {
+            // Independent wake is explicitly enabled on the phone. This path does
+            // not synthesize a native firmware wake or require an external AI.
+            val token = ++wakeGeneration
+            val deadline = SystemClock.elapsedRealtime() + 15_000L
+            val allowed = { !destroyed && token == wakeGeneration &&
+                SystemClock.elapsedRealtime() < deadline && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                state.ownership == DisplayOwnership.APP && state.intent == DisplayIntent.Idle &&
+                !conversations.state.running && !conversations.state.stopping && !translator.active &&
+                !voiceTransport.nativeActive && !prompterReserved && !migration.state.busy }
+            wakeResult = "안경 기기 명령 직접 처리 중"; notifyUI()
+            requests.withPermission(allowed) {
+                requests.perform({ deviceSettings.executeVoiceCommand(device) }) { result ->
+                    if (allowed()) {
+                        wakeResult = result.getOrElse { "안경 기기 명령 확인 실패" }
+                        runCatching { sendCompanionNotification("한국어 호출", wakeResult, FocusPolicy.Output.DIRECT_ANSWER) }
+                        notifyUI()
+                    }
+                }
+            }
+            return
         }
         val command = LocalClockPolicy.parseExplicit(question)
         val focus = FocusPolicy.parseExplicit(question)
