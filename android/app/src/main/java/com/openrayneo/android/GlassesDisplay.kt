@@ -77,6 +77,7 @@ internal class GlassesDisplay(
             }
             return
         }
+        if (message.type == 4 && !active.receivesGlassesAudio) return
         if (audioAccepted && message.type == 4) {
             message.audio?.takeIf { it.isNotEmpty() }?.let { packet ->
                 val number = json.optLong("seq", -1)
