@@ -13,7 +13,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-internal class AppSettings(context: Context, namespace: String = "settings") {
+internal class AppSettings(context: Context, private val namespace: String = "settings") {
     private val preferences = context.getSharedPreferences(namespace, Context.MODE_PRIVATE)
     private val alias = "openrayneo.$namespace"
     private fun key(): SecretKey {
@@ -25,7 +25,11 @@ internal class AppSettings(context: Context, namespace: String = "settings") {
         }.generateKey()
     }
 
-    fun read(): JSONObject {
+    fun read(): JSONObject = readStored().also { stored ->
+        if (namespace == "settings") FeatureDefaults.missingDefaults(stored::has).forEach { (key, value) -> stored.put(key, value) }
+    }
+
+    fun readStored(): JSONObject {
         val encrypted = preferences.getString("data", null) ?: return JSONObject()
         val bytes = Base64.decode(encrypted, Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
