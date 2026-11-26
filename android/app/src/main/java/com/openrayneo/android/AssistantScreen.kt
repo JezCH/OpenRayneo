@@ -38,6 +38,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     var executeTask by remember { mutableStateOf(false) }
     var memoryQuestion by remember { mutableStateOf(false) }
     var autoMemory by remember { mutableStateOf(false) }
+    var continuityDialog by remember { mutableStateOf(false) }
+    var confirmNewChat by remember { mutableStateOf(false) }
     val suggestMemory = model.config.optString("memorySuggestOnSend") == "true"
     val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
@@ -67,6 +69,43 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
     if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft, autoMemory) { memoryQuestion = false; autoMemory = false }
+    if (continuityDialog) AlertDialog(
+        onDismissRequest = { continuityDialog = false },
+        title = { Text("휴대폰·안경 대화 이어가기") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Note("켜면 이후 성공한 일반 AI 질문과 답변을 최대 30턴까지 휴대폰에 암호화 저장합니다. 앱 재시작 후에도 두 기기가 공유하며, 질문마다 최근 3턴과 관련 과거 1턴(없으면 직전 1턴)을 설정된 AI로 전송할 수 있습니다.")
+                Note("업무 실행·주변 녹음·별도 기억 첨부 질문은 저장하지 않습니다. 안경 호출과 화자 구분은 본인 인증이 아닙니다. 민감한 질문은 공유하지 마세요. 새 대화 또는 공유 해제 시 이 저장 맥락을 초기화합니다. 기존 녹음 기록에는 영향이 없습니다.")
+                if (s.chatContinuityError.isNotBlank()) Text(s.chatContinuityError, color = MaterialTheme.colorScheme.error)
+                if (s.chatContinuity.turns.isNotEmpty()) {
+                    Text("저장된 맥락 ${s.chatContinuity.turns.size}턴", style = MaterialTheme.typography.labelMedium)
+                    LazyColumn(Modifier.heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        s.chatContinuity.turns.asReversed().forEach { turn ->
+                            item {
+                                Text(if (turn.source == "phone") "휴대폰" else "안경", style = MaterialTheme.typography.labelSmall)
+                                Text(turn.question)
+                                Text(turn.answer, style = MaterialTheme.typography.bodySmall)
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = s.available && !s.chatContinuityBusy, onClick = {
+                model.attempt { model.service().configureChatContinuity(!s.chatContinuity.enabled); continuityDialog = false }
+            }) { Text(if (s.chatContinuity.enabled) "공유 끄고 저장 맥락 초기화" else "동의하고 이어가기 켜기") }
+        },
+        dismissButton = { TextButton(onClick = { continuityDialog = false }) { Text("닫기") } }
+    )
+    if (confirmNewChat) AlertDialog(
+        onDismissRequest = { confirmNewChat = false },
+        title = { Text("새 대화 시작") },
+        text = { Text("현재 저장된 일반 대화 맥락을 초기화합니다. 녹음 기록과 별도 개인화 정보는 유지됩니다.") },
+        confirmButton = { TextButton(onClick = { model.newConversation(AnswerSource.MOBILE_AGENT); confirmNewChat = false }) { Text("새 대화 시작") } },
+        dismissButton = { TextButton(onClick = { confirmNewChat = false }) { Text("취소") } }
+    )
     Column(Modifier.fillMaxSize().imePadding()) {
         SingleChoiceSegmentedButtonRow(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
@@ -109,7 +148,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 maxLines = 2,
             )
             IconButton(
-                onClick = { model.newConversation(source) },
+                onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
             ) {
                 Icon(Icons.Outlined.AddComment, "새 대화")
@@ -262,6 +301,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
                         FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running)
                     }
+                    TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
+                        Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
+                    }
+                    if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
                     if (executeTask) Note("외부 Agent의 도구 사용을 요청합니다. 쓰기 작업은 기존 승인 절차를 따릅니다.")
                     else TextButton(onClick = { autoMemory = false; memoryQuestion = true }, enabled = !running && !s.migration.busy) { Text("기억을 참고한 질문") }
                 }
