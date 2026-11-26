@@ -116,7 +116,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (!state.modelReady) Note("로컬 음성 모델을 준비 중입니다. 로드에 실패하면 위의 오류를 확인하세요.")
+                if (!state.modelReady) Note("기록·화자 처리 엔진 초기화 대기 중입니다. 오류가 있으면 위 내용을 확인하세요.")
+                else if (!model.speechConfigured) Note("선택한 음성 인식 설정이 완료되지 않았습니다. 원본 보존 모드에서만 전사 보충이 가능할 수 있습니다.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { open("voice-settings") }) { Text("음성 설정") }
                     TextButton(onClick = { open("voice-profiles") }) { Text("인물 관리") }

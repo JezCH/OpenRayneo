@@ -68,7 +68,13 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
                     Text(activity, style = MaterialTheme.typography.headlineSmall)
                 }
-                Note("음성 인식: " + if (c.modelReady) "사용 가능" else if (!s.available) "서비스 준비 중" else "음성 설정 확인")
+                Note("음성 인식: " + when {
+                    !s.available -> "서비스 준비 중"
+                    !model.speechConfigured -> "선택한 인식 모델 설정 필요"
+                    SpeechRounds.model(model.config) == null -> "외부 음성 인식 설정됨"
+                    else -> "기기 내장 모델 확보됨"
+                })
+                if (!c.modelReady) Note("기록 엔진 초기화 대기")
                 if (model.config.optBoolean("ambientWakeEnabled") && c.running && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
@@ -136,7 +142,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FeatureTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, Modifier.weight(1f)) {
-                    if (!linked) connect() else if (!c.modelReady) open("voice-settings")
+                    if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
                     else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
                     else if (!s.agentServer.enabled || !s.agentServer.pollRecent) open("agent-api") else hintRequested = true
                 }
@@ -197,7 +203,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     if (hintRequested) AlertDialog(onDismissRequest = { hintRequested = false },
         title = { Text("실시간 힌트를 시작할까요?") },
         text = { Text("안경 음성을 인식하고 일상 기록을 시작합니다. 현재 발화는 연결된 AI 모델에 전송될 수 있으며 이용량이나 요금이 발생할 수 있습니다. 참여자 동의와 보안 규칙을 확인하세요.") },
-        confirmButton = { TextButton(enabled = linked && c.modelReady && s.agentServer.enabled && s.agentServer.pollRecent && !c.running && !c.stopping && !otherMode && !s.alwaysOnResumePending,
+        confirmButton = { TextButton(enabled = linked && c.modelReady && model.speechConfigured && s.agentServer.enabled && s.agentServer.pollRecent && !c.running && !c.stopping && !otherMode && !s.alwaysOnResumePending,
             onClick = { hintRequested = false; model.attempt { model.service().startRealtimeHint() } }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { hintRequested = false }) { Text("취소") } })
 }

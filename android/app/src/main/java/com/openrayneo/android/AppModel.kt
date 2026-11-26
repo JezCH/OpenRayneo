@@ -93,6 +93,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var config by mutableStateOf(JSONObject())
         private set
 
+    // The recording controller's modelReady is speaker processing initialization, not ASR.
+    val speechConfigured: Boolean get() = SpeechRounds.ready(context, config)
     val mobileModelConfigured: Boolean get() = MobileModelEndpoint.isConfigured(
         config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey"))
 

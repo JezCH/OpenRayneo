@@ -136,7 +136,8 @@ internal fun OnboardingScreen(
                             "연결됨",
                             "나중에 연결",
                         )
-                        CompletionRow("음성 인식", model.state.conversation.modelReady, "모델 준비됨", "나중에 준비")
+                        CompletionRow("음성 인식", model.speechConfigured, "선택한 모델 확보 또는 외부 설정됨", "음성 인식 설정 확인")
+                        CompletionRow("기록 엔진", model.state.conversation.modelReady, "초기화 완료", "초기화 상태 확인")
                         CompletionRow(
                             "로컬 Agent",
                             model.state.agentServer.enabled && model.state.agentServer.pollRecent,
