@@ -34,6 +34,14 @@ internal class BridgeService : Service() {
     private lateinit var voiceAudio: PromptAudio
     val navigation get() = NavigationFeed
     lateinit var agent: MobileAgent; private set
+    lateinit var chatContinuity: ChatContinuity; private set
+    val chatContinuityBusy get() = agent.running || nativeChatRequest != null
+    fun configureChatContinuity(enabled: Boolean) {
+        check(!chatContinuityBusy) { "현재 AI 질문을 마친 뒤 변경하세요" }
+        chatContinuity.configure(enabled)
+        agent.resetChatHistory(); nativeChatHistory.clear()
+        notifyUI()
+    }
     lateinit var codex: CodexClient; private set
     lateinit var translator: LiveTranslator; private set
     lateinit var speechOutput: KoreanSpeechOutput; private set
@@ -163,6 +171,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        chatContinuity = ChatContinuityStore.open(this)
         speechOutput = KoreanSpeechOutput(this, main, ::notifyUI)
         LocalModels.keepResident(this, settings.read())
         supervisor = ConnectionSupervisor(this, main,
@@ -248,7 +257,7 @@ internal class BridgeService : Service() {
         navigation.initialize(this)
         navigation.stop()
         navigation.observers.add(navigationObserver)
-        agent = MobileAgent(settings, conversations.repository, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
+        agent = MobileAgent(settings, conversations.repository, chatContinuity, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         if (settings.read().optBoolean("localAgentEnabled")) agentServer.start()
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -908,8 +917,13 @@ internal class BridgeService : Service() {
             } catch (error: Exception) { respond("업무 요청 전송 실패") }
             return true
         }
+        // The shared context is opt-in and only used on an unmixed explicit wake.
+        val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
+            segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
+        } == true
+        val continuityTicket = if (unmixed) chatContinuity.ticket(request.text) else null
         input.put("purpose", "explicit_question").put("question", request.text).put("nativeChat", true)
-            .put("history", org.json.JSONArray(nativeChatHistory.map { (q, a) ->
+            .put("history", continuityTicket?.let { ChatContinuityStore.json(it.turns) } ?: org.json.JSONArray(nativeChatHistory.map { (q, a) ->
                 JSONObject().put("question", q).put("answer", a)
             }))
         try {
@@ -921,9 +935,11 @@ internal class BridgeService : Service() {
                 if (!current()) return@submit
                 val reply = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
                 if (reply == null) { respond("AI 응답 실패 또는 만료"); return@submit }
+                chatContinuity.remember(continuityTicket, "glasses", request.text, reply)
                 nativeChatHistory.add(request.text.take(1000) to reply.take(1800))
                 while (nativeChatHistory.size > 4) nativeChatHistory.removeAt(0)
                 deliverExternalVoice(request.text, reply, input)
+                notifyUI()
             }
         } catch (error: Exception) { nativeChatRequest = null; respond("AI 질문 전송 실패") }
         return true
@@ -1357,6 +1373,7 @@ internal class BridgeService : Service() {
         return JSONObject().put("phoneId", config.getString("phoneInstanceId")).put("conversationKey", config.getString("nativeConversationKey"))
     }
     fun newMobileConversation() {
+        chatContinuity.clear()
         resetAmbientWake(); cancelNativeChat(clearHistory = true)
         val previous = nativeIdentity().getString("conversationKey")
         nativeIdentity(reset = true)
@@ -1365,9 +1382,12 @@ internal class BridgeService : Service() {
         cancelRealtimeStream()
         agent.harness.cancel("hint")
         agent.harness.cancelConversation(previous)
-        clearAgent()
+        clearAgent(resetContext = false)
     }
-    fun clearAgent() { cancelNativeChat(clearHistory = true); invalidateAnswer(AnswerSource.MOBILE_AGENT); agent.clear() }
+    fun clearAgent(resetContext: Boolean = true) {
+        if (resetContext) chatContinuity.clear()
+        cancelNativeChat(clearHistory = true); invalidateAnswer(AnswerSource.MOBILE_AGENT); agent.clear()
+    }
     fun connectCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.connect() }
     fun closeCodex() { invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.close() }
     fun newCodexConversation() {
