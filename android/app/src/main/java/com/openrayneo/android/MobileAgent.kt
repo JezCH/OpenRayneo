@@ -46,14 +46,14 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
             if (session == generation) {
                 requestId = null; running = false
                 result.fold({ reply ->
-                    if (reply.isBlank()) { status = "AI가 답변을 반환하지 않았습니다"; changed(); return@fold }
+                    if (reply.isBlank() && !allowTools) { status = "AI가 답변을 반환하지 않았습니다"; changed(); finalAnswer(text, ""); return@fold }
                     if (ordinaryChat) {
                         chatHistory.add(text.take(1000) to reply.take(1800))
                         while (chatHistory.size > 4) chatHistory.removeAt(0)
                     }
                     answer = reply; status = if (allowTools) "외부 Agent 작업 응답 완료" else "AI 답변 완료"; changed(); finalAnswer(text, reply)
                 },
-                    { error -> status = "AI 요청을 완료하지 못했습니다. 연결 상태와 서비스 설정을 확인하세요"; changed() })
+                    { error -> status = "AI 요청을 완료하지 못했습니다. 연결 상태와 서비스 설정을 확인하세요"; changed(); finalAnswer(text, "") })
             }
         } } catch (error: Exception) {
             requestId = null; running = false; status = "AI 요청을 시작하지 못했습니다"; changed(); throw error
