@@ -127,9 +127,16 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     // Form drafts survive activity recreation without writing secrets into saved instance state.
     val formDrafts = mutableStateMapOf<String, String>()
     private val formBaseline = mutableMapOf<String, String>()
-    val recommendedPending get() = FeatureDefaults.recommendedChanges(config::has).isNotEmpty()
+    val recommendedPending get() = FeatureDefaults.recommendedChanges { config.optString(it) }.isNotEmpty()
+    val recommendedEditable get() = state.available && !state.migration.busy &&
+        !state.conversation.running && !state.conversation.stopping && !state.alwaysOnResumePending &&
+        !state.nativeWakeAvailable && !state.wakeActive && !state.wakePending && !state.translationActive &&
+        !state.phoneRunning && !state.computerRunning && !state.teleprompter.busy && state.teleprompter.active == null &&
+        state.glasses.intent == DisplayIntent.Idle && state.glasses.session == null
     fun applyRecommendedSettings() = attempt {
-        val changes = FeatureDefaults.recommendedChanges(settings.readStored()::has)
+        check(recommendedEditable) { "다른 기능을 종료한 후 권장 설정을 적용하세요" }
+        val stored = settings.readStored()
+        val changes = FeatureDefaults.recommendedChanges { stored.optString(it) }
         if (changes.isNotEmpty()) saveConfig(changes)
         else notice = "기존 설정을 그대로 유지합니다"
     }
@@ -290,19 +297,17 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     fun saveConfig(values: Map<String, String>) = attempt {
         check(!state.migration.busy || !values.containsKey("memoryAutoSummary") || !SummaryDispatchPolicy.autoEnabled(values.getValue("memoryAutoSummary"))) { "기록 이전 중에는 자동 요약을 켤 수 없습니다" }
-        val old = settings.read()
         val stored = settings.readStored()
+        val old = settings.effective(stored)
         values.forEach { (key, value) -> stored.put(key, value.trim()) }
-        val updated = JSONObject(stored.toString()).also { effective ->
-            FeatureDefaults.missingDefaults(effective::has).forEach { (key, value) -> effective.put(key, value) }
-        }
+        val updated = settings.effective(stored)
         if (values.keys.any { it in setOf("wakePhrases", "wakeSeconds", "wakeFollowSeconds") }) {
             KoreanWakeOptions.parse(updated.optString("wakePhrases", KoreanWakeOptions.DEFAULT_PHRASES),
                 updated.optString("wakeSeconds", "120").toIntOrNull() ?: 0,
                 updated.optString("wakeFollowSeconds", "12").toIntOrNull() ?: 0)
             check(!state.wakeActive && !state.wakePending) { "호출을 중지한 후 설정을 변경하세요" }
         }
-        listOf("ambientWakeEnabled", "ambientWakeContext").forEach { key -> values[key]?.let { require(it in setOf("true", "false")) } }
+        listOf("nativeAutoAnswer", "ambientWakeEnabled", "ambientWakeContext", "fastRealtimeHints").forEach { key -> values[key]?.let { require(it in setOf("true", "false")) } }
         values["answerLanguage"]?.let { require(KoreanLanguage.answerOptions.any { option -> option.first == it }) { "지원하는 답변 언어를 선택하세요" } }
         values["memorySuggestOnSend"]?.let { require(it in setOf("true", "false")) }
         values["memorySuggestionDays"]?.let { require(it.toIntOrNull() in AutomaticMemoryPolicy.days) }
