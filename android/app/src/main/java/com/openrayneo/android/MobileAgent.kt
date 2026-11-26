@@ -52,8 +52,10 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
                     if ((reply.isBlank() || reply.trim() == "[PASS]") && !allowTools) { status = "AI가 답변을 반환하지 않았습니다"; changed(); finalAnswer(text, ""); return@fold }
                     if (ordinaryChat) {
                         continuity.remember(continuityTicket, "phone", text, reply)
-                        chatHistory.add(text.take(1000) to reply.take(1800))
-                        while (chatHistory.size > 4) chatHistory.removeAt(0)
+                        if (!continuity.state.enabled) {
+                            chatHistory.add(text.take(1000) to reply.take(1800))
+                            while (chatHistory.size > 4) chatHistory.removeAt(0)
+                        }
                     }
                     answer = reply; status = if (allowTools) "외부 Agent 작업 응답 완료" else "AI 답변 완료"; changed(); finalAnswer(text, reply)
                 },
