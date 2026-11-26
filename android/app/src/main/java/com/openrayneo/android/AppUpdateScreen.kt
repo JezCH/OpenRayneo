@@ -26,16 +26,14 @@ internal fun AppUpdateScreen(model: AppModel) {
     val app = context.applicationContext
     val scope = rememberCoroutineScope()
     val updates = model.updateCheck
-    var downloadedFor by remember { mutableStateOf<AppUpdate.Candidate?>(null) }
-    val candidate = downloadedFor ?: updates.candidate
-    val currentCandidate = candidate != null && candidate == updates.candidate && updates.error.isBlank() && !updates.checking
-    var downloaded by remember { mutableStateOf<File?>(null) }
+    val candidate = updates.candidate
+    val currentCandidate = candidate != null && updates.error.isBlank() && !updates.checking
+    var pendingInstall by remember { mutableStateOf<AppUpdate.Candidate?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("업데이트를 확인하세요") }
-    var progress by remember { mutableStateOf(0L) }
     var signer by remember { mutableStateOf("") }
     var openConfirmation by remember { mutableStateOf(false) }
-    val busy = job != null
+    val busy = job != null || updates.downloading
 
     fun idle(): Boolean {
         val s = model.state
@@ -43,6 +41,7 @@ internal fun AppUpdateScreen(model: AppModel) {
             !s.mediaTranslation.preparing && !s.offlinePreparing && !s.speechPlaying &&
             !s.chatContinuityBusy && s.approvals.isEmpty() && s.agentReviews.isEmpty() &&
             !s.agentServer.enabled && !s.recordSync.enabled && !s.glasses.navigation.enabled &&
+            !s.glasses.disconnecting && !s.glasses.link.reconnectWaiting && !s.conversation.summarizing &&
             s.glasses.link.phase in setOf(LinkPhase.DISCONNECTED, LinkPhase.FULL, LinkPhase.BLE_ONLY) &&
             !LocalModels.zipformer.downloading && !LocalModels.senseVoice.downloading && !LocalModels.nemotron.downloading &&
             !KoreanKeywordModels.model.downloading
@@ -67,15 +66,6 @@ internal fun AppUpdateScreen(model: AppModel) {
             .onFailure { status = "외부 APK 설치 설정을 열 수 없습니다" }
     }
 
-    suspend fun fetchApk(item: AppUpdate.Candidate): File {
-        status = "APK 다운로드 및 무결성 확인 중"
-        val apk = AppUpdate.download(app, item) { count -> withContext(Dispatchers.Main) { progress = count } }
-        downloaded = apk
-        downloadedFor = item
-        status = "다운로드 및 인증서 검증 완료"
-        return apk
-    }
-
     suspend fun requestInstall(item: AppUpdate.Candidate, apk: File) {
         if (updates.checking || updates.error.isNotBlank() || updates.candidate != item) {
             status = "업데이트 정보가 변경되었습니다. 다시 확인한 뒤 설치하세요."
@@ -88,6 +78,18 @@ internal fun AppUpdateScreen(model: AppModel) {
         openConfirmation = true
         try { AppUpdateInstall.install(app, item, apk) { idle() && !updates.checking && updates.error.isBlank() && updates.candidate == item } }
         catch (e: Exception) { openConfirmation = false; throw e }
+    }
+
+    // A download belongs to the app model, not to the screen. Only a still-visible
+    // explicit install action may continue into Android's confirmation UI.
+    LaunchedEffect(pendingInstall, updates.downloading, updates.downloaded, updates.candidate, updates.checking) {
+        val item = pendingInstall ?: return@LaunchedEffect
+        if (updates.downloading) return@LaunchedEffect
+        pendingInstall = null
+        val apk = updates.downloaded?.takeIf { updates.downloadCandidate == item } ?: return@LaunchedEffect
+        if (updates.candidate != item || updates.checking || updates.error.isNotBlank()) return@LaunchedEffect
+        if (!idle()) { status = "다운로드 완료 · 사용 중인 기능 종료 후 설치할 수 있습니다"; return@LaunchedEffect }
+        launchWork { requestInstall(item, apk) }
     }
 
     val pendingConfirmation = AppUpdateInstall.confirmation
@@ -106,7 +108,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         signer = withContext(Dispatchers.IO) { runCatching { AppUpdate.installedSigner(app) }.getOrElse { "확인 실패" } }
     }
     DisposableEffect(Unit) {
-        onDispose { job?.cancel(); downloaded?.delete() }
+        onDispose { job?.cancel() }
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -128,33 +130,34 @@ internal fun AppUpdateScreen(model: AppModel) {
         Text(updates.summary)
         if (updates.error.isNotBlank()) Text(updates.error, style = MaterialTheme.typography.bodySmall)
         Button(onClick = {
-            downloaded?.delete(); downloaded = null; downloadedFor = null; progress = 0
-            status = ""
+            pendingInstall = null; status = ""
             updates.refresh(true)
         }, enabled = !busy && !updates.checking && AppUpdateInstall.sessionId == null) { Text("업데이트 확인") }
-        if (downloadedFor != null && !currentCandidate) Text("다운로드한 파일의 최신 배포 상태를 다시 확인해야 합니다.")
+        if (updates.downloading) Note("화면을 나가도 앱이 실행되는 동안 다운로드를 계속합니다.")
         candidate?.let { item ->
             Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
             Text(item.notes.ifBlank { "배포 변경사항 없음" })
             Text("APK 크기: " + (item.size / 1024 / 1024) + " MB")
-            if (downloaded == null) {
-                Button(onClick = {
-                    if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
-                    else launchWork { requestInstall(item, fetchApk(item)) }
-                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("다운로드 및 설치") }
-                TextButton(onClick = { launchWork { fetchApk(item) } },
-                    enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
+            val cached = AppUpdate.hasDownloaded(app, item)
+            Button(onClick = {
+                if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
+                else model.attempt {
+                    pendingInstall = item
+                    updates.startDownload(item)
+                }
+            }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) {
+                Text(if (cached) "받아 둔 APK 검증 및 설치" else "다운로드 및 설치")
             }
-            if (progress > 0) LinearProgressIndicator(progress = { (progress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth())
-            downloaded?.let { apk ->
-                Button(onClick = {
-                    if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
-                    else launchWork { requestInstall(item, apk) }
-                }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) { Text("설치 요청") }
-            }
+            if (!cached) TextButton(onClick = { model.attempt { updates.startDownload(item) } },
+                enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
+            if (updates.downloadCandidate == item && updates.downloadProgress > 0)
+                LinearProgressIndicator(progress = { (updates.downloadProgress.toDouble() / item.size).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth())
+            if (cached) Note("이미 받은 설치 파일은 다시 다운로드하지 않고 검증 후 재사용합니다.")
         }
-        if (busy) TextButton(onClick = { job?.cancel() }) { Text("작업 취소") }
+        if (updates.downloading) TextButton(onClick = { pendingInstall = null; updates.cancelDownload() }) { Text("다운로드 취소") }
+        if (job != null) TextButton(onClick = { job?.cancel() }) { Text("설치 준비 취소") }
+        if (updates.downloadStatus.isNotBlank()) Text(updates.downloadStatus)
         AppUpdateInstall.confirmation?.let { confirm ->
             Button(onClick = {
                 if (idle()) runCatching { context.startActivity(confirm) }
