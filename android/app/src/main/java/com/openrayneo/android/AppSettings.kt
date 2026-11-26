@@ -25,8 +25,10 @@ internal class AppSettings(context: Context, private val namespace: String = "se
         }.generateKey()
     }
 
-    fun read(): JSONObject = readStored().also { stored ->
-        if (namespace == "settings") FeatureDefaults.missingDefaults(stored::has).forEach { (key, value) -> stored.put(key, value) }
+    fun read(): JSONObject = effective(readStored())
+
+    fun effective(stored: JSONObject): JSONObject = JSONObject(stored.toString()).also { effective ->
+        if (namespace == "settings") FeatureDefaults.missingDefaults(effective::has).forEach { (key, value) -> effective.put(key, value) }
     }
 
     fun readStored(): JSONObject {
