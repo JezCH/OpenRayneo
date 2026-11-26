@@ -13,7 +13,7 @@ internal object KoreanNavigationText {
         "왼쪽으로" to "좌회전", "오른쪽으로" to "우회전")
     private val direction = directions.keys.joinToString("|") { Regex.escape(it) }
     private const val distance = "([0-9]{1,4}(?:,[0-9]{3})?(?:\\.[0-9]+)?)\\s*(km|킬로미터|킬로|m|미터)"
-    private val distanceFirst = Regex("^(?:전방\\s*)?$distance\\s*(?:앞|후|지점에서)?\\s*($direction)(?:하세요)?[.!]?$", RegexOption.IGNORE_CASE)
+    private val distanceFirst = Regex("^(?:전방\\s*)?$distance\\s*(?:앞에서|앞|후|지점에서)?\\s*($direction)(?:하세요)?[.!]?$", RegexOption.IGNORE_CASE)
     private val actionFirst = Regex("^($direction)\\s*(?:까지)?\\s*$distance[.!]?$", RegexOption.IGNORE_CASE)
     private val english = linkedMapOf("turn left" to "좌회전", "turn right" to "우회전",
         "continue straight" to "직진", "make a u-turn" to "유턴")
