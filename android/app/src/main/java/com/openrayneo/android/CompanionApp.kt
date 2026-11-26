@@ -29,10 +29,13 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun CompanionApp(model: AppModel, actions: UiActions) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var route by rememberSaveable { mutableStateOf("") }
-    var routeParent by rememberSaveable { mutableStateOf("") }
-    fun openRoute(target: String, parent: String = "") { routeParent = parent; route = target }
-    fun backRoute() { route = routeParent; routeParent = "" }
+    var routeStack by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    val route = routeStack.lastOrNull().orEmpty()
+    fun openRoute(target: String) {
+        val existing = routeStack.indexOf(target)
+        routeStack = ArrayList(if (existing >= 0) routeStack.take(existing + 1) else routeStack + target)
+    }
+    fun backRoute() { routeStack = ArrayList(routeStack.dropLast(1)) }
     var pendingNavigation by remember { mutableStateOf<String?>(null) }
     var devices by rememberSaveable { mutableStateOf(false) }
     var sources by rememberSaveable { mutableStateOf(false) }
@@ -65,6 +68,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                             when (route) {
                                 "settings" -> "설정"
                                 "app-update" -> "앱 업데이트"
+                                "local-clock" -> "타이머 및 스톱워치"
+                                "about-you" -> "개인화 정보"
                                 "model" -> "휴대폰 모델"
                                 "computer" -> "컴퓨터 연결"
                                 "diagnostics" -> "기기 및 진단"
@@ -154,15 +159,17 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                     SettingsScreen(
                         model,
                         actions,
-                        { openRoute(it, "settings") },
+                        { openRoute(it) },
                         {
                             model.replaySetup()
-                            route = ""
+                            routeStack = arrayListOf()
                         },
                     )
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
                 "app-update" -> if (AppUpdate.supported) AppUpdateScreen(model) else Text("이 앱은 자체 업데이트 대상이 아닙니다.")
+                "local-clock" -> LocalClockScreen(model)
+                "about-you" -> PersonalizationScreen()
                 "diagnostics" -> DiagnosticsScreen(model, actions)
                 "voice-settings" -> VoiceSettingsScreen(model, actions)
                 "voice-profiles" -> VoiceProfilesScreen(model)
@@ -172,14 +179,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions) {
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { devices = true })
                 "translation" -> TranslationToolScreen(model)
-                "media-captions" -> MediaCaptionScreen(model, actions.mediaCaption, { openRoute("voice-settings", "media-captions") }, { devices = true })
-                "captions" -> CaptionToolScreen(model, { openRoute("voice-settings", "captions") }, { openRoute("media-captions", "captions") })
-                "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings", "korean-wake") }, { openRoute("device-settings", "korean-wake") })
+                "media-captions" -> MediaCaptionScreen(model, actions.mediaCaption, { openRoute("voice-settings") }, { devices = true })
+                "captions" -> CaptionToolScreen(model, { openRoute("voice-settings") }, { openRoute("media-captions") })
+                "korean-wake" -> KoreanWakeScreen(model, { openRoute("voice-settings") }, { openRoute("device-settings") })
                 "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "record-migration" -> RecordMigrationScreen(model)
-                "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; backRoute() },
-                    { openRoute("device-settings") }, { openRoute(it) })
+                "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; routeStack = arrayListOf() },
+                    { openRoute("diagnostics") }, { openRoute(it) })
                 else ->
                     if (model.onboarding)
                         OnboardingScreen(model, actions, { devices = true }, { openRoute(it) })

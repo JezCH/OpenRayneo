@@ -159,7 +159,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                if (mobile && configured && question.isBlank() && !running) "AI 연결 기능 켜짐 · DSH Go 플러그인이 실행 중이어야 합니다"
+                if (mobile && configured && question.isBlank() && !running) s.agentServer.receiverStatus
                 else status,
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,

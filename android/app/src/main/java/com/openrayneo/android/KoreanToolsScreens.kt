@@ -52,7 +52,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note(s.audioLevels.timingSummary())
             Note(s.captureTimingStatus)
             Note("휴대폰의 실제 수신·디코딩·전사 시각입니다. 첫 발화까지의 대기와 무음·펌웨어 묶음 전송을 포함하며 물리적 발화→PCM 지연은 아닙니다. 디코더를 다시 시작하면 해당 디코더 측정은 초기화됩니다. 원문이나 음성은 진단에 추가 저장하지 않습니다.")
-            Note("AI 연결: " + if (s.agentServer.enabled) "입구 활성화 · 모델 응답은 별도 시험" else "연결 필요")
+            Note("AI 연결: " + s.agentServer.receiverStatus)
             ToolOutlinedButton(onClick = deviceSettings) { Text("안경 마이크·기본 호출 설정") }
             if (!model.config.optBoolean("nativeAutoAnswer")) ToolOutlinedButton(onClick = { model.saveConfig(mapOf("nativeAutoAnswer" to "true")) }) { Text("앱 기본 호출 자동 응답 켜기") }
             if (!speechReady) ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
