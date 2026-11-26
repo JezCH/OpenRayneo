@@ -118,7 +118,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         Text("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
         Note("자동 확인 대상은 공개 GitHub Releases의 검증 채널입니다. Actions에만 생성된 APK는 자동으로 검색하거나 설치할 수 없습니다.")
-        TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(\"https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml\"))) }.onFailure { status = "빌드 목록을 열 수 없습니다" } }) { Text("별도 검증 빌드 목록 열기") }
+        TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml"))) }.onFailure { status = "빌드 목록을 열 수 없습니다" } }) { Text("별도 검증 빌드 목록 열기") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Switch(checked = updates.automatic, onCheckedChange = updates::changeAutomatic,
                 enabled = !busy && AppUpdateInstall.sessionId == null)
