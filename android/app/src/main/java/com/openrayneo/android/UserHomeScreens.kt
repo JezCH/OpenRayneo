@@ -50,6 +50,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 }
             }
         }
+        item { RecommendedSettingsCard(model) }
+        item { HomeFeatureDashboard(model, navigate, open, connect) }
         item {
             ContentCard {
                 Text("현재 활동", style = MaterialTheme.typography.labelLarge)
