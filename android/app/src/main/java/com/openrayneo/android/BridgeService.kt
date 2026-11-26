@@ -36,6 +36,7 @@ internal class BridgeService : Service() {
     lateinit var agent: MobileAgent; private set
     lateinit var chatContinuity: ChatContinuity; private set
     val chatContinuityBusy get() = agent.running || nativeChatRequest != null
+    val voiceAiPending get() = nativeChatRequest != null || ambientWakeRequest != null || wakeRequest != null
     fun configureChatContinuity(enabled: Boolean) {
         check(!chatContinuityBusy) { "현재 AI 질문을 마친 뒤 변경하세요" }
         chatContinuity.configure(enabled)
@@ -1878,22 +1879,26 @@ internal class BridgeService : Service() {
         val link = SystemStatusPolicy.link(state.link.phase.name, state.link.reconnectWaiting, state.disconnecting)
         val capture = SystemStatusPolicy.capture(c.running, c.stopping, c.reprocessing, c.liveTranscriptOnly,
             alwaysOnResumePending, audioLevels.coordinatorState().phase.name, c.mode == ConversationMode.ENROLL)
-        val activity = when {
-            c.running || c.stopping || alwaysOnResumePending -> capture.label
-            mediaCaptionState.busy -> "미디어 자막 " + when (mediaCaptionState.phase) {
+        val activities = buildList {
+            if(c.running || c.stopping || alwaysOnResumePending) add(capture.label)
+            if(mediaCaptionState.busy) add("미디어 자막 " + when(mediaCaptionState.phase) {
                 MediaCapturePhase.CAPTURING -> "실행 중"
                 MediaCapturePhase.STOPPING -> "종료 중"
                 else -> "준비 중"
-            }
-            translator.wakeActive || wakePending -> "호출 대기"
-            translator.active -> if (translator.captionOnly) "주변 자막" else "통역"
-            speechOutput.speaking -> "음성 출력 중"
-            c.summarizing -> "기록 요약 중"
-            else -> "대기 중"
+            })
+            if(translator.wakeActive || wakePending) add("호출 대기")
+            else if(translator.active && !mediaCaptionState.busy) add(if(translator.captionOnly) "주변 자막" else "통역")
+            if(speechOutput.speaking) add("음성 출력 중")
+            if(c.summarizing) add("기록 요약 중")
+            if(agent.running || voiceAiPending) add("AI 응답 대기")
+            if(codex.running) add("PC 작업 중")
+            if(state.navigation.enabled) add("길 안내")
+            if(localClock.timerRunning) add("타이머 실행 중")
+            if(localClock.watchRunning) add("스톱워치 실행 중")
         }
+        val activity = activities.ifEmpty { listOf("대기 중") }.joinToString(" · ")
         return listOf("안경 " + link.label, activity,
-            if (agentServer.state.pollRecent && agentServer.state.enabled) "AI 수신 확인" else if (agentServer.state.enabled) "AI 연결 대기" else "AI 꺼짐",
-            if (localClock.timerRunning) "타이머 실행 중" else "").filter { it.isNotBlank() }.joinToString(" · ")
+            "AI " + SystemStatusPolicy.receiver(agentServer.state.enabled, agentServer.state.pollRecent).label).joinToString(" · ")
     }
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

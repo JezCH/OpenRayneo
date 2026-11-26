@@ -21,9 +21,16 @@ import com.openrayneo.android.SystemStatusPolicy.Phase
 import com.openrayneo.android.SystemStatusPolicy.Status
 
 private data class SystemRow(val group: String, val title: String, val status: Status,
-                             val detail: String, val route: String, val permitted: Boolean? = null)
+                             val detail: String, val route: String, val permitted: Boolean? = null, val needsAction: Boolean = false)
 private fun status(phase: Phase, label: String) = Status(phase, label)
-private fun SystemRow.attention() = status.phase in setOf(Phase.BLOCKED, Phase.ERROR) || title == "작업 승인" && status.phase == Phase.WAITING
+private fun SystemRow.attention() = needsAction || status.phase == Phase.ERROR
+private fun SystemRow.priority() = when {
+    attention() -> 0
+    working() -> 1
+    status.phase == Phase.WAITING -> 2
+    status.phase == Phase.READY -> 3
+    else -> 4
+}
 private fun SystemRow.working() = status.phase in setOf(Phase.ACTIVE, Phase.BUSY)
 private fun connection(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "서비스 대기")
     else SystemStatusPolicy.link(s.glasses.link.phase.name, s.glasses.link.reconnectWaiting, s.glasses.disconnecting)
@@ -59,15 +66,20 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         else -> status(Phase.READY, "켜짐")
     }
     return buildList {
-        fun addRow(g: String, title: String, st: Status, detail: String, route: String, permit: Boolean? = null) {
+        fun addRow(g: String, title: String, st: Status, detail: String, route: String, permit: Boolean? = null, needsAction: Boolean = false) {
             // Service-backed rows must never claim off/ready from a default disconnected snapshot.
             add(SystemRow(g, title, if (!s.available && g != "유지관리" && title != "휴대폰 마이크") unknown else st,
-                if (!s.available && g != "유지관리" && title != "휴대폰 마이크") "서비스 상태 확인 대기" else detail, route, permit))
+                if (!s.available && g != "유지관리" && title != "휴대폰 마이크") "서비스 상태 확인 대기" else detail, route, permit, s.available && needsAction))
         }
         addRow("기기", "안경 연결", connection(s), if (linked) {
             val battery = if (s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
             if (battery != null) "완전 연결 · 최근 배터리 $battery%" else "완전 연결 · 배터리 미확인"
-        } else "블루투스 연결 상태", "device")
+        } else when {
+            !model.bluetoothAllowed -> "근처 기기 권한 필요"
+            s.glasses.link.phase == LinkPhase.BLE_ONLY -> "SPP 연결 미완료 · 음성 및 HUD 사용 불가"
+            s.glasses.link.reconnectWaiting -> "동일 안경 자동 재연결 대기"
+            else -> "블루투스 연결 상태"
+        }, "device", needsAction = !model.bluetoothAllowed || s.glasses.link.phase == LinkPhase.BLE_ONLY)
         addRow("기기", "안경 마이크 설정", when (mic) { true -> status(Phase.READY,"켜짐"); false -> off; null -> unknown }, "기기 보고값 · 실제 음성 수신과 별도", "device-settings", mic)
         addRow("기기", "안경 화면", when {
             !linked -> unknown
@@ -83,19 +95,25 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
             AudioPhase.STALLED -> status(Phase.BLOCKED,"수신 중단")
             AudioPhase.FAILED -> status(Phase.ERROR,"오류")
             AudioPhase.STOPPED -> off
-        }, "최근 PCM 디코딩 기준 · 실제 발화 여부와 별도", "diagnostics")
+        }, when(audio.phase) {
+            AudioPhase.WAITING_PACKET -> "첫 오디오 패킷 대기"
+            AudioPhase.WAITING_PCM -> "패킷 수신됨 · PCM 디코딩 대기"
+            AudioPhase.STALLED -> "최근 3초간 PCM 미수신"
+            AudioPhase.FAILED -> "오디오 디코더 오류 · 진단에서 확인"
+            else -> "최근 PCM 기준 · 실제 발화 여부와 별도"
+        }, "diagnostics", needsAction = audio.phase == AudioPhase.STALLED)
         addRow("음성·기록", "휴대폰 마이크", if(phoneInput == null) off else status(if(phoneInput == "마이크 입력 중") Phase.ACTIVE else Phase.BUSY, phoneInput), "직접 음성 질문 입력 · 자동 전송 없음", "ai")
         addRow("음성·기록", "기록", rec, when {
             c.reprocessing -> "저장된 원본 재처리 · 새 녹음 아님"
             live -> c.mode.title + " · " + if(c.liveTranscriptOnly) "원본 미보존" else if(c.mode == ConversationMode.ENROLL) "목소리 등록" else "원본 보존 설정"
             else -> "직접 시작한 기록만 실행"
         }, "records")
-        addRow("음성·기록", "음성 인식 설정", if(model.speechConfigured) status(Phase.READY,"설정됨") else status(Phase.BLOCKED,"설정 필요"), "모델 확보 또는 외부 설정 · 인식 성공과 별도", "voice-settings")
-        addRow("음성·기록", "기록·화자 엔진", if(c.modelReady) status(Phase.READY,"초기화 완료") else status(Phase.WAITING,"초기화 대기"), "실제 화자 식별 품질은 별도", "voice-profiles")
+        addRow("음성·기록", "음성 인식 설정", if(model.speechConfigured) status(Phase.READY,"설정됨") else status(Phase.BLOCKED,"설정 필요"), "모델 확보 또는 외부 설정 · 인식 성공과 별도", "voice-settings", needsAction = !model.speechConfigured)
+        addRow("음성·기록", "기록·화자 엔진", if(c.modelReady) status(Phase.READY,"초기화 완료") else if(c.error != null) status(Phase.ERROR,"초기화 실패") else status(Phase.WAITING,"초기화 대기"), "실제 화자 식별 품질은 별도", "voice-profiles")
         addRow("음성·기록", "기록 요약", if(c.summarizing) status(Phase.ACTIVE,"요약 중") else off, "저장된 기록 처리", "records")
         addRow("음성·기록", "음성 출력", active(s.speechPlaying), "휴대폰 오디오 경로", "voice-settings")
-        addRow("AI·기억", "AI 연결", receiver(s), "최근 요청 수신 기준 · 모델 응답 별도", "agent-api", s.agentServer.enabled)
-        addRow("AI·기억", "AI 질문·업무", active(s.phoneRunning), "휴대폰 AI 처리", "ai")
+        addRow("AI·기억", "AI 연결", receiver(s), if(s.agentServer.enabled && !ai) "외부 Agent 요청 수신 대기 · 실행 환경 확인" else "최근 요청 수신 기준 · 모델 응답 별도", "agent-api", s.agentServer.enabled, s.agentServer.enabled && !ai)
+        addRow("AI·기억", "AI 질문·업무", active(s.phoneRunning || s.voiceAiPending), if(s.voiceAiPending) "안경 호출 질문 응답 대기" else "휴대폰 AI 처리", "ai")
         addRow("AI·기억", "기본 AI 호출", allowed(native, linked && speech && ai && mic == true && firmware == true,
             live && c.source == ConversationSource.NATIVE && ai && speech, mic == false || firmware == false), "안경 기본 호출 이벤트", "korean-wake", native)
         addRow("AI·기억", "한국어 호출", when {
@@ -110,7 +128,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("업무", "PC 연결", if(s.computerConnected) status(Phase.READY,"연결됨") else status(Phase.OFF,"미연결"), "Codex 연결", "computer")
         addRow("업무", "PC 작업", active(s.computerRunning), "PC 작업 처리", "ai")
         val pending = s.approvals.size + s.agentReviews.size
-        addRow("업무", "작업 승인", if(pending > 0) status(Phase.WAITING,"${pending}건 대기") else off, "명시적 확인 필요", "ai")
+        addRow("업무", "작업 승인", if(pending > 0) status(Phase.WAITING,"${pending}건 대기") else off, "명시적 확인 필요", "ai", needsAction = pending > 0)
         addRow("번역·도구", "주변 통역", active(s.translationActive && !s.captionActive && !s.mediaCaption.busy && !s.wakeActive && !s.wakePending), "통역 세션 · HUD 실표시는 별도", "translation")
         addRow("번역·도구", "주변 자막", active(s.captionActive), "안경 음성 자막 세션", "captions")
         addRow("번역·도구", "영상 자막", when(s.mediaCaption.phase) {
@@ -130,7 +148,13 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("번역·도구", "타이머", active(s.timerRunning), "휴대폰 타이머", "local-clock")
         addRow("번역·도구", "스톱워치", active(s.stopwatchRunning), "휴대폰 시간 측정", "local-clock")
         addRow("자동 기능", "집중 모드", allowed(s.focusMode,true), "자동 알림·힌트 제한", "feature-controls", s.focusMode)
-        addRow("자동 기능", "휴대폰 알림", allowed(s.appNotificationsEnabled, linked && model.notificationAllowed && s.notificationConnected, blocked = s.focusMode), "알림 접근 및 리스너 연결", "phone-notifications", s.appNotificationsEnabled)
+        addRow("자동 기능", "휴대폰 알림", allowed(s.appNotificationsEnabled, linked && model.notificationAllowed && s.notificationConnected, blocked = s.focusMode), when {
+            s.focusMode -> "집중 모드에서 전달 제한"
+            !model.notificationAllowed -> "알림 접근 권한 필요"
+            !linked -> "안경 연결 대기"
+            !s.notificationConnected -> "알림 리스너 연결 대기"
+            else -> "허용 앱 알림 전달 대기"
+        }, "phone-notifications", s.appNotificationsEnabled, s.appNotificationsEnabled && !s.focusMode && linked && (!model.notificationAllowed || s.notificationReadPhase == NotificationReadPhase.FAILED))
         addRow("자동 기능", "백그라운드 서비스", active(s.foregroundService), "Android 지속 알림 서비스", "device")
         addRow("자동 기능", "기록 동기화", allowed(s.recordSync.enabled,true), "연결 서버 활성 여부 · 전송 성공 별도", "agent-api", s.recordSync.enabled)
         addRow("유지관리", "번역 모델 준비", if(s.mediaTranslation.preparing || s.offlinePreparing) status(Phase.BUSY,"준비 중") else off, "필요할 때 내장 모델 준비", if(s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL || s.offlinePreparing) "translation" else "media-captions")
@@ -184,6 +208,13 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val data = rows(model, phoneInput)
     val active = data.count { it.working() }; val attention = data.count { it.attention() }
     val visible = data.filter { filter == "전체" || filter == "작동 중" && it.working() || filter == "확인 필요" && it.attention() }
+    val ordered = visible.sortedBy { it.priority() }
+    val urgent = ordered.filter { it.attention() || it.working() }
+    val remaining = ordered.filterNot { it.attention() || it.working() }
+    val sections = buildList<Pair<String,List<SystemRow>>> {
+        if(urgent.isNotEmpty()) add("현재 활동 · 확인 필요" to urgent)
+        remaining.groupBy { it.group }.forEach { (group, entries) -> add(group to entries) }
+    }
     fun go(route: String) { when(route) {
         "device" -> if(model.state.glasses.link.phase == LinkPhase.DISCONNECTED) connect() else navigate(4)
         "ai" -> navigate(1)
@@ -202,12 +233,17 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("전체","작동 중","확인 필요").forEach { FilterChip(filter == it, { filter = it }, label = { Text(it) }) }
                 }
-                if(model.state.conversation.running || model.state.alwaysOnResumePending)
-                    ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !model.state.conversation.stopping) { Text(if(model.state.conversation.reprocessing) "재전사 중지" else "기록 중지") }
+                val s = model.state
+                if(s.conversation.running || s.alwaysOnResumePending)
+                    ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text(if(s.conversation.reprocessing) "재전사 중지" else "기록 중지") }
+                if(s.mediaCaption.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().stopMediaCaption() } }, enabled = s.mediaCaption.phase != MediaCapturePhase.STOPPING) { Text("영상 자막 종료") }
+                if(s.wakeActive || s.wakePending) ToolOutlinedButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("호출 중지") }
+                else if(s.captionActive || s.translationActive && !s.mediaCaption.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("통역·자막 종료") }
+                if(s.speechPlaying) ToolOutlinedButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 출력 중지") }
             }
         }
         if(visible.isEmpty()) item { Note("해당 상태의 항목이 없습니다.") }
-        visible.groupBy { it.group }.forEach { (group, entries) ->
+        sections.forEach { (group, entries) ->
             item(key = "group:"+group) { SectionLabel(group) }
             items(entries, key = { it.title }) { row ->
                 OutlinedCard(onClick = { go(row.route) }, modifier = Modifier.fillMaxWidth()) {
