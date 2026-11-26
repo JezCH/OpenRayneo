@@ -51,6 +51,7 @@ internal class LiveTranslator(
     private val translations = Executors.newSingleThreadExecutor()
     private var config = JSONObject()
     @Volatile private var generation = 0
+    @Volatile private var roundEpoch = 0
     private var asr: SpeechRound? = null
     private var resampler = ConversationAudio()
     @Volatile private var call: Call? = null
@@ -164,7 +165,7 @@ internal class LiveTranslator(
             wasActive = active
             active = false
             mediaSessionId = null
-            generation++
+            generation++; roundEpoch++
             asr?.cancel(); asr = null
         }
         restartTask?.let(main::removeCallbacks); restartTask = null
@@ -187,8 +188,8 @@ internal class LiveTranslator(
         // Stay live: drop audio rather than queueing behind a slow or reconnecting ASR socket.
         if (!target.canAcceptAudio()) return
         try { target.append(samples) } catch (error: Exception) {
-            val token = generation
-            main.post { asrEnded(token, error.message ?: "ASR 오디오 전송 실패") }
+            val token = generation; val epoch = roundEpoch
+            main.post { asrEnded(token, epoch, error.message ?: "ASR 오디오 전송 실패") }
         }
     }
 
@@ -199,8 +200,8 @@ internal class LiveTranslator(
         if (!target.canAcceptAudio()) return false
         return try { target.append(FloatArray(count) { pcm[it] / 32768f }); true }
         catch (error: Exception) {
-            val token = generation
-            main.post { asrEnded(token, error.message ?: "미디어 ASR 오디오 처리 실패") }
+            val token = generation; val epoch = roundEpoch
+            main.post { asrEnded(token, epoch, error.message ?: "미디어 ASR 오디오 처리 실패") }
             false
         }
     }
@@ -209,30 +210,34 @@ internal class LiveTranslator(
     fun close() { stop(); mediaTranslation.close(); offline.close(); translations.shutdownNow(); http.dispatcher.executorService.shutdown() }
 
     private fun openASR() {
-        val token: Int
-        val round: SpeechRound
-        synchronized(this) {
-            if (!active) return
-            token = generation
-            resampler = ConversationAudio()
-            val keyword = keywordWakeOptions
-            round = if (keyword != null) KoreanKeywordRound(context, config, keyword,
-                { text, _, _, _, _ -> main.post { finished(token, text) } },
-                { message -> main.post { asrEnded(token, message) } },
-                { message -> main.post { if (token == generation && wakeActive) { status = message; changed() } } })
-            else SpeechRounds.create(context, config,
-                { text, _, _, _, _ -> main.post { finished(token, text) } },
-                { message -> main.post { asrEnded(token, message) } },
-                { main.post { asrEnded(token, null) } },
-                { text -> main.post { interim(token, text) } })
-            asr = round
-        }
-        try { round.start() } catch (error: Exception) { asrEnded(token, error.message ?: "ASR 시작 실패") }
+        if (!active) return
+        val token = generation
+        val epoch = ++roundEpoch
+        try {
+            val round = synchronized(this) {
+                if (!active || token != generation) return
+                resampler = ConversationAudio()
+                val keyword = keywordWakeOptions
+                val next = if (keyword != null) KoreanKeywordRound(context, config, keyword,
+                    { text, _, _, _, _ -> main.post { if (epoch == roundEpoch) finished(token, text) } },
+                    { message -> main.post { asrEnded(token, epoch, message) } },
+                    { message -> main.post { if (epoch == roundEpoch && token == generation && wakeActive) { status = message; changed() } } })
+                else SpeechRounds.create(context, config,
+                    { text, _, _, _, _ -> main.post { if (epoch == roundEpoch) finished(token, text) } },
+                    { message -> main.post { asrEnded(token, epoch, message) } },
+                    { main.post { asrEnded(token, epoch, null) } },
+                    { text -> main.post { if (epoch == roundEpoch) interim(token, text) } })
+                asr = next
+                next
+            }
+            round.start()
+        } catch (error: Exception) { asrEnded(token, epoch, error.message ?: "ASR 시작 실패") }
     }
 
-    private fun asrEnded(token: Int, message: String?) {
+    private fun asrEnded(token: Int, epoch: Int, message: String?) {
         synchronized(this) {
-            if (token != generation || !active) return
+            if (token != generation || epoch != roundEpoch || !active) return
+            roundEpoch++ // Invalidate duplicate terminal and late transcript callbacks before cancel().
             asr?.cancel(); asr = null
         }
         if (keywordWakeOptions != null) {
@@ -282,6 +287,8 @@ internal class LiveTranslator(
         if (token != generation || !active || wakeActive || (mediaSessionId == null && misheard(text))) return
         heard()
         sourceLine = text
+        // Do not display an earlier final's translation beside a newer partial.
+        if (!captionOnly && !mediaTranslate) targetLine = "…"
         render()
     }
 
@@ -320,6 +327,7 @@ internal class LiveTranslator(
             return
         }
         if (captionOnly) { sourceLine = text; render(); return }
+        if (text.isBlank()) return
         val sequence = ++latestFinal
         val from = if (isKorean(text)) "Korean" else "English"
         val to = if (from == "Korean") "English" else "Korean"
@@ -328,6 +336,7 @@ internal class LiveTranslator(
         if (offlineMode) {
             offline.translate(text, to) { result ->
                 if (token != generation || !active || sequence != latestFinal) return@translate
+                sourceLine = text
                 result.fold({ translated -> targetLine = clip(translated, TARGET_LIMIT); render() },
                     { targetLine = "(로컬 번역 실패)"; render(); status = "로컬 번역 실패 · 모델 서버 확인"; changed() })
             }
@@ -343,11 +352,13 @@ internal class LiveTranslator(
                 if (token != generation || !active) return@post
                 result.fold({ translated ->
                     history.addLast(text to translated); while (history.size > 3) history.removeFirst()
-                    if (sequence == latestFinal) { targetLine = clip(translated, TARGET_LIMIT); render() }
+                    if (sequence == latestFinal) { sourceLine = text; targetLine = clip(translated, TARGET_LIMIT); status = listening(); render(); changed() }
                 }, { error ->
-                    if (sequence == latestFinal) { targetLine = "(번역 실패)"; render() }
-                    status = "번역 실패: ${error.message ?: error.javaClass.simpleName}"
-                    changed()
+                    if (sequence == latestFinal) {
+                        sourceLine = text; targetLine = "(번역 실패)"; render()
+                        status = "번역 실패: ${error.message ?: error.javaClass.simpleName}"
+                        changed()
+                    }
                 })
             }
         }

@@ -364,8 +364,8 @@ internal class BridgeService : Service() {
                     if (mediaCaptionState.phase != MediaCapturePhase.STOPPING && (!state.mediaCaptionMode || state.link.phase != LinkPhase.FULL || state.disconnecting || state.ownership != DisplayOwnership.APP || state.error != null))
                         stopMediaCaption(state.error ?: state.link.lastFailure ?: "안경 표시 또는 연결 변경으로 미디어 자막 종료: " + state.link.detail)
                 } else if (state.intent == DisplayIntent.Translation && (state.link.phase != LinkPhase.FULL || state.ownership != DisplayOwnership.APP ||
-                    (state.captionMode && (state.error != null || state.audio.phase == AudioPhase.FAILED)))) {
-                    translator.stop(); events.add(GlassesEvent.PauseDisplay)
+                    (state.error != null || state.audio.phase == AudioPhase.FAILED))) {
+                    translator.stop(state.error ?: if (state.audio.phase == AudioPhase.FAILED) state.audio.detail else "연결 또는 화면 변경으로 번역·자막 종료"); events.add(GlassesEvent.PauseDisplay)
                 } else if (translator.active && state.intent != DisplayIntent.Translation) translator.stop()
                 updateAnswerClearTimer()
                 if (state.displayDescription != previous.displayDescription) onLog(state.displayDescription)
@@ -667,7 +667,10 @@ internal class BridgeService : Service() {
                 resumeAlwaysOn = null
                 cancelVoiceAlwaysOnStart()
             }
-            agent.harness.cancel("route"); agent.harness.cancel("hint")
+            // Only cancel requests owned by the recording that ended; phone questions,
+            // explicit record analysis and independent diagnostics must survive.
+            agent.harness.cancel("route"); agent.harness.cancelPassiveHints()
+            if (source == ConversationSource.NATIVE) cancelNativeChat()
             if (source == ConversationSource.REALTIME) {
                 if (conversationOwnsDisplay) dispatch(GlassesEvent.PauseDisplay)
                 conversationOwnsDisplay = false
@@ -1390,18 +1393,30 @@ internal class BridgeService : Service() {
             !translator.active && !voiceTransport.nativeActive && teleprompter.state.active == null && !teleprompter.state.busy) { "다른 화면과 음성 기능을 먼저 종료하세요" }
         check(sendCompanionNotification("한글 표시 검사", text, FocusPolicy.Output.DIRECT_ANSWER)) { "안경을 먼저 연결하세요" }
     }
-    fun startTranslation(local: Boolean = false) {
+    fun checkTranslation(local: Boolean) {
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
         requirePrompterFree()
         requireCaptureFree()
-        check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
-        val config = settings.read()
-        translator.validate(config, local)
+        check(!migration.state.busy && !reconnectCapture.pending && wakeRequest == null &&
+            state.intent == DisplayIntent.Idle && state.session == null && state.ownership == DisplayOwnership.APP &&
+            !state.navigation.enabled && audioOwner == null && !agent.running && !codex.running && !speechOutput.speaking) {
+            "현재 기록·화면·AI·음성 재생을 먼저 종료하세요"
+        }
+        translator.validate(settings.read(), local)
+    }
+    fun startTranslation(local: Boolean = false) {
+        checkTranslation(local)
         cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
         conversationOwnsDisplay = false
-        if (conversations.state.running) conversations.stop()
-        if (speechOutput.speaking) speechOutput.stop()
-        translator.start(config, local = local)
-        dispatch(GlassesEvent.StartTranslation)
+        try {
+            translator.start(settings.read(), local = local)
+            dispatch(GlassesEvent.StartTranslation)
+            check(translator.active && state.intent == DisplayIntent.Translation) { "번역 화면을 시작하지 못했습니다" }
+        } catch (error: Exception) {
+            translator.stop(error.message ?: "번역 시작 실패")
+            if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
+            throw error
+        }
     }
     fun speakKorean(text: String) {
         check(!destroyed && !conversations.state.running && !translator.active && !voiceTransport.nativeActive && !teleprompter.state.smartFollow && teleprompter.state.active == null && !teleprompter.state.busy) { "녹음·음성 기능을 먼저 종료하세요" }
@@ -1557,7 +1572,7 @@ internal class BridgeService : Service() {
         conversations.resetAgentConversation()
         cancelVoiceAlwaysOnStart()
         cancelRealtimeStream()
-        agent.harness.cancel("hint")
+        agent.harness.cancelPassiveHints()
         agent.harness.cancelConversation(previous)
         clearAgent(resetContext = false)
     }
@@ -1708,7 +1723,7 @@ internal class BridgeService : Service() {
     private var followUpExtraction: String? = null
     fun extractFollowUps(recordId: String, revision: Int, page: Int, completion: (Result<Int>) -> Unit) {
         check(!destroyed && !conversations.state.running && followUpExtraction == null) { "현재 기록 또는 후보 추출을 먼저 마치세요" }
-        check(agentServer.state.enabled) { "DSH Go 및 외부 Agent를 먼저 연결하세요" }
+        check(agentServer.state.enabled && agentServer.state.pollRecent) { "DSH Go 및 외부 Agent가 수신 대기 중인지 확인하세요" }
         val repository = conversations.repository
         val record = repository.referenceSnapshot().firstOrNull { it.id == recordId && it.revision == revision }
             ?: error("원본 기록이 변경되었습니다. 다시 확인하세요")
