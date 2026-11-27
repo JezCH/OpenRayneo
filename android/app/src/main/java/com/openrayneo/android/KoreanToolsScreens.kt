@@ -43,7 +43,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val speechReady = SpeechRounds.ready(model.getApplication<android.app.Application>(), model.config)
     val continuous = model.config.optBoolean("ambientWakeEnabled")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text("현재 호출 상태", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(when {

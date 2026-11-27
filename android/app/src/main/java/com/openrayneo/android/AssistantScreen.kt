@@ -34,7 +34,7 @@ import kotlin.coroutines.resume
 import org.json.JSONArray
 import org.json.JSONObject
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
@@ -167,7 +167,6 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
             )
             IconButton(
                 onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
@@ -186,13 +185,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         ) {
             if (!configured)
                 item {
-                    ContentCard {
-                        Icon(
-                            if (mobile) Icons.Outlined.AutoAwesome else Icons.Outlined.Computer,
-                            null,
-                            Modifier.size(40.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+                    OpticalPanel {
+                        if (mobile) OpticalSignature(Modifier.size(80.dp))
+                        else Icon(Icons.Outlined.Computer, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(
                             if (mobile) "AI에 연결해야 질문할 수 있습니다" else "컴퓨터가 아직 설정되지 않음",
                             style = MaterialTheme.typography.headlineSmall,
@@ -208,7 +203,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 }
             else if (mobile && !model.aiReady && !running)
                 item {
-                    ContentCard {
+                    OpticalPanel {
                         Text("AI 연결 대기 중", style = MaterialTheme.typography.titleMedium)
                         Note(model.aiStatus)
                         Note("연결 기능은 켜져 있지만 외부 AI가 아직 요청을 수신하지 않습니다. 질문 초안은 유지됩니다.")
@@ -232,18 +227,14 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             else if (question.isBlank() && history.isEmpty())
                 item {
                     Column(
-                        Modifier.fillMaxWidth().padding(vertical = 36.dp),
+                        Modifier.fillMaxWidth().padding(vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Icon(
-                            Icons.Outlined.AutoAwesome,
-                            null,
-                            Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        Text("새 대화", style = MaterialTheme.typography.headlineSmall)
-                        Note(if (mobile) "이렇게 물어보세요: 지금 안경의 내비게이션 추종 상태는 어때?" else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
+                        if (mobile) OpticalSignature(Modifier.size(104.dp))
+                        else Icon(Icons.Outlined.Computer, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(if (mobile) "무엇을 도와드릴까요?" else "새 PC 작업", style = MaterialTheme.typography.headlineSmall)
+                        Note(if (mobile) "질문을 입력하거나 기억을 첨부해 대화를 시작하세요." else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
                     }
                 }
             s.agentReviews.forEach { review ->
@@ -339,18 +330,18 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (mobile) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
                         FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
                     }
                     if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
                     else {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
-                                enabled = !running && !s.migration.busy && draft.length <= 2000, modifier = Modifier.weight(1f)) {
+                                enabled = !running && !s.migration.busy && draft.length <= 2000) {
                                 Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개" else "기억 첨부")
                             }
-                            TextButton(onClick = { showContextOptions = !showContextOptions }, modifier = Modifier.weight(1f)) {
+                            TextButton(onClick = { showContextOptions = !showContextOptions }) {
                                 Text(if (showContextOptions) "맥락 설정 접기" else "맥락 설정")
                             }
                         }
@@ -407,10 +398,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             )
                         }
                 }
-                Row(
+                FlowRow(
                     Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     TextButton(
                         onClick = { actions.voice(source) },

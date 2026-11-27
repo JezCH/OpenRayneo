@@ -33,7 +33,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        ContentCard {
+        OpticalPanel {
             Text("현재 선택한 모델", style = MaterialTheme.typography.labelLarge)
             Text(AiModelSelection.label(config), style = MaterialTheme.typography.headlineSmall)
             Text(selectedAiStatus(model).label, style = MaterialTheme.typography.titleSmall)

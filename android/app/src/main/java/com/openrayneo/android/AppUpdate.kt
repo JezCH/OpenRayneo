@@ -192,6 +192,18 @@ internal object AppUpdate {
             digestPattern.matches(candidate.digest) && candidate.size in 1..MAX_APK)
         return File(updateDirectory(context), "validation-${candidate.code}-${candidate.digest}.apk")
     }
+    // Recovery uses the same private cache and verifies it again without
+    // initiating a network transfer or silently falling back to the full APK.
+    suspend fun verifiedCachedApk(context: Context, candidate: Candidate): File = withContext(Dispatchers.IO) {
+        check(supported && context.packageName == PACKAGE)
+        val apk = target(context, candidate)
+        check(apk.isFile && apk.length() == candidate.size && fileHash(apk) == candidate.digest) {
+            "받아 둔 APK 검증 실패 · 업데이트 파일을 다시 확인하세요"
+        }
+        verifyArchive(context, candidate, apk)
+        apk
+    }
+
     // A candidate file is only a hint for the UI; download() revalidates it before installation.
     fun hasDownloaded(context: Context, candidate: Candidate): Boolean =
         runCatching { target(context, candidate).let { it.isFile && it.length() == candidate.size } }.getOrDefault(false)

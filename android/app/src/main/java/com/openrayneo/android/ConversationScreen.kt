@@ -287,9 +287,11 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             TextButton(back) { Text("기록으로 돌아가기") }
-            Text(record.title, style = MaterialTheme.typography.headlineSmall)
-            Note("${record.source.title} · ${recordTime(record)}")
-            TopicMembership(topicState, record.id)
+            OpticalPanel {
+                Text(record.title, style = MaterialTheme.typography.headlineSmall)
+                Note("${record.source.title} · ${recordTime(record)}")
+                TopicMembership(topicState, record.id)
+            }
             Note(if (record.source == ConversationSource.ALWAYS_ON) "종일 기록 타임라인과 요약. 원문을 탭하면 인물을 수정할 수 있습니다." else "${record.mode.title} · 원문을 탭하면 화자를, 기억을 탭하면 서술 대상을 수정할 수 있습니다.")
             if (record.transcriptOnly) Note(if (record.transcriptIncomplete) "완료된 전사만 보존했습니다. 원본 음성이 없어 누락 구간을 복구할 수 없습니다." else "원본 음성을 저장하지 않은 기록입니다. WAV 내보내기와 보충 전사를 사용할 수 없습니다.")
             else if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
@@ -304,9 +306,11 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                 }
             }
             if (record.summary.isNotBlank()) {
-                SectionLabel(if (record.summaryStale) "이전 요약" else "요약")
-                if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
-                Text(record.summary)
+                OpticalPanel {
+                    SectionLabel(if (record.summaryStale) "이전 요약" else "AI 요약")
+                    if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
+                    Text(record.summary)
+                }
             } else if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
             record.summaries.filter { it.kind != "rolling" }.forEach { summary ->
                 Text(if (summary.kind == "day_end") "${summary.day.ifBlank { "날짜 미기록" }} 일일 요약" else "기록 종료 요약", style = MaterialTheme.typography.titleSmall)
@@ -319,7 +323,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
         val ordinaryDerived = record.derived.filterNot { it.id.startsWith(FollowUpPolicy.PREFIX) }
         if (ordinaryDerived.isNotEmpty()) item { SectionLabel("연결된 Agent 분석 및 메모") }
         items(ordinaryDerived, key = { "derived:${it.id}" }) { derived ->
-            ContentCard {
+            OpticalPanel {
                 Text(when (derived.kind) { "analysis" -> "분석"; "tags" -> "태그"; else -> "추가 메모" }, style = MaterialTheme.typography.titleSmall)
                 if (derived.text.isNotBlank()) Text(derived.text)
                 if (derived.tags.isNotEmpty()) Note(derived.tags.joinToString(" · "))

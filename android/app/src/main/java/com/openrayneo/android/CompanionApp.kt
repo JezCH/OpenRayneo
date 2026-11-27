@@ -85,7 +85,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                                 "app-update" -> "앱 업데이트"
                                 "local-clock" -> "타이머 및 스톱워치"
                                 "about-you" -> "개인화 정보"
-                                "model" -> "기록 요약 모델"
+                                "model" -> "AI 모델 선택"
                                 "computer" -> "컴퓨터 연결"
                                 "diagnostics" -> "기기 및 진단"
                                 "voice-settings" -> "음성·기억 설정"
@@ -149,7 +149,11 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                             onClick = { tab = index },
                             colors =
                                 NavigationBarItemDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 ),
                             icon = {
                                 BadgedBox(
@@ -162,7 +166,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                                     Icon(icons[index], null)
                                 }
                             },
-                            label = { Text(title) },
+                            label = { Text(title, style = MaterialTheme.typography.labelMedium) },
                         )
                     }
                 }

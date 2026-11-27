@@ -37,7 +37,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
     }
     val labels = listOf("en" to "영어", "ja" to "일본어", "zh" to "중국어", "ko" to "한국어")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text(if (capture.busy) "현재 자막 세션" else "재생음 자막 시작", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note("안경 연결: " + s.glasses.link.detail)
