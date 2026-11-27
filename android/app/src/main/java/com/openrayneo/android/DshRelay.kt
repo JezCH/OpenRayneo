@@ -81,7 +81,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             expireHints()
             if (request.hintDeadline > 0L && !request.explicitHint) {
                 // Ambient updates may coalesce, but must never replace an explicit review or diagnostic.
-                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && it.state == "queued" }.forEach { cancelHint(it) }
+                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && (it.state == "queued" || (it.direct && it.state == "running")) }.forEach { cancelHint(it) }
             }
             requests[request.id] = request; persist(); lock.notifyAll()
         }
