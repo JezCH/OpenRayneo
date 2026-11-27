@@ -104,7 +104,8 @@ internal class AppUpdateCheck(context: Context) {
         val now = System.currentTimeMillis()
         val last = prefs.getLong("attemptAt", 0L)
         val interval = if (error.isBlank() && lastCheckedAt > 0L) period else retry
-        if (!force && last > 0L && now >= last && now - last < interval) return
+        // Manual refresh is allowed, but rapid repeat taps must not spend quota.
+        if (last > 0L && now >= last && now - last < (if (force) 30_000L else interval)) return
         prefs.edit().putLong("attemptAt", now).apply()
         checking = true
         val work = scope.launch(start = CoroutineStart.LAZY) {
