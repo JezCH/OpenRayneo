@@ -114,6 +114,29 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     val mobileModelConfigured: Boolean get() = MobileModelEndpoint.isConfigured(
         config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey"))
 
+    val aiLegacy get() = AiModelSelection.legacy(config)
+    val aiConfigured get() = if (aiLegacy) state.agentServer.enabled else AiModelSelection.direct(config) != null
+    val aiReady get() = aiConfigured && (!aiLegacy || state.agentServer.pollRecent)
+    val aiStatus get() = if (aiLegacy) state.agentServer.receiverStatus
+        else AiModelSelection.label(config) + if (aiConfigured) " · 설정됨 (응답 확인 별도)" else " · 연결 필요"
+    val aiSwitchAllowed get() = !state.conversation.running && !state.conversation.stopping &&
+        !state.conversation.summarizing && !state.translationActive && !state.wakeActive && !state.wakePending &&
+        !state.phoneRunning && !state.computerRunning && !state.migration.busy &&
+        !state.teleprompter.busy && state.teleprompter.active == null
+    fun selectAiModel(id: String, profile: AiModelSelection.Profile? = null) = attempt {
+        check(aiSwitchAllowed && bridge?.canSwitchAiModel() != false) {
+            "진행 중인 AI·기록·번역 작업을 종료한 뒤 모델을 바꾸세요. 기존 기록은 유지됩니다."
+        }
+        val values = mutableMapOf(AiModelSelection.KEY to id)
+        if (profile != null) values[AiModelSelection.PROFILES] = AiModelSelection.withProfile(config, profile)
+        val proposed = JSONObject(config.toString())
+        values.forEach { (k,v) -> proposed.put(k,v) }
+        require(id == AiModelSelection.LEGACY || AiModelSelection.direct(proposed) != null) {
+            "선택 모델 연결 정보가 준비되지 않았습니다"
+        }
+        saveConfig(values)
+    }
+
     var error by mutableStateOf<String?>(null)
     var notice by mutableStateOf<String?>(null)
     var bluetoothAllowed by mutableStateOf(false)
@@ -361,6 +384,12 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         values["ttsPitch"]?.let { require(it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0.75f..1.25f } == true) { "음성 높이는 0.75~1.25배로 설정하세요" } }
         // The summary/translation endpoint is independent of the DSH conversation.
         // Changing it must not erase explicit chat history or cancel an unrelated task.
+        val selectionChanged = AiModelSelection.selected(old) != AiModelSelection.selected(updated) ||
+            AiModelSelection.direct(old) != AiModelSelection.direct(updated)
+        if (selectionChanged) {
+            check(aiSwitchAllowed && bridge?.canSwitchAiModel() != false) { "진행 중인 작업이 있어 모델을 변경하지 않았습니다" }
+            require(AiModelSelection.legacy(updated) || AiModelSelection.direct(updated) != null)
+        }
         val mobileChanged = old.optString("mobileAgentBackend") != updated.optString("mobileAgentBackend")
         val computerChanged =
             listOf("codexUrl", "codexToken", "codexCwd").any {
@@ -383,6 +412,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             computerHistory = emptyList()
         }
         config = updated
+        if (selectionChanged) bridge?.aiModelChanged()
         bridge?.conversations?.configurationChanged()
         bridge?.let { LocalModels.keepResident(it, updated) }
         resetFormDrafts()
