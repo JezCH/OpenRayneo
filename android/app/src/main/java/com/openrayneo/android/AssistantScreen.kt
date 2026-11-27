@@ -64,6 +64,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     val pendingHere = s.agentReviews.size + if (mobile) 0 else s.approvals.size
     val phase = opticalAiPhase(s.available, pendingHere > 0, running, inputReady, answer.isNotBlank())
     val statusDetail = if (mobile && configured && question.isBlank() && !running) model.aiStatus else status
+    val destinationLabel = if (!mobile) "컴퓨터 Codex" else if (model.aiLegacy) "로컬 Agent" else AiModelSelection.label(model.config)
     // Non-legacy AI has no selectable PC execution path. Preserve the selector
     // whenever an existing PC task, conversation or approval needs access.
     val showSourceSelector = model.aiLegacy || !mobile || s.computerRunning || s.approvals.isNotEmpty() ||
@@ -218,7 +219,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     OpticalPanel {
                         Text("AI 연결 대기 중", style = MaterialTheme.typography.titleMedium)
                         Note(model.aiStatus)
-                        Note("연결 기능은 켜져 있지만 외부 AI가 아직 요청을 수신하지 않습니다. 질문 초안은 유지됩니다.")
+                        Note(if (model.aiLegacy) "연결 기능은 켜져 있지만 외부 AI가 아직 요청을 수신하지 않습니다. 질문 초안은 유지됩니다." else "선택한 AI 연결 설정을 확인하세요. 질문 초안은 유지됩니다.")
                         ToolButton(onClick = { configure("model") }) { Text("AI 연결 확인") }
                     }
                 }
@@ -406,7 +407,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.Send,
-                                "${if (mobile) "로컬 Agent" else "컴퓨터 Codex"}(으)로 보내기",
+                                "$destinationLabel(으)로 보내기",
                             )
                         }
                 }
@@ -424,7 +425,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
-                        if (mobile) (if (executeTask) "업무 Agent로 보내기" else "도구 없는 AI 대화") else "컴퓨터 Codex로 보내기",
+                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else "컴퓨터 Codex로 보내기",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

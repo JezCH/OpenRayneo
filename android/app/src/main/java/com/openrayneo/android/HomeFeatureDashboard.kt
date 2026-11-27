@@ -56,9 +56,10 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
     val mic = s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")
     val firmwareWake = s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup")
     val speechReady = c.modelReady && model.speechConfigured
-    val ai = s.agentServer.enabled
-    val receiver = s.agentServer.pollRecent
-    val aiSetup = if (!ai) "AI 연결 설정 필요" else s.agentServer.receiverStatus
+    val ai = model.aiConfigured
+    val receiver = model.aiReady
+    val aiSetup = model.aiStatus
+    val aiRoute = if (model.aiLegacy) "agent-api" else "model"
     val ambient = cfg.optBoolean("ambientWakeEnabled")
     val fast = cfg.optBoolean("fastRealtimeHints")
     val native = cfg.optBoolean("nativeAutoAnswer")
@@ -82,26 +83,27 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
             mic != true || firmwareWake != true -> "안경 마이크·기본 호출 설정 확인"
             !speechReady -> "기록 엔진·음성 인식 설정 확인"
             else -> aiSetup
-        }, activeDetail = "안경 기본 호출 음성 처리 · " + s.agentServer.receiverStatus, waitingDetail = "기본 펌웨어 호출 대기")
+        }, activeDetail = "안경 기본 호출 음성 처리 · " + model.aiStatus, waitingDetail = "기본 펌웨어 호출 대기")
     val ambientStatus = FeatureStatusPolicy.resolve(ambient, linked && speechReady && ai && receiver && mic != false,
         active = ambient && capturesAmbient && speechReady && ai && receiver && mic != false && c.error == null && receiving,
         waiting = true, blocker = if (mic == false) "안경 마이크 꺼짐" else null,
         error = if (ambient && capturesAmbient) c.error else null,
         setupDetail = when { !linked -> "안경 연결 필요"; !speechReady -> "기록 엔진·음성 인식 설정 확인"; else -> aiSetup },
-        activeDetail = "기록 중 호출 검사 · " + s.ambientWakeStatus + " · " + s.agentServer.receiverStatus,
+        activeDetail = "기록 중 호출 검사 · " + s.ambientWakeStatus + " · " + model.aiStatus,
         waitingDetail = if (capturesAmbient) "전사/음성 수신 대기" else "종일 또는 빠른 실시간 기록 시작 필요")
     val hintStatus = FeatureStatusPolicy.resolve(fast, linked && speechReady && ai && receiver,
         active = fast && c.running && !c.reprocessing && c.mode != ConversationMode.ENROLL && c.source == ConversationSource.REALTIME && !c.stopping && !s.focusMode && s.appNotificationsEnabled && speechReady && ai && receiver && mic != false && c.error == null && s.glasses.audio.phase == AudioPhase.RECEIVING,
         waiting = true, blocker = when { s.focusMode -> "집중 모드"; !s.appNotificationsEnabled -> "앱 알림 꺼짐"; mic == false -> "안경 마이크 꺼짐"; else -> null },
         setupDetail = when { !linked -> "안경 연결 필요"; !speechReady -> "기록 엔진·음성 인식 설정 확인"; else -> aiSetup },
-        activeDetail = "빠른 실시간 힌트 경로 · " + s.agentServer.receiverStatus, waitingDetail = "실시간 기록 시작 필요")
+        activeDetail = "빠른 실시간 힌트 경로 · " + model.aiStatus, waitingDetail = "실시간 기록 시작 필요")
     OpticalPanel {
         Text("기능 제어판", style = MaterialTheme.typography.titleMedium)
         Note("스위치는 사용 허용 설정입니다. 실제 실행 여부와 필요한 준비는 아래 상태에서 확인하세요.")
+        Note("선택 AI: " + AiModelSelection.label(cfg) + " · " + selectedAiStatus(model).label)
         if (!editing && captureBusy) Note("음성 기능을 사용 중입니다. 호출·힌트 설정을 바꾸려면 먼저 종료하세요.")
         FeatureStateRow("기본 AI 호출", nativeStatus,
             if (!linked) "안경 연결" else if (!speechReady) "음성 설정" else if (!ai || !receiver) "AI 연결 상태" else "기기·호출 설정",
-            { if (!linked) connect() else if (!speechReady) open("voice-settings") else if (!ai || !receiver) open("agent-api") else open("korean-wake") },
+            { if (!linked) connect() else if (!speechReady) open("voice-settings") else if (!ai || !receiver) open(aiRoute) else open("korean-wake") },
             native, editing) { toggle("nativeAutoAnswer", "기본 AI 호출", it, true) }
         HorizontalDivider()
         FeatureStateRow("한국어 호출", ambientStatus, "호출·기록 제어", { open("korean-wake") },
@@ -116,7 +118,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
             toggle("memorySuggestOnSend", "기억 추천", it)
         }
         HorizontalDivider()
-        FeatureStateRow("대화 이어가기", FeatureStatusPolicy.resolve(s.chatContinuity.enabled, s.available && ai,
+        FeatureStateRow("대화 이어가기", FeatureStatusPolicy.resolve(s.chatContinuity.enabled, s.available && receiver,
             error = s.chatContinuityError.takeIf { it.isNotBlank() }, readyDetail = "저장된 일반 대화 " + s.chatContinuity.turns.size + "턴",
             setupDetail = "AI 연결 필요"), "공유·기억 관리", { navigate(1) })
         HorizontalDivider()

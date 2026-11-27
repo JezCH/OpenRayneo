@@ -40,22 +40,24 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
         item { OpticalPanel {
             Text(if (capture.busy) "현재 자막 세션" else "재생음 자막 시작", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
+            Note(capture.detail)
+            if (capture.busy) {
+                ToolButton(onClick = { model.attempt { model.service().stopMediaCaption() } },
+                    enabled = capture.phase != MediaCapturePhase.STOPPING, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (capture.phase == MediaCapturePhase.STOPPING) "자막 종료 중…" else "미디어 자막 종료")
+                }
+            }
             Note("안경 연결: " + s.glasses.link.detail)
             if (!s.available || s.glasses.link.phase != LinkPhase.FULL || s.glasses.disconnecting) {
                 s.glasses.link.lastFailure?.let { Note("최근 원인: $it") }
                 ToolOutlinedButton(onClick = connect) { Text("안경 연결 확인") }
             }
             Note("휴대폰 영상 소리를 글자로 바꿔 안경에 표시합니다. 이어폰 소리는 그대로 들을 수 있고, 별도 AI 구독이나 서버는 필요하지 않습니다.")
-            Note(capture.detail)
             if (capture.busy) {
                 val translating = MediaTranslationRoute.required(capture.options.language, capture.options.translateToKorean)
                 Note((if (capture.options.scope == MediaCaptionScope.YOUTUBE) "YouTube만" else "허용된 전체 미디어") +
                     " · " + labels.first { it.first == capture.options.language }.second +
                     (if (translating) " → 한국어" else " 원문"))
-                ToolButton(onClick = { model.attempt { model.service().stopMediaCaption() } },
-                    enabled = capture.phase != MediaCapturePhase.STOPPING, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (capture.phase == MediaCapturePhase.STOPPING) "자막 종료 중…" else "미디어 자막 종료")
-                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("현재 진행 상태", style = MaterialTheme.typography.titleMedium)
                 Note("1. 영상 소리: " + if (capture.heardNonzero) "수신됨" else "재생음 대기 · 영상을 재생하세요")
@@ -85,6 +87,10 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                     else -> "시작 조건 확인됨"
                 }, style = MaterialTheme.typography.titleMedium)
                 if (problem != null) Note(problem)
+                if (mt.preparing) {
+                    ToolOutlinedButton(onClick = { pendingStart = null; model.attempt { model.service().cancelMediaTranslationPreparation() } },
+                        enabled = mt.phase != LocalMediaTranslationPhase.CANCELLING, modifier = Modifier.fillMaxWidth()) { Text("시작 취소") }
+                }
                 Text("1. 어떤 영상 소리를 들을까요?", style = MaterialTheme.typography.titleMedium)
                 listOf(MediaCaptionScope.YOUTUBE to "YouTube만", MediaCaptionScope.ALL_MEDIA to "캡처가 허용된 미디어·게임").forEach { (value, label) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -119,8 +125,7 @@ internal fun MediaCaptionScreen(model: AppModel, start: (MediaCaptionOptions) ->
                             LinearProgressIndicator(progress = { (mt.received.toDouble() / mt.total).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                             Note("${mt.received / 1_000_000} / ${mt.total / 1_000_000} MB")
                         } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        ToolOutlinedButton(onClick = { pendingStart = null; model.attempt { model.service().cancelMediaTranslationPreparation() } },
-                            enabled = mt.phase != LocalMediaTranslationPhase.CANCELLING) { Text("시작 취소") }
+
                     }
                 }
                 if (capture.phase == MediaCapturePhase.ERROR) Note("최근 종료: " + capture.detail + " · 수집 " + capture.samples + "샘플 · 확정 문장 " + s.mediaFinalCount + "개")
