@@ -158,11 +158,13 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             if (!state.pollRecent) { state = state.copy(pollSeen = true, pollRecent = true); changed() }
         }
     }
+    fun hasOutstanding(): Boolean = tasks.values.any { it.state == "running" }
     fun tokenForUser(): String = token
     fun start() {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (socket != null) return
         val config = settings.read()
+        check(AiModelSelection.legacy(config)) { "현재 모델은 직접 연결 방식입니다" }
         token = config.optString("localAgentToken").ifBlank {
             Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.NO_WRAP or Base64.URL_SAFE).also {
                 config.put("localAgentToken", it); settings.save(config)
