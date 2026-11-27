@@ -4,9 +4,9 @@ package com.openrayneo.android
 import org.json.JSONObject
 
 /** Stock 1.0.4.12 / 1.0.6.11 PbMsg descriptors and the 0x30 capability
- * handler. The actual response type and complete request JSON remain
- * unverified on the user's firmware. Do not derive a session ACK from a
- * matching transport sequence or a successful socket write. */
+ * handler and the official app's 0x31 GLASS_CAPABILITY enum (AOT
+ * 0x1c52d08/0x53448). Complete request JSON and live acceptance remain
+ * unverified. Never treat a capability response as a session ACK. */
 internal data class NativeNavigationCapabilities(
     val phoneGuidance: Boolean, val amap: Boolean, val guidance: Boolean, val maps: Boolean
 ) {
@@ -18,8 +18,8 @@ internal data class NativeNavigationCapabilities(
 
     companion object {
         fun parse(message: ProtocolCodec.Message): NativeNavigationCapabilities? {
-            if (message.version != 1 || message.type in setOf(1, 2, 3, 0x30) ||
-                message.type < 0 || message.audio?.isNotEmpty() == true) return null
+            if (message.version != 1 || message.type != 0x31 ||
+                message.audio?.isNotEmpty() == true) return null
             val text = message.json ?: return null
             if (text.length !in 1..8192) return null
             val body = runCatching { JSONObject(text) }.getOrNull() ?: return null

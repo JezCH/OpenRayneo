@@ -94,8 +94,19 @@ internal class BridgeService : Service() {
         when (message.type) {
             1 -> noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 시작 계약 미완성")
             3 -> noteNativeMenu(0x20, "종료 요청 수신 ($source)")
+            0x31 -> Unit // GLASS_CAPABILITY: the only profile response type.
+            else -> return
         }
-        val actual = NativeNavigationCapabilities.parse(message) ?: return
+        if (message.type != 0x31) return
+        val actual = NativeNavigationCapabilities.parse(message) ?: run {
+            // A malformed capability reply is not successful negotiation.
+            if (pendingNavProbe != null && pendingNavProbe == message.sequence) {
+                pendingNavProbe = null
+                nativeNavCapabilityStatus = "순정 내비 기능 회신 · 지원 범위 외 형식"
+                notifyUI()
+            }
+            return
+        }
         val expected = pendingNavProbe
         if (expected != null && expected == message.sequence) {
             pendingNavProbe = null
