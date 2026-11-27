@@ -463,7 +463,16 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         ContentCard {
-            Text("연결 끊김 원인", style = MaterialTheme.typography.titleMedium)
+            Text("현재 연결 상태", style = MaterialTheme.typography.titleLarge)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.titleMedium)
+            Note(if (s.available) "통신: " + s.glasses.link.detail else "서비스 상태 미확인")
+            if (s.available) {
+                Note("표시 세션: " + s.glasses.displayDescription)
+                Note("음성: " + s.glasses.audio.detail)
+            }
+            Note("통신·기기 응답·실제 안경 표시와 음성 수신은 별개입니다.")
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("최근 연결 종료 및 복구", style = MaterialTheme.typography.titleMedium)
             OfficialAppConnectionControls()
             val health = if (s.available) runCatching { model.service().connectionHealth }.getOrDefault("진단 준비 중") else "진단 준비 중"
             Note(health)
@@ -506,19 +515,18 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
         }
         ContentCard {
             Text(model.deviceName, style = MaterialTheme.typography.titleLarge)
-            Note(s.glasses.link.detail)
-            Note(s.glasses.displayDescription)
-            Note(s.glasses.audio.detail)
+            Text("기능 시험 및 복구", style = MaterialTheme.typography.titleMedium)
+            Note("시험 명령을 보내도 실제 안경 출력은 직접 확인해야 합니다.")
             ToolOutlinedButton(
                 onClick = { model.attempt { model.service().connection.sendTestNotification() } },
-                enabled = ready,
+                enabled = s.available && ready && !s.glasses.disconnecting,
             ) {
                 Text("테스트 알림 보내기")
             }
             ToolOutlinedButton(
                 onClick = { model.attempt { model.service().retryAudio() } },
                 enabled =
-                    s.glasses.session?.phase in
+                    s.available && !s.glasses.disconnecting && s.glasses.session?.phase in
                         setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY),
             ) {
                 Text("오디오 디코딩 재시작 (페이지 유지)")

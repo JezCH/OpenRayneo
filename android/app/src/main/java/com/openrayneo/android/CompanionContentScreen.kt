@@ -3,6 +3,7 @@
 package com.openrayneo.android
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -15,11 +16,12 @@ import org.json.JSONObject
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 
 @Composable
 internal fun CompanionContentScreen(model: AppModel) {
     val state = model.state.content
-    val connected = model.state.glasses.link.phase == LinkPhase.FULL
+    val connected = model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
     val editable = connected && !state.busy
     var page by rememberSaveable { mutableIntStateOf(0) }
     var title by rememberSaveable { mutableStateOf("") }
@@ -27,18 +29,26 @@ internal fun CompanionContentScreen(model: AppModel) {
     var start by rememberSaveable { mutableStateOf("") }
     var end by rememberSaveable { mutableStateOf("") }
     var cityQuery by rememberSaveable { mutableStateOf("") }
-    val formatter = remember { DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm") }
+    val formatter = remember { DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withResolverStyle(ResolverStyle.STRICT) }
+    val scheduleStart = remember(start) { runCatching { LocalDateTime.parse(start, formatter) }.getOrNull() }
+    val scheduleEnd = remember(end) { runCatching { LocalDateTime.parse(end, formatter) }.getOrNull() }
+    val validSchedule = scheduleStart != null && scheduleEnd != null && scheduleEnd.isAfter(scheduleStart)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("홈 화면 및 콘텐츠", style = MaterialTheme.typography.headlineSmall)
-        ToolButton(onClick = { model.attempt { model.service().content.refresh() } }, enabled = editable) { Text("안경 콘텐츠 읽기") }
-        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Note(if (connected) state.notice else "먼저 안경을 연결하세요")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ContentCard {
+            Text("안경 콘텐츠 상태", style = MaterialTheme.typography.titleLarge)
+            Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.labelLarge)
+            Note(if (connected) state.notice else "안경 연결 후 현재 콘텐츠를 확인하세요. 아래 데이터는 현재 기기 값으로 확인되지 않았습니다.")
+            ToolButton(onClick = { model.attempt { model.service().content.refresh() } }, enabled = editable, modifier = Modifier.fillMaxWidth()) { Text(if (state.busy) "기기 응답 대기 중…" else "안경 콘텐츠 다시 읽기") }
+            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("레이아웃", "할 일", "일정", "날씨").forEachIndexed { i, name -> FilterChip(page == i, { page = i; editId = null; title = "" }, label = { Text(name) }) }
         }
         when (page) {
             0 -> DashboardLayoutEditor(model)
             1 -> {
+                SectionLabel("할 일 목록 · ${state.todos.size}개")
+                if (state.todos.isEmpty()) Note("표시할 할 일이 없습니다. 연결 후 콘텐츠를 읽거나 새 할 일을 추가하세요.")
                 state.todos.forEach { row ->
                     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
                         Text(row.optString("title"), style = MaterialTheme.typography.titleMedium)
@@ -54,6 +64,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
+                SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
                 OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("할 일 제목") })
                 ToolButton(onClick = { model.attempt { model.service().content.run {
                     model.service().content.todo(if (editId == null) "add" else "update", JSONObject().put("title", title.trim()).apply { editId?.let { put("event_id", it) } })
@@ -61,6 +72,8 @@ internal fun CompanionContentScreen(model: AppModel) {
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
             }
             2 -> {
+                SectionLabel("일정 목록 · ${state.schedules.size}개")
+                if (state.schedules.isEmpty()) Note("표시할 일정이 없습니다. 연결 후 콘텐츠를 읽거나 새 일정을 추가하세요.")
                 state.schedules.forEach { row ->
                     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
                         Text(row.optString("title"), style = MaterialTheme.typography.titleMedium)
@@ -77,15 +90,20 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
+                SectionLabel(if (editId == null) "새 일정" else "일정 편집")
                 OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("일정 제목") })
-                OutlinedTextField(start, { start = it }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") })
-                OutlinedTextField(end, { end = it }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") })
+                OutlinedTextField(start, { start = it }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, isError = start.isNotBlank() && scheduleStart == null)
+                OutlinedTextField(end, { end = it }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))
+                if (start.isNotBlank() || end.isNotBlank()) {
+                    if (scheduleStart == null || scheduleEnd == null) Note("날짜와 시간을 yyyy-MM-dd HH:mm 형식으로 정확히 입력하세요.")
+                    else if (!validSchedule) Note("종료 시간은 시작 시간보다 뒤여야 합니다.")
+                }
                 ToolButton(onClick = { model.attempt {
                     val args = JSONObject().put("title", title.trim()).put("start_time", LocalDateTime.parse(start, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
                         .put("end_time", LocalDateTime.parse(end, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
                     editId?.let { args.put("event_id", it) }
                     model.service().content.run { model.service().content.schedule(if (editId == null) "add" else "update", args) }
-                } }, enabled = editable && title.isNotBlank() && start.isNotBlank() && end.isNotBlank()) { Text(if (editId == null) "안경에 추가" else "일정 저장") }
+                } }, enabled = editable && title.isNotBlank() && validSchedule) { Text(if (editId == null) "안경에 추가" else "일정 저장") }
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
             }
             3 -> {
@@ -121,7 +139,7 @@ private fun DashboardLayoutEditor(model: AppModel) {
     var mode by remember(config.toString()) { mutableIntStateOf(config.optInt("simple_mode")) }
     var widgets by remember(config.toString()) { mutableStateOf(config.optJSONArray("widgets").ints()) }
     val names = mapOf(1 to "날씨", 2 to "할 일", 3 to "일정", 4 to "주식", 5 to "메일", 6 to "세계 시계")
-    val enabled = !state.busy && model.state.glasses.link.phase == LinkPhase.FULL
+    val enabled = !state.busy && model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("표준", "간결", "대각 분할").forEachIndexed { index, title -> FilterChip(mode == index, { mode = index }, label = { Text(title) }) }
     }
@@ -133,7 +151,7 @@ private fun DashboardLayoutEditor(model: AppModel) {
             TextButton(onClick = { widgets = widgets.filter { it != id } }, enabled = widgets.size > 1) { Text("제거") }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf(1,2,3,6).filter { it !in widgets }.forEach { id ->
             TextButton(onClick = { widgets = widgets + id }, enabled = widgets.size < 5 && (id != 1 || state.weather != null)) { Text("추가: ${names[id]}") }
         }

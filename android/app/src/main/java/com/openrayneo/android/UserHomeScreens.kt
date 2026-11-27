@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.openrayneo.android
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -11,12 +12,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String) -> Unit, connect: () -> Unit) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val c = s.conversation
     val otherMode = s.translationActive || s.captionActive || s.mediaCaption.busy || s.mediaTranslation.preparing || s.offlinePreparing || s.speechPlaying || s.wakeActive || s.wakePending ||
         s.nativeWakeAvailable || s.teleprompter.active != null || s.teleprompter.busy || s.migration.busy ||
@@ -26,6 +29,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     var hintRequested by remember { mutableStateOf(false) }
     var resume by remember { mutableStateOf(false) }
     val activity = when {
+        !s.available -> "서비스 상태 확인 중"
         s.alwaysOnResumePending || c.stopping || c.running -> recording(s).label
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
@@ -34,31 +38,17 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
         s.teleprompter.busy -> "프롬프터 준비 중"
+        s.glasses.navigation.enabled -> "길 안내 중"
+        s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
         s.migration.busy -> "기록 이전 중"
         s.mediaTranslation.preparing || s.offlinePreparing -> "번역 엔진 준비 중"
         s.speechPlaying -> "음성 재생 중"
-        c.summarizing -> "기록 요약 중"
         s.nativeWakeAvailable -> "안경 기본 호출 처리 중"
-        s.glasses.navigation.enabled -> "길 안내 중"
-        s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
+        c.summarizing -> "기록 요약 중"
+        otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            ContentCard {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
-                        if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
-                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
-                    }
-                    TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
-                }
-                if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
-            }
-        }
         item {
             ContentCard {
                 Text("현재 활동", style = MaterialTheme.typography.labelLarge)
@@ -74,18 +64,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 })
                 if (!c.modelReady) Note("기록 엔진 초기화 대기")
                 if (model.config.optBoolean("ambientWakeEnabled") && c.running && !c.reprocessing && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text("AI 연결", style = MaterialTheme.typography.labelLarge)
-                        Note(when {
-                            !model.aiConfigured -> "연결하지 않음"
-                            !model.aiReady -> "연결 기능 켜짐 · 응답 수신 대기"
-                            else -> "요청 수신 확인됨"
-                        })
-                    }
-                    TextButton(onClick = { open("agent-api") }) { Text("관리") }
-                }
-                if (c.running || s.alwaysOnResumePending) {
+                if (c.running || c.stopping || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
                         modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "마무리 중…" else if (c.reprocessing) "재전사 중지" else "기록 중지") }
                 } else if (s.wakeActive || s.wakePending) {
@@ -121,6 +100,30 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (c.error != null) Text(c.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("AI 연결", style = MaterialTheme.typography.labelLarge)
+                        Note(selectedAiStatus(model).label)
+                        if (!model.aiLegacy && model.aiConfigured) Note(model.aiStatus)
+                    }
+                    TextButton(onClick = { open(if (model.aiLegacy) "agent-api" else "model") }) { Text("관리") }
+                }
+            }
+        }
+        item {
+            ContentCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
+                        Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
+                        if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
+                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
+                    }
+                    TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
+                }
+                if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
             }
         }
         if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {
@@ -206,23 +209,69 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         dismissButton = { TextButton(onClick = { hintRequested = false }) { Text("취소") } })
 }
 
+private data class ToolDestination(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val open: () -> Unit,
+)
+
+/** Group related destinations without giving every navigation row its own card. */
+@Composable
+private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SectionLabel(title)
+        OutlinedCard(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            destinations.forEachIndexed { index, destination ->
+                if (index > 0) HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                ListItem(
+                    headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
+                    supportingContent = { Text(destination.subtitle) },
+                    leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
+                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { SectionLabel("자막 및 번역") }
-        item { FeatureLink("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") } }
-        item { FeatureLink("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") } }
-        item { FeatureLink("주변 대화 번역", "한국어 ↔ 영어 · 내장 모델 · 인터넷 불필요", Icons.Outlined.Translate) { open("translation") } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("AI 및 기록") }
-        item { FeatureLink("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") } }
-        item { FeatureLink("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("생활 및 업무") }
-        item { FeatureLink("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") } }
-        item { FeatureLink("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") } }
-        item { FeatureLink("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") } }
-        item { FeatureLink("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("안경 확인") }
-        item { FeatureLink("안경 화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            ToolDestinationGroup("자막 및 번역", listOf(
+                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") },
+                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") },
+                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate) { open("translation") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("AI 및 기록", listOf(
+                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") },
+                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) },
+            ))
+        }
+        item {
+            ToolDestinationGroup("생활 및 업무", listOf(
+                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") },
+                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") },
+                ToolDestination("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") },
+                ToolDestination("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("안경 확인", listOf(
+                ToolDestination("안경 화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") },
+            ))
+        }
         item { Note("안경 화면과 마이크를 공유하는 기능은 동시에 사용하지 못할 수 있습니다. 실행 중인 기능은 홈에서 중지하세요.") }
     }
 }
@@ -241,7 +290,7 @@ internal fun TranslationToolScreen(model: AppModel) {
     var translationModel by remember { mutableStateOf(model.config.optString("offlineTranslationModel")) }
     var localKey by remember { mutableStateOf(model.config.optString("offlineTranslationKey")) }
     val prepared = s.offlineReady && address.trim() == model.config.optString("offlineTranslationUrl") && translationModel.trim() == model.config.optString("offlineTranslationModel") && localKey.trim() == model.config.optString("offlineTranslationKey")
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val problem = if (s.translationActive) null else if (!s.available) "연결 서비스 준비 중" else
         if (local && !prepared) "저장된 로컬 번역 모델 연결을 먼저 확인하세요" else
             runCatching { model.service().checkTranslation(local, bundled, requirePrepared = false) }.exceptionOrNull()?.let { it.message ?: "번역 준비 상태 확인 실패" }
@@ -258,8 +307,10 @@ internal fun TranslationToolScreen(model: AppModel) {
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
+            Text(if (s.translationActive) "현재 통역 세션" else "한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.translationStatus)
+            if (s.translationActive) Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
             if (!s.translationActive) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(bundled, { mode = "bundled" }, enabled = !mt.preparing); Text("앱 내장 한영 통역")
@@ -298,10 +349,10 @@ internal fun TranslationToolScreen(model: AppModel) {
             if (s.wakeActive || s.wakePending) Note("한국어 호출을 먼저 종료하세요.")
             else if (s.mediaCaption.busy) Note("미디어 자막을 먼저 종료하세요.")
             else if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
-            else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
+            else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }, modifier = Modifier.fillMaxWidth()) { Text("번역 종료") }
             else {
                 problem?.let { Note("시작할 수 없는 이유: " + it) }
-                ToolButton(onClick = { confirm = true }, enabled = problem == null && !pendingStart && !mt.preparing) { Text(if (pendingStart) "통역 준비 중…" else "번역 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = problem == null && !pendingStart && !mt.preparing, modifier = Modifier.fillMaxWidth()) { Text(if (pendingStart) "통역 준비 중…" else "번역 시작") }
             }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
@@ -346,22 +397,57 @@ internal fun ConnectionReleaseControls(model: AppModel) {
 @Composable
 internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String) -> Unit) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val connection = deviceConnectionStatus(s)
+    val battery = if (linked && s.deviceSettings.loaded && s.deviceSettings.readback == DeviceReadback.VERIFIED)
+        s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
+    val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(
+        LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING,
+    )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { ContentCard {
-            GlassesArtwork(Modifier.fillMaxWidth().height(90.dp), MaterialTheme.colorScheme.primary)
-            Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-            Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
-            val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
-            ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
-        } }
-        item { FeatureLink("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") } }
-        item { FeatureLink("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") } }
-        item { FeatureLink("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") } }
-        item { FeatureLink("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
-        item { SectionLabel("고급 및 문제 해결") }
-        item { FeatureLink("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune) { open("diagnostics") } }
-        item { FeatureLink("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility) { open("korean-glyphs") } }
+        item {
+            ContentCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
+                        Text(connection.label, style = MaterialTheme.typography.titleMedium,
+                            color = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface)
+                    }
+                    GlassesArtwork(Modifier.width(92.dp).height(64.dp), MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
+                Note(when {
+                    !s.available -> "서비스 상태 확인 대기"
+                    linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
+                    else -> s.glasses.link.detail
+                })
+                Text(battery?.let { "보고된 배터리 ${it}%" } ?: "배터리 미확인", style = MaterialTheme.typography.titleMedium)
+                if (battery != null) {
+                    LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+                if (linked) Note("표시 세션: " + s.glasses.displayDescription)
+                if (linked) Note("통신 및 기기 응답 확인은 실제 안경 표시·음성 수신 성공과 별개입니다.")
+                ToolButton(onClick = { if (managing) open("display-controls") else connect() },
+                    modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
+                if (s.available) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
+            }
+        }
+        item {
+            ToolDestinationGroup("안경 사용 및 설정", listOf(
+                ToolDestination("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") },
+                ToolDestination("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") },
+                ToolDestination("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") },
+                ToolDestination("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("고급 및 문제 해결", listOf(
+                ToolDestination("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune) { open("diagnostics") },
+                ToolDestination("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility) { open("korean-glyphs") },
+            ))
+        }
         item { ContentCard {
             Text("다른 앱과 연결 전환", style = MaterialTheme.typography.titleMedium)
             ConnectionReleaseControls(model)
@@ -375,19 +461,22 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
     val context = model.getApplication<android.app.Application>()
     val config = model.config
     val localReady = SpeechRounds.model(config) != null && SpeechRounds.ready(context, config)
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
         s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.glasses.navigation.enabled ||
         s.teleprompter.active != null || s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("주변 대화 자막", style = MaterialTheme.typography.headlineSmall)
-            Note("유튜브나 이어폰의 내부 재생음을 자막으로 보려면 아래 미디어 자막을 사용하세요.")
-            ToolOutlinedButton(onClick = mediaCaptions) { Text("유튜브·미디어 자막 열기") }
+            Text(if (s.captionActive) "현재 주변 자막 세션" else "안경 마이크 자막 시작", style = MaterialTheme.typography.headlineSmall)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.captionStatus)
             Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
-            if (s.captionActive) ToolButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("자막 종료") }
+            if (s.captionActive) {
+                ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("주변 자막 종료") }
+                Note("음성 수신: " + s.glasses.audio.detail)
+                Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            }
             else {
                 if (!linked) Note("먼저 안경을 연결하세요.")
                 if (!localReady) {
@@ -395,10 +484,15 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
                     ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
                 }
                 if (busy) Note("다른 기록·안경 화면·AI 작업을 먼저 종료하세요.")
-                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy) { Text("자막 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy, modifier = Modifier.fillMaxWidth()) { Text("자막 시작") }
             }
         } }
         item { GlassesOutputPreview(s.glasses) }
+        item { ContentCard {
+            Text("휴대폰 재생음 자막", style = MaterialTheme.typography.titleMedium)
+            Note("유튜브나 이어폰의 내부 재생음을 자막으로 보려면 미디어 자막을 사용하세요.")
+            ToolOutlinedButton(onClick = mediaCaptions, modifier = Modifier.fillMaxWidth()) { Text("유튜브·미디어 자막 열기") }
+        } }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("실시간 자막을 시작할까요?") },

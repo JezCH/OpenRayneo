@@ -113,12 +113,12 @@ internal fun AppUpdateScreen(model: AppModel) {
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("검증 앱 업데이트", style = MaterialTheme.typography.headlineSmall)
-        Text("현재 버전: " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-        androidx.compose.foundation.text.selection.SelectionContainer {
-            Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)
+        ContentCard {
+            Text("현재 설치 버전", style = MaterialTheme.typography.labelLarge)
+            Text(BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")", style = MaterialTheme.typography.headlineSmall)
+            Note("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
         }
-        Text("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
+        SectionLabel("업데이트 확인")
         Note("자동 확인 대상은 공개 GitHub Releases의 검증 채널입니다. Actions에만 생성된 APK는 자동으로 검색하거나 설치할 수 없습니다.")
         TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml"))) }.onFailure { status = "빌드 목록을 열 수 없습니다" } }) { Text("별도 검증 빌드 목록 열기") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -128,25 +128,28 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         Text("최근 성공: " + updates.lastCheckedLabel())
         Text(updates.summary)
-        if (updates.error.isNotBlank()) Text(updates.error, style = MaterialTheme.typography.bodySmall)
+        if (updates.error.isNotBlank()) Text(updates.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         Button(onClick = {
             pendingInstall = null; status = ""
             updates.refresh(true)
         }, enabled = !busy && !updates.checking && AppUpdateInstall.sessionId == null) { Text("업데이트 확인") }
         if (updates.downloading) Note("화면을 나가도 앱이 실행되는 동안 다운로드를 계속합니다.")
         candidate?.let { item ->
-            Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleMedium)
-            Text(item.notes.ifBlank { "배포 변경사항 없음" })
+            SectionLabel("사용 가능한 배포")
+            ContentCard {
+            Text(item.name + " (" + item.code + ")", style = MaterialTheme.typography.titleLarge)
+            if (!currentCandidate) Note("최신 배포 확인 전에는 설치할 수 없습니다.")
             Text("전체 APK: " + (item.size / 1024 / 1024) + " MiB")
             item.delta?.let { patch -> Note("변경 패치: " + ((patch.size + 1048575) / 1048576) + " MiB · 기존 모델 재사용") }
             val cached = AppUpdate.hasDownloaded(app, item)
-            Button(onClick = {
+            if (!idle()) Note("현재 작업이 있어 설치할 수 없습니다. 아래 설치 차단 원인을 확인하세요. 다운로드만 가능할 수 있습니다.")
+            ToolButton(onClick = {
                 if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
                 else model.attempt {
                     pendingInstall = item
                     updates.startDownload(item)
                 }
-            }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) {
+            }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null, modifier = Modifier.fillMaxWidth()) {
                 Text(if (cached) "받아 둔 APK 검증 및 설치" else if (item.delta != null) "변경분 업데이트" else "다운로드 및 설치")
             }
             if (!cached) TextButton(onClick = { model.attempt { updates.startDownload(item) } },
@@ -157,10 +160,17 @@ internal fun AppUpdateScreen(model: AppModel) {
             }, enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) {
                 Text("전체 APK 다운로드 (복구용)")
             }
-            if (updates.downloadCandidate == item && updates.downloadProgress > 0 && updates.downloadTotal > 0)
-                LinearProgressIndicator(progress = { (updates.downloadProgress.toDouble() / updates.downloadTotal).toFloat().coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth())
+            if (updates.downloadCandidate == item && updates.downloading) {
+                if (updates.downloadTotal > 0) {
+                    LinearProgressIndicator(progress = { (updates.downloadProgress.toDouble() / updates.downloadTotal).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth())
+                    Note("수신 ${updates.downloadProgress / 1048576} / ${updates.downloadTotal / 1048576} MiB")
+                } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             if (cached) Note("이미 받은 설치 파일은 다시 다운로드하지 않고 검증 후 재사용합니다.")
+            SectionLabel("배포 변경사항")
+            Text(item.notes.ifBlank { "배포 변경사항 없음" })
+            }
         }
         if (updates.downloading) TextButton(onClick = { pendingInstall = null; updates.cancelDownload() }) { Text("다운로드 취소") }
         if (job != null) TextButton(onClick = { job?.cancel() }) { Text("설치 준비 취소") }
@@ -196,6 +206,10 @@ internal fun AppUpdateScreen(model: AppModel) {
         }
         if (status.isNotBlank()) Text(status)
         if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
+        SectionLabel("설치 인증서")
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)
+        }
         Text("자동 설치는 아직 활성화하지 않았습니다. Android 또는 Galaxy 보안 정책에서 설치 승인을 요청할 수 있습니다.",
             style = MaterialTheme.typography.bodySmall)
     }

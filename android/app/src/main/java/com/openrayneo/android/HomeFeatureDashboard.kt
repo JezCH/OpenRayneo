@@ -32,6 +32,7 @@ private fun FeatureStateRow(title: String, status: FeatureStatusPolicy.Status, a
     val phase = status.phase
     val color = when (phase) {
         FeatureStatusPolicy.Phase.ERROR -> MaterialTheme.colorScheme.error
+        FeatureStatusPolicy.Phase.BLOCKED, FeatureStatusPolicy.Phase.SETUP -> MaterialTheme.colorScheme.tertiary
         FeatureStatusPolicy.Phase.ACTIVE, FeatureStatusPolicy.Phase.READY -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }

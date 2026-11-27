@@ -2,6 +2,8 @@
 package com.openrayneo.android
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,7 +14,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, deviceSettings: () -> Unit) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val localReady = SpeechRounds.model(model.config) != null && SpeechRounds.ready(model.getApplication<android.app.Application>(), model.config)
     val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
         s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.teleprompter.active != null ||
@@ -42,13 +44,113 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     val continuous = model.config.optBoolean("ambientWakeEnabled")
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("호출 연결 진단", style = MaterialTheme.typography.titleMedium)
+            Text("현재 호출 상태", style = MaterialTheme.typography.titleLarge)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
+            Note(when {
+                !s.available -> "서비스 상태 미확인"
+                s.wakeActive -> "독립 한국어 호출 대기 중"
+                s.wakePending -> "독립 호출 질문 응답 대기 중"
+                s.alwaysOnResumePending -> "기록 자동 재개 대기"
+                s.nativeWakeAvailable -> "안경 기본 호출 처리 중"
+                s.conversation.running && continuous -> "기록 중 · 호출 감지 상태는 아래에서 확인"
+                else -> "호출 대기 세션 없음"
+            })
+            Note("기본 호출 이벤트: " + if (s.available && linked && s.nativeWakeObserved) "현재 연결에서 수신 확인" else "미확인")
+            Note("안경 기본 호출과 앱 독립 한국어 호출은 별개입니다. 연결 시험 및 설정 동기화는 아래 진단 영역에 있습니다.")
+        } }
+        item { ContentCard {
+            Text("한국어 호출 (1회 시험)", style = MaterialTheme.typography.headlineSmall)
+            Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
+            Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
+            if (s.wakeActive) Note(s.captionStatus)
+            Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
+            Note("예: " + options.phrases.first() + ", 지금 몇 시야")
+
+            if (!s.wakeActive && !s.wakePending) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(keyword, { keyword = it })
+                    Text("경량 호출 모델로 먼저 감지 (시험)")
+                }
+                if (keyword) {
+                    Note("한국어 전용 약 9.3MB KWS로 대기하고 후보가 감지되면 기존 로컬 ASR로 호출어를 다시 확인합니다. 확인되지 않은 후보는 AI에 보내지 않습니다. 모델 출처: kairess/ko-kws-zipformer-tiny (Apache-2.0). 실제 감지율과 전력은 미검증입니다.")
+                    if (!keywordReady) ToolOutlinedButton(onClick = { kws.download(context.applicationContext) }, enabled = !kws.downloading) {
+                        Text(if (kws.downloading) "경량 모델 다운로드 ${(kws.progress * 100).toInt()}%" else "경량 호출 모델 내려받기")
+                    }
+                    kws.message?.let { Note(it) }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(allowAI, { allowAI = it })
+                    Text("인식된 질문을 연결된 AI로 보내기 허용 (작업 도구 없음)")
+                }
+                Note("기본은 로컬 명령만 실행합니다. AI를 허용하면 호출 후 인식한 한 문장이 설정된 AI로 전송될 수 있으며 이용량이나 비용이 발생할 수 있습니다. 화자 인증은 하지 않습니다.")
+                if (!linked) Note("먼저 안경을 연결하세요.")
+                if (!localReady) ToolOutlinedButton(onClick = voiceSettings) { Text("로컬 음성 모델 설정") }
+                if (dirty) Note("아래 호출어 설정에서 변경 내용을 먼저 저장하세요.")
+                if (busy) Note("진행 중인 다른 작업을 먼저 종료하세요.")
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy && !dirty && (!keyword || keywordReady), modifier = Modifier.fillMaxWidth()) { Text("호출 대기 시작") }
+            } else ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }, modifier = Modifier.fillMaxWidth()) { Text("호출 중지") }
+        } }
+        item { ContentCard {
+            Text("종일 및 실시간 한국어 호출", style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(continuous, { enabled -> if (enabled) confirmAmbient = true else model.saveConfig(mapOf("ambientWakeEnabled" to "false")) }, enabled = model.recommendedEditable)
+                Text("기록 중 호출어 감지 및 AI 질문 허용")
+            }
+            if (continuous) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(model.config.optBoolean("ambientWakeContext"), { enabled -> model.saveConfig(mapOf("ambientWakeContext" to enabled.toString())) })
+                    Text("명시 호출 질문의 짧은 대화 맥락 사용")
+                }
+                Note("같은 기록·식별된 화자(또는 실시간 본인 채널)의 최근 질문/답변 최대 3개를 2분 동안 다음 명시 호출에 함께 보냅니다. 화자 미확인 시 맥락을 보내지 않습니다. 작업 도구 없음. 호출을 다시 말해야 합니다.")
+            }
+            Note("종일 기록은 안경의 오디오 전송 및 전사 지연에 의존합니다. 빠른 실시간 힌트는 화면을 유지하는 듀얼 마이크 경로를 사용합니다. 두 경로 모두 전사가 끝난 후 호출을 검사하며 별도 120초 제한은 없습니다. 화자 인증 및 작업 도구는 지원하지 않습니다.")
+            val capturing = s.conversation.running && (s.conversation.source == ConversationSource.ALWAYS_ON || (s.conversation.source == ConversationSource.REALTIME && fast))
+            Note(if (continuous && capturing) "최근 호출 상태: " + s.ambientWakeStatus else "종일 또는 빠른 실시간 기록을 시작해야 호출을 감지합니다.")
+            if (continuous && capturing) TextButton(onClick = { model.attempt { model.service().resetAmbientWake() } }) { Text("AI 질문 취소·대화 맥락 초기화") }
+            if (s.alwaysOnResumePending) {
+                Note("같은 안경의 자동 재연결 및 이전 기록 저장을 기다리는 중입니다.")
+                ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
+            } else if (!s.conversation.running) {
+                ToolButton(onClick = { resumeAfterLink = false; startContinuous = ConversationSource.ALWAYS_ON }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
+                ToolOutlinedButton(onClick = { startContinuous = ConversationSource.REALTIME }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("빠른 실시간 호출 시작") }
+            } else if (capturing) ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text("기록 및 호출 중지") }
+        } }
+        item { ContentCard {
+            Text("호출어 및 대기 설정", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(phrases, { phrases = it.take(80) }, Modifier.fillMaxWidth(), enabled = editable,
+                label = { Text("나만의 호출어") }, singleLine = true, isError = parsed.isFailure,
+                supportingText = { Text(parsed.exceptionOrNull()?.message ?: "한글 2~12자, 최대 3개 · 쉼표로 구분") })
+            Text("호출 대기 시간")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KoreanWakeOptions.listenChoices.forEach { n ->
+                    FilterChip(selected = listen == n, onClick = { listen = n }, label = { Text(n.toString() + "초") }, enabled = editable)
+                }
+            }
+            Text("호출 후 질문 대기 시간")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KoreanWakeOptions.followupChoices.forEach { n ->
+                    FilterChip(selected = followup == n, onClick = { followup = n }, label = { Text(n.toString() + "초") }, enabled = editable)
+                }
+            }
+            if (savedOptions.isFailure) Note("기존 호출 설정을 읽을 수 없습니다. 올바른 설정을 다시 저장하세요.")
+            if (dirty) Note("호출을 시작하기 전에 변경 내용을 저장하세요.")
+            if (!editable) Note("호출을 중지한 후 변경할 수 있습니다.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ToolButton(onClick = {
+                    val value = parsed.getOrNull() ?: return@ToolButton
+                    model.saveConfig(mapOf("wakePhrases" to value.phrases.joinToString(", "), "wakeSeconds" to listen.toString(), "wakeFollowSeconds" to followup.toString()))
+                }, enabled = editable && parsed.isSuccess && dirty) { Text("설정 저장") }
+                TextButton(onClick = { phrases = KoreanWakeOptions.DEFAULT_PHRASES; listen = 120; followup = 12 }, enabled = editable) { Text("기본값 복원") }
+            }
+        } }
+        item { ContentCard {
+            Text("안경 기본 호출 · 연결 진단", style = MaterialTheme.typography.titleMedium)
             val firmware = s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")
             val mic = s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")
             fun flag(value: Boolean?) = when (value) { true -> "켜짐"; false -> "꺼짐"; null -> "기기 보고 없음" }
             Note("안경 연결: " + if (linked) "BLE 인증·SPP 연결" else s.glasses.link.detail)
             Note("실제 기기 응답: " + s.deviceSettings.readback.label)
-            Note("현재 연결의 기본 호출 이벤트: " + if (s.nativeWakeObserved) "수신 확인" else "미수신")
+            Note("현재 연결의 기본 호출 이벤트: " + if (!s.available || !linked) "미확인" else if (s.nativeWakeObserved) "수신 확인" else "미수신")
             Note("안경 마이크: " + flag(mic))
             Note("펌웨어 AI 활성화: " + flag(firmware?.deviceFlag("enabled")))
             Note("호스트 상태 동기화: " + s.hostVisibilityStatus)
@@ -83,89 +185,6 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             ToolOutlinedButton(onClick = deviceSettings) { Text("안경 마이크·기본 호출 설정") }
             if (!model.config.optBoolean("nativeAutoAnswer")) ToolOutlinedButton(onClick = { confirmNative = true }, enabled = model.recommendedEditable) { Text("앱 기본 호출 자동 응답 켜기") }
             if (!speechReady) ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
-        } }
-        item { ContentCard {
-            Text("종일 및 실시간 한국어 호출", style = MaterialTheme.typography.headlineSmall)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(continuous, { enabled -> if (enabled) confirmAmbient = true else model.saveConfig(mapOf("ambientWakeEnabled" to "false")) }, enabled = model.recommendedEditable)
-                Text("기록 중 호출어 감지 및 AI 질문 허용")
-            }
-            if (continuous) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(model.config.optBoolean("ambientWakeContext"), { enabled -> model.saveConfig(mapOf("ambientWakeContext" to enabled.toString())) })
-                    Text("명시 호출 질문의 짧은 대화 맥락 사용")
-                }
-                Note("같은 기록·식별된 화자(또는 실시간 본인 채널)의 최근 질문/답변 최대 3개를 2분 동안 다음 명시 호출에 함께 보냅니다. 화자 미확인 시 맥락을 보내지 않습니다. 작업 도구 없음. 호출을 다시 말해야 합니다.")
-            }
-            Note("종일 기록은 안경의 오디오 전송 및 전사 지연에 의존합니다. 빠른 실시간 힌트는 화면을 유지하는 듀얼 마이크 경로를 사용합니다. 두 경로 모두 전사가 끝난 후 호출을 검사하며 별도 120초 제한은 없습니다. 화자 인증 및 작업 도구는 지원하지 않습니다.")
-            val capturing = s.conversation.running && (s.conversation.source == ConversationSource.ALWAYS_ON || (s.conversation.source == ConversationSource.REALTIME && fast))
-            Note(if (continuous && capturing) "최근 호출 상태: " + s.ambientWakeStatus else "종일 또는 빠른 실시간 기록을 시작해야 호출을 감지합니다.")
-            if (continuous && capturing) TextButton(onClick = { model.attempt { model.service().resetAmbientWake() } }) { Text("AI 질문 취소·대화 맥락 초기화") }
-            if (s.alwaysOnResumePending) {
-                Note("같은 안경의 자동 재연결 및 이전 기록 저장을 기다리는 중입니다.")
-                ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
-            } else if (!s.conversation.running) {
-                ToolButton(onClick = { resumeAfterLink = false; startContinuous = ConversationSource.ALWAYS_ON }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("종일 기록 및 호출 시작") }
-                ToolOutlinedButton(onClick = { startContinuous = ConversationSource.REALTIME }, enabled = continuous && linked && speechReady && s.conversation.modelReady && !busy && !dirty) { Text("빠른 실시간 호출 시작") }
-            } else if (capturing) ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text("기록 및 호출 중지") }
-        } }
-        item { ContentCard {
-            Text("한국어 호출 (1회 시험)", style = MaterialTheme.typography.headlineSmall)
-            Note(if (s.wakeActive) "호출 대기 중" else if (s.wakePending) "질문 응답 대기 중" else s.wakeResult)
-            Note("안경 마이크와 로컬 한국어 음성 인식을 사용합니다. 안경의 내장 깨우기 모델은 바꾸지 않습니다. 한 명령 처리 후 종료합니다.")
-            if (s.wakeActive) Note(s.captionStatus)
-            Note("현재 호출어: " + options.label + " · " + options.listenSeconds + "초 대기 / 후속 질문 " + options.followupSeconds + "초")
-            Note("예: " + options.phrases.first() + ", 지금 몇 시야")
-
-            if (!s.wakeActive && !s.wakePending) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(keyword, { keyword = it })
-                    Text("경량 호출 모델로 먼저 감지 (시험)")
-                }
-                if (keyword) {
-                    Note("한국어 전용 약 9.3MB KWS로 대기하고 후보가 감지되면 기존 로컬 ASR로 호출어를 다시 확인합니다. 확인되지 않은 후보는 AI에 보내지 않습니다. 모델 출처: kairess/ko-kws-zipformer-tiny (Apache-2.0). 실제 감지율과 전력은 미검증입니다.")
-                    if (!keywordReady) ToolOutlinedButton(onClick = { kws.download(context.applicationContext) }, enabled = !kws.downloading) {
-                        Text(if (kws.downloading) "경량 모델 다운로드 ${(kws.progress * 100).toInt()}%" else "경량 호출 모델 내려받기")
-                    }
-                    kws.message?.let { Note(it) }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(allowAI, { allowAI = it })
-                    Text("인식된 질문을 연결된 AI로 보내기 허용 (작업 도구 없음)")
-                }
-                Note("기본은 로컬 명령만 실행합니다. AI를 허용하면 호출 후 인식한 한 문장이 DSH 모델로 전송되며 이용량/비용이 발생할 수 있습니다. 화자 인증은 하지 않습니다.")
-                if (!linked) Note("먼저 안경을 연결하세요.")
-                if (!localReady) ToolOutlinedButton(onClick = voiceSettings) { Text("로컬 음성 모델 설정") }
-                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy && !dirty && (!keyword || keywordReady)) { Text("호출 대기 시작") }
-            } else ToolButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("호출 중지") }
-        } }
-        item { ContentCard {
-            Text("호출어 및 대기 설정", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(phrases, { phrases = it.take(80) }, Modifier.fillMaxWidth(), enabled = editable,
-                label = { Text("나만의 호출어") }, singleLine = true, isError = parsed.isFailure,
-                supportingText = { Text(parsed.exceptionOrNull()?.message ?: "한글 2~12자, 최대 3개 · 쉼표로 구분") })
-            Text("호출 대기 시간")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                KoreanWakeOptions.listenChoices.forEach { n ->
-                    FilterChip(selected = listen == n, onClick = { listen = n }, label = { Text(n.toString() + "초") }, enabled = editable)
-                }
-            }
-            Text("호출 후 질문 대기 시간")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                KoreanWakeOptions.followupChoices.forEach { n ->
-                    FilterChip(selected = followup == n, onClick = { followup = n }, label = { Text(n.toString() + "초") }, enabled = editable)
-                }
-            }
-            if (savedOptions.isFailure) Note("기존 호출 설정을 읽을 수 없습니다. 올바른 설정을 다시 저장하세요.")
-            if (dirty) Note("호출을 시작하기 전에 변경 내용을 저장하세요.")
-            if (!editable) Note("호출을 중지한 후 변경할 수 있습니다.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ToolButton(onClick = {
-                    val value = parsed.getOrNull() ?: return@ToolButton
-                    model.saveConfig(mapOf("wakePhrases" to value.phrases.joinToString(", "), "wakeSeconds" to listen.toString(), "wakeFollowSeconds" to followup.toString()))
-                }, enabled = editable && parsed.isSuccess && dirty) { Text("설정 저장") }
-                TextButton(onClick = { phrases = KoreanWakeOptions.DEFAULT_PHRASES; listen = 120; followup = 12 }, enabled = editable) { Text("기본값 복원") }
-            }
         } }
         item { GlassesOutputPreview(s.glasses) }
     }
@@ -218,7 +237,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
 @Composable
 internal fun KoreanGlyphScreen(model: AppModel) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val busy = s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null ||
         s.conversation.running || s.translationActive || s.nativeWakeAvailable || s.teleprompter.active != null || s.teleprompter.busy
     val samples = listOf("안녕하세요. 한국어 표시 테스트", "가나다라마바사아자차카타파하", "각 간 갇 갈 갉 값 갓 갔 강 갖 갗 같 갚 갛",
@@ -232,15 +251,18 @@ internal fun KoreanGlyphScreen(model: AppModel) {
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { ContentCard {
             Text("내장 폰트 확인", style = MaterialTheme.typography.titleMedium)
+            Note(deviceConnectionStatus(s).label)
+            if (!linked) Note("안경 연결이 완료되면 시험 문장을 보낼 수 있습니다.")
+            else if (busy) Note("다른 안경 표시 또는 기록 작업을 종료한 뒤 시험하세요.")
             Note("실제 안경에서 글자가 빠지거나 네모로 표시되는지 비교합니다. 전송 성공은 글리프 표시 성공을 뜻하지 않습니다. 펌웨어에는 쓰지 않습니다.")
             Row(verticalAlignment = Alignment.CenterVertically) { Switch(range, { range = it; page = 0 }); Text("한글 완성형 11,172자 페이지 검사") }
             Text(if (range) "U+%04X ~ U+%04X".format(start, minOf(start + count - 1, 0xD7A3)) else "대표 문장 ${page + 1}/${samples.size}")
             Text(sample, style = MaterialTheme.typography.titleLarge)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = { page-- }, enabled = page > 0) { Text("이전") }
                 TextButton(onClick = { page++ }, enabled = page < if (range) maxPage else samples.lastIndex) { Text("다음") }
-                ToolButton(onClick = { model.attempt { model.service().sendKoreanGlyphSample(sample) } }, enabled = linked && !busy) { Text("안경에 표시") }
             }
+            ToolButton(onClick = { model.attempt { model.service().sendKoreanGlyphSample(sample) } }, enabled = linked && !busy, modifier = Modifier.fillMaxWidth()) { Text("안경에 표시") }
             if (range) {
                 var jump by remember { mutableStateOf("") }
                 OutlinedTextField(jump, { jump = it.take(4) }, label = { Text("페이지 번호 (1–${maxPage+1})") }, singleLine = true)

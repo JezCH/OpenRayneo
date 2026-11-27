@@ -15,7 +15,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.openrayneo.android.SystemStatusPolicy.Phase
 import com.openrayneo.android.SystemStatusPolicy.Status
@@ -32,7 +31,7 @@ private fun SystemRow.priority() = when {
     else -> 4
 }
 private fun SystemRow.working() = status.phase in setOf(Phase.ACTIVE, Phase.BUSY)
-private fun connection(s: CompanionState) = when {
+internal fun deviceConnectionStatus(s: CompanionState) = when {
     !s.available -> status(Phase.UNKNOWN, "서비스 대기")
     s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting -> when (s.deviceSettings.readback) {
         DeviceReadback.VERIFIED -> status(Phase.READY, "기기 응답 확인")
@@ -45,8 +44,9 @@ internal fun recording(s: CompanionState) = if (!s.available) status(Phase.UNKNO
     SystemStatusPolicy.capture(running, stopping, reprocessing, liveTranscriptOnly, s.alwaysOnResumePending,
         s.audioLevels.coordinatorState().phase.name, mode == ConversationMode.ENROLL)
 }
-private fun receiver(s: CompanionState) = if (!s.available) status(Phase.UNKNOWN, "미확인")
-    else SystemStatusPolicy.receiver(s.agentServer.enabled, s.agentServer.pollRecent)
+internal fun selectedAiStatus(model: AppModel) = SystemStatusPolicy.selectedAi(
+    model.state.available, model.aiLegacy, model.aiConfigured, model.state.agentServer.pollRecent,
+)
 private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val s = model.state; val c = s.conversation; val cfg = model.config
     val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
@@ -79,7 +79,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
             add(SystemRow(g, title, if (!s.available && g != "유지관리" && title != "휴대폰 마이크") unknown else st,
                 if (!s.available && g != "유지관리" && title != "휴대폰 마이크") "서비스 상태 확인 대기" else detail, route, permit, s.available && needsAction))
         }
-        addRow("기기", "안경 연결", connection(s), if (linked) {
+        addRow("기기", "안경 연결", deviceConnectionStatus(s), if (linked) {
             val battery = if (s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
             "BLE·SPP 연결 · " + s.deviceSettings.readback.label + if (battery != null) " · 배터리 $battery%" else ""
         } else when {
@@ -120,7 +120,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("음성·기록", "기록·화자 엔진", if(c.modelReady) status(Phase.READY,"초기화 완료") else if(c.error != null) status(Phase.ERROR,"초기화 실패") else status(Phase.WAITING,"초기화 대기"), "실제 화자 식별 품질은 별도", "voice-profiles")
         addRow("음성·기록", "기록 요약", if(c.summarizing) status(Phase.ACTIVE,"요약 중") else off, "저장된 기록 처리", "records")
         addRow("음성·기록", "음성 출력", active(s.speechPlaying), "휴대폰 오디오 경로", "voice-settings")
-        addRow("AI·기억", "AI 연결", if(model.aiLegacy) receiver(s) else if(model.aiConfigured) status(Phase.READY,"설정됨") else status(Phase.BLOCKED,"설정 필요"), model.aiStatus, "model", model.aiConfigured, !ai)
+        addRow("AI·기억", "AI 연결", selectedAiStatus(model), model.aiStatus, "model", model.aiConfigured, !ai)
         addRow("AI·기억", "AI 질문·업무", active(s.phoneRunning || s.voiceAiPending), if(s.voiceAiPending) "안경 호출 질문 응답 대기" else "휴대폰 AI 처리", "ai")
         addRow("AI·기억", "안경 AI 자체 활성화", when (firmwareAI) {
             true -> status(Phase.READY,"기기 설정 켜짐"); false -> off; null -> unknown
@@ -211,17 +211,36 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         s.audioLevels.active -> "음성 수신 세션"
         else -> "기록 꺼짐"
     }
+    val link = deviceConnectionStatus(s)
+    val ai = selectedAiStatus(model)
+    val pending = s.approvals.size + s.agentReviews.size
     Surface(onClick = open, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(connection(s).label, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = statusColor(connection(s).phase), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(capture, Modifier.weight(1.35f), style = MaterialTheme.typography.labelMedium,
-                color = if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase),
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("AI " + receiver(s).label, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = statusColor(receiver(s).phase), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val pending = s.approvals.size + s.agentReviews.size
-            if (pending > 0) Text("승인 $pending", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusStripItem("안경", link.label, statusColor(link.phase), Modifier.weight(1f))
+                    StatusStripItem("기록·입력", capture,
+                        if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase),
+                        Modifier.weight(1.25f))
+                    StatusStripItem("AI", ai.label, statusColor(ai.phase), Modifier.weight(1f))
+                }
+                if (pending > 0) Text("승인 대기 ${pending}건", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary)
+            }
             Icon(Icons.Outlined.ChevronRight, "시스템 현황 열기")
         }
+    }
+}
+
+@Composable
+private fun StatusStripItem(title: String, value: String, color: Color, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.labelMedium, color = color)
     }
 }
 @Composable internal fun SystemStatusScreen(model: AppModel, phoneInput: String?, navigate: (Int)->Unit, open: (String)->Unit, connect: ()->Unit) {
@@ -259,7 +278,8 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
                     ToolOutlinedButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !s.conversation.stopping) { Text(if(s.conversation.reprocessing) "재전사 중지" else "기록 중지") }
                 if(s.mediaCaption.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().stopMediaCaption() } }, enabled = s.mediaCaption.phase != MediaCapturePhase.STOPPING) { Text("영상 자막 종료") }
                 if(s.wakeActive || s.wakePending) ToolOutlinedButton(onClick = { model.attempt { model.service().cancelKoreanWake() } }) { Text("호출 중지") }
-                else if(s.captionActive || s.translationActive && !s.mediaCaption.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("통역·자막 종료") }
+                if(s.captionActive) ToolOutlinedButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("주변 자막 종료") }
+                if(s.translationActive && !s.mediaCaption.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("통역 종료") }
                 if(s.speechPlaying) ToolOutlinedButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 출력 중지") }
             }
         }

@@ -14,23 +14,31 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun GlassesSettingsScreen(model: AppModel) {
     val snapshot = model.state.deviceSettings
-    val connected = model.state.glasses.link.phase == LinkPhase.FULL
+    val connected = model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
     val editable = connected && snapshot.loaded && !snapshot.busy
     val status = snapshot.status
     val settings = snapshot.settings
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text("안경 설정", style = MaterialTheme.typography.headlineMedium)
-        Note("블루투스로 기기 설정을 직접 읽고 수정합니다. 사용 중에는 OpenRayneo가 안경 연결을 유지합니다.")
-        ToolButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } },
-            enabled = connected && !snapshot.busy, modifier = Modifier.fillMaxWidth()) { Text("안경 설정 읽기") }
-        if (snapshot.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Note(if (connected) snapshot.notice else "먼저 안경 탭에서 연결을 완료하세요")
+        ContentCard {
+            Text("기기에서 읽은 설정", style = MaterialTheme.typography.titleLarge)
+            Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.titleMedium)
+            Note(if (connected) snapshot.notice else "현재 안경 설정을 확인할 수 없습니다. 먼저 기기 탭에서 연결을 완료하세요.")
+            if (snapshot.loaded) Note("기기 보고값 · " + snapshot.readback.label)
+            if (snapshot.loaded && (!connected || snapshot.readback != DeviceReadback.VERIFIED))
+                Note("아래 값은 현재 기기 상태로 확인되지 않았습니다.")
+            Note("각 항목을 수정한 뒤 적용 버튼을 눌러 기기로 전송합니다. 적용 결과는 기기 응답으로 확인하세요.")
+            ToolButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } },
+                enabled = connected && !snapshot.busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (snapshot.busy) "기기 응답 대기 중…" else "안경 설정 다시 읽기")
+            }
+            if (snapshot.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         if (snapshot.loaded) {
             SettingsSection("기기 정보") {
                 Text(status.optString("deviceName").ifBlank { model.deviceName }, style = MaterialTheme.typography.titleMedium)
                 settings.optString("firmwareVersion").takeIf { it.isNotBlank() }?.let { Note("펌웨어 $it") }
-                status.deviceInt("battery")?.let { Note("배터리 $it%") }
+                status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("보고된 배터리 $it%") } ?: Note("배터리 미확인")
                 status.deviceFlag("isCharging")?.let { Note(if (it) "충전 중" else "충전 안 함") }
             }
             status.deviceInt("brightness")?.let { current ->
@@ -49,9 +57,9 @@ internal fun GlassesSettingsScreen(model: AppModel) {
                 var height by remember(currentHeight) { mutableIntStateOf(currentHeight) }
                 var distance by remember(currentDistance) { mutableIntStateOf(currentDistance) }
                 SettingsSection("화면 위치") {
-                    Text("높이 $height")
+                    Text("높이 $height · 읽은 값 $currentHeight")
                     Slider(height.toFloat(), { height = it.toInt() }, valueRange = 1f..6f, steps = 4, enabled = editable)
-                    Text("거리 $distance")
+                    Text("거리 $distance · 읽은 값 $currentDistance")
                     Slider(distance.toFloat(), { distance = it.toInt() }, valueRange = 1f..3f, steps = 1, enabled = editable)
                     ToolButton(onClick = { model.attempt { model.service().deviceSettings.display(height, distance) } }, enabled = editable) { Text("화면 위치 적용") }
                 }

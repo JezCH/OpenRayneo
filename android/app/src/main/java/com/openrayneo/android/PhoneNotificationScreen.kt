@@ -8,6 +8,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Clear
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -20,7 +24,8 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
     var allowed by remember { mutableStateOf(PhoneNotificationForwarding.allowed(context)) }
     var lockedMetadata by remember { mutableStateOf(PhoneNotificationForwarding.lockedMetadata(context)) }
     var previews by remember { mutableStateOf(PhoneNotificationForwarding.previews(context)) }
-    var search by remember { mutableStateOf("") }
+    var search by rememberSaveable { mutableStateOf("") }
+    var selectedOnly by rememberSaveable { mutableStateOf(false) }
     val apps = remember {
         val pm = context.packageManager
         pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
@@ -29,22 +34,34 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
             .distinctBy { it.first }.sortedBy { it.second.lowercase() }
     }
     val choices = (apps + allowed.filter { pkg -> apps.none { it.first == pkg } }.map { it to it })
-        .filter { (pkg, name) -> name.contains(search, true) || pkg.contains(search, true) }
-        .sortedWith(compareByDescending<Pair<String, String>> { it.first in allowed }.thenBy { it.second.lowercase() })
+        .filter { (pkg, name) -> (!selectedOnly || pkg in allowed) && (name.contains(search, true) || pkg.contains(search, true)) }
+        .sortedWith(compareBy<Pair<String, String>> { it.second.lowercase() }.thenBy { it.first })
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             ContentCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("휴대폰 알림 전달", style = MaterialTheme.typography.titleMedium)
-                        Note(if (enabled) "선택한 앱 ${allowed.size}개" else "꺼짐")
+                        Note(if (enabled) "사용 허용 · 선택한 앱 ${allowed.size}개" else "사용 안 함 · 선택 설정 유지")
                     }
                     Switch(checked = enabled, onCheckedChange = {
                         PhoneNotificationForwarding.setEnabled(context, it)
                         enabled = it
                     })
                 }
-                Note(if (model.state.notificationConnected) "안드로이드 알림 접근 연결됨" else "알림 접근 연결 필요")
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("현재 전달 조건", style = MaterialTheme.typography.titleSmall)
+                Note(when {
+                    !enabled -> "알림 전달 사용 안 함"
+                    !model.notificationAllowed -> "알림 접근 권한 필요"
+                    !model.state.notificationConnected -> "알림 리스너 연결 대기"
+                    !model.state.available -> "서비스 상태 미확인"
+                    model.state.glasses.link.phase != LinkPhase.FULL || model.state.glasses.disconnecting -> "안경 통신 연결 필요"
+                    model.state.focusMode -> "집중 모드 · 전달 제한"
+                    allowed.isEmpty() -> "전달할 앱 선택 필요"
+                    else -> "기본 전달 조건 확인 · 실제 알림 전송은 새 알림 및 실행 중인 기능에 따라 결정"
+                })
+                Note(if (!model.notificationAllowed) "Android 알림 접근 미허용" else if (model.state.notificationConnected) "Android 알림 리스너 연결됨" else "Android 알림 리스너 연결 대기")
                 if (!model.notificationAllowed) ToolButton(onClick = actions.notificationAccess) { Text("알림 접근 허용") }
                 else if (!model.state.notificationConnected) ToolOutlinedButton(onClick = {
                     model.attempt { NavigationNotifications.requestConnection(context) }
@@ -64,8 +81,18 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
             }
         }
         item {
-            OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("앱 검색") }, singleLine = true)
             SectionLabel("전달할 앱 선택")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(!selectedOnly, { selectedOnly = false }, label = { Text("전체") })
+                FilterChip(selectedOnly, { selectedOnly = true }, label = { Text("선택한 앱 ${allowed.size}") })
+            }
+            OutlinedTextField(
+                search, { search = it }, Modifier.fillMaxWidth(), label = { Text("앱 검색") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Outlined.Clear, "검색어 지우기") } },
+                singleLine = true,
+            )
+            Note("표시된 앱 ${choices.size}개")
         }
         items(choices, key = { it.first }) { (pkg, name) ->
             ContentCard {
@@ -89,6 +116,14 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
                 }
             }
         }
-        if (choices.isEmpty()) item { Note("선택할 앱이 없습니다. 검색어를 바꾸거나 설치된 앱을 확인하세요.") }
+        if (choices.isEmpty()) item {
+            Note(when {
+                search.isNotBlank() -> "검색 결과가 없습니다."
+                selectedOnly -> "선택한 앱이 없습니다."
+                else -> "선택할 앱이 없습니다. 설치된 앱을 확인하세요."
+            })
+            if (search.isNotBlank()) TextButton(onClick = { search = "" }) { Text("검색어 지우기") }
+            if (selectedOnly) TextButton(onClick = { selectedOnly = false }) { Text("전체 앱 보기") }
+        }
     }
 }

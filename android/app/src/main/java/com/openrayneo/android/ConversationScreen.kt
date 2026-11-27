@@ -9,6 +9,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Clear
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,6 +36,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     val chosenTopic = topicState.topics.firstOrNull { it.id == topicId }
     var liveSpeaker by remember { mutableStateOf<SpeechSegment?>(null) }
     LaunchedEffect(state.activeRecord?.id) { liveSpeaker = null }
+    val recordListState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     var dateText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var monthly by rememberSaveable { mutableStateOf(false) }
@@ -58,6 +64,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     val s = model.state
     val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val startReady = linked && state.modelReady && model.recommendedEditable &&
+        !state.running && !state.stopping && !s.alwaysOnResumePending &&
         !s.captionActive && !s.mediaCaption.busy && !s.glasses.navigation.enabled && source != ConversationSource.NATIVE
     var pendingStart by remember { mutableStateOf<ConversationMode?>(null) }
     if (pendingStart != null) AlertDialog(onDismissRequest = { pendingStart = null },
@@ -73,15 +80,17 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             }
         }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { pendingStart = null }) { Text("취소") } })
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    LazyColumn(state = recordListState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ContentCard {
                 Text(if (state.running || state.stopping || s.alwaysOnResumePending) "현재 기록" else "새 기록", style = MaterialTheme.typography.headlineSmall)
-                Note("일상과 회의를 기록하고 아래에서 원문과 기억을 찾아보세요. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
+                if (!s.available) Note("서비스 상태를 확인하고 있습니다.")
+                if (!state.running && !state.stopping && !s.alwaysOnResumePending)
+                    Note("일상과 회의를 기록합니다. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
                 if (model.state.alwaysOnResumePending) {
                     Note("안경 연결이 끊겼습니다. 이번에 허용한 종일 일상 기록은 이전 기록 저장이 끝나고 같은 안경에 자동 재연결되면 이탈 시간과 관계없이 다시 시작합니다. 직접 중지하거나 서비스가 종료되면 재개하지 않습니다.")
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }) { Text("자동 재개 취소 및 기록 중지") }
-                } else if (!state.running) {
+                } else if (!state.running && !state.stopping) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ConversationSource.entries.forEach { option -> FilterChip(source == option, { source = option }, label = { Text(when (option) { ConversationSource.ALWAYS_ON -> "종일 기록"; ConversationSource.REALTIME -> "실시간 힌트"; ConversationSource.NATIVE -> "음성 깨우기" }) }) }
                     }
@@ -96,9 +105,9 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         Note("기본 음성 깨우기는 안경의 실제 호출 이벤트로 시작합니다. 여기서 기록 시작 버튼을 누르는 방식은 지원하지 않습니다.")
                         TextButton(onClick = { open("korean-wake") }) { Text("기본 호출 설정 및 진단") }
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ToolButton(onClick = { pendingStart = ConversationMode.DAILY }, enabled = startReady) { Text("일상 기록 시작") }
-                            ToolOutlinedButton(onClick = { pendingStart = ConversationMode.MEETING }, enabled = startReady) { Text("회의 기록 시작") }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToolButton(onClick = { pendingStart = ConversationMode.DAILY }, enabled = startReady, modifier = Modifier.fillMaxWidth()) { Text("일상 기록 시작") }
+                            ToolOutlinedButton(onClick = { pendingStart = ConversationMode.MEETING }, enabled = startReady, modifier = Modifier.fillMaxWidth()) { Text("회의 기록 시작") }
                         }
                         if (!startReady) Note(when {
                             !linked -> "안경을 완전히 연결하세요."
@@ -131,6 +140,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             item { SectionLabel("현재 대화") }
             items(state.segments.takeLast(12), key = { it.id }) { segment -> SpeechRow(segment, state.people, state.activeRecord) { liveSpeaker = segment } }
         }
+        item { SectionLabel("저장된 기록") }
         item { TopicPanel(topicState, topicId) { topicId = it } }
         if (chosenTopic != null) {
             val linkedRecords = state.records.filter { it.id in chosenTopic.recordIds }.sortedByDescending { it.createdAt }
@@ -164,7 +174,15 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 Text(if (monthly) "${date.year}년 ${date.monthValue}월" else "${date.monthValue}월 ${date.dayOfMonth}일")
                 TextButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }) { Text(if (monthly) "다음 달" else "다음 날") }
             }
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("이 기간의 원문, 인물, 기억 검색") }, singleLine = true)
+            OutlinedTextField(
+                query, { query = it }, Modifier.fillMaxWidth(),
+                label = { Text("이 기간의 원문, 인물, 기억 검색") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Clear, "검색어 지우기") }
+                },
+                singleLine = true,
+            )
         }
         val begin = (if (monthly) date.withDayOfMonth(1) else date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val end = (if (monthly) date.withDayOfMonth(1).plusMonths(1) else date.plusDays(1)).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -185,14 +203,24 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             .filter { (day, _) -> day >= localDate(begin) && day < localDate(end) }
             .groupBy({ it.first }, { it.second })
         val days = (recordsByDay.keys + summariesByDay.keys).sorted()
-        if (days.isEmpty()) item { Note("이 기간에는 일치하는 기록이 없습니다. 날짜를 바꾸거나 새 기록을 시작하세요.") }
+        item {
+            Text(if (query.isBlank()) "이 기간의 기록 ${records.size}개" else "검색 결과 ${records.size}개 기록",
+                style = MaterialTheme.typography.titleSmall)
+            if (days.isEmpty()) Note(if (query.isBlank()) "이 기간에 저장된 기록이 없습니다. 날짜를 바꾸거나 새 기록을 시작하세요."
+                else "일치하는 기록이 없습니다. 검색어 또는 기간을 바꿔 보세요.")
+            if (days.isEmpty() && query.isNotBlank()) TextButton(onClick = { query = "" }) { Text("검색어 지우기") }
+        }
         days.forEach { day ->
             val dayRecords = recordsByDay[day].orEmpty()
             val dayBegin = day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val dayEnd = day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             item(key = "day:$day") { SectionLabel("${day.monthValue}월 ${day.dayOfMonth}일 · ${dayRecords.size}개 기록") }
             summariesByDay[day].orEmpty().forEach { summary -> item {
-                ContentCard { Text("일일 요약", style = MaterialTheme.typography.titleMedium); Text(summary.text); if (summary.stale) Note("연결된 내용이 수정되어 새로 고침 대기") }
+                ContentCard {
+                    Text(if (summary.stale) "이전 일일 요약 · 새로 고침 대기" else "일일 요약", style = MaterialTheme.typography.titleMedium)
+                    if (summary.stale) Note("연결된 내용이 수정되었습니다. 아래는 이전 요약입니다.")
+                    Text(summary.text)
+                }
             } }
             dayRecords.groupBy { timePeriod(it.createdAt.coerceAtLeast(dayBegin)) }.forEach { (period, periodRecords) ->
                 item(key = "period:$day:$period") { Note(period) }
@@ -208,7 +236,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                             else if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
                             if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
                                 Note("${SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(row.timeOf(segment)))} · ${segment.text}")
-                            } else if (row.summary.isNotBlank()) Text(row.summary.take(160))
+                            } else if (row.summary.isNotBlank() && !row.summaryStale) Text(row.summary.take(160))
+                            else if (row.summaryStale) daySegments.firstOrNull()?.let { Note(it.text.take(160)) }
                             if (row.summaryStale) Note("귀속이 수정되어 요약 재정리 대기")
                             if (row.derived.any { it.stale }) Note("연결된 Agent 결과를 새로 고쳐야 함")
                         }
@@ -262,17 +291,20 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             }
             if (!record.transcriptOnly && record.audioSamples > 0) {
                 Note("${record.audioChannels}채널 원본 오디오 ${record.audioSamples / 16000}초 저장됨. 휴대폰에 암호화 저장되며 컴퓨터는 필요할 때 가져옵니다.")
-                Row {
-                    TextButton(onClick = { actions.exportRecording(record.id) }) { Text("내보내기: WAV") }
-                    TextButton(onClick = { model.attempt { model.service().retranscribe(record.id) } }, enabled = !state.running) { Text("원본 오디오에서 누락 구간 보충") }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ToolOutlinedButton(onClick = { actions.exportRecording(record.id) }, modifier = Modifier.fillMaxWidth()) { Text("원본 음성 내보내기 (WAV)") }
+                    TextButton(onClick = { model.attempt { model.service().retranscribe(record.id) } }, enabled = !state.running && !state.stopping) { Text("원본 오디오에서 누락 구간 보충") }
                 }
             }
-            if (record.summary.isNotBlank()) Text(record.summary)
-            if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
+            if (record.summary.isNotBlank()) {
+                SectionLabel(if (record.summaryStale) "이전 요약" else "요약")
+                if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
+                Text(record.summary)
+            } else if (record.summaryStale) Note("내용이 업데이트되었습니다. 요약을 다시 정리하세요.")
             record.summaries.filter { it.kind != "rolling" }.forEach { summary ->
                 Text(if (summary.kind == "day_end") "${summary.day.ifBlank { "날짜 미기록" }} 일일 요약" else "기록 종료 요약", style = MaterialTheme.typography.titleSmall)
+                if (summary.stale) Note("출처가 수정되어 새로 고침 대기 · 아래는 이전 요약")
                 Text(summary.text)
-                if (summary.stale) Note("출처가 수정되어 새로 고침 대기")
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
