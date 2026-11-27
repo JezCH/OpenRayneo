@@ -123,7 +123,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         !state.phoneRunning && !state.computerRunning && !state.migration.busy &&
         !state.teleprompter.busy && state.teleprompter.active == null
     fun selectAiModel(id: String, profile: AiModelSelection.Profile? = null) = attempt {
-        check(aiSwitchAllowed && bridge?.canSwitchAiModel() != false) {
+        check(aiSwitchAllowed && bridge?.canSwitchAiModel() == true) {
             "진행 중인 AI·기록·번역 작업을 종료한 뒤 모델을 바꾸세요. 기존 기록은 유지됩니다."
         }
         val values = mutableMapOf(AiModelSelection.KEY to id)
@@ -386,7 +386,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         val selectionChanged = AiModelSelection.selected(old) != AiModelSelection.selected(updated) ||
             AiModelSelection.direct(old) != AiModelSelection.direct(updated)
         if (selectionChanged) {
-            check(aiSwitchAllowed && bridge?.canSwitchAiModel() != false) { "진행 중인 작업이 있어 모델을 변경하지 않았습니다" }
+            check(aiSwitchAllowed && bridge?.canSwitchAiModel() == true) { "진행 중인 작업이 있어 모델을 변경하지 않았습니다" }
             require(AiModelSelection.legacy(updated) || AiModelSelection.direct(updated) != null)
         }
         val mobileChanged = old.optString("mobileAgentBackend") != updated.optString("mobileAgentBackend")
