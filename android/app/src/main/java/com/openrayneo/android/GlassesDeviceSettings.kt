@@ -31,7 +31,11 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             // before optional clock sync or a status read that can wait 6 s
             // per transport. Observe updates the state on the main thread
             // immediately when the actual reply arrives.
-            val settings = runCatching { readSettingsForVoice() }.getOrNull()
+            val settings = runCatching {
+                if (initialize) readLauncherSnapshot(4, "request_general_settings", "generalSettings",
+                    prefer = { it.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") != null })
+                else readSettingsForVoice()
+            }.getOrNull()
             // Clock sync is a documented send-only command, not an ACK or
             // evidence that firmware applied the clock. No account or pairing writes.
             val clock = if (initialize) runCatching {
@@ -245,13 +249,20 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
      * snapshot. Never retry a write or claim the reply came over the route
      * used to send the query (the device may reply on the other channel).
      * An explicit BLE diagnostic stays BLE-only for outgoing requests. */
-    private fun readLauncherSnapshot(type: Int, command: String, field: String, overBle: Boolean = false): JSONObject? {
+    private fun readLauncherSnapshot(type: Int, command: String, field: String, overBle: Boolean = false,
+                                     prefer: (JSONObject) -> Boolean = { true }): JSONObject? {
         fun read(ble: Boolean): JSONObject? =
             requests.request(15, type, envelope(command), overBle = ble) { reply, body ->
                 reply == type && body.optJSONObject(field)?.length()?.let { it > 0 } == true
             }?.optJSONObject(field)
         if (overBle) return read(true)
-        return runCatching { read(false) }.getOrNull() ?: runCatching { read(true) }.getOrNull()
+        // A partial SPP settings snapshot may omit the microphone flag required
+        // by native menu entry. Query the existing BLE route once rather than
+        // treating a nonempty snapshot as complete. Explicit false is a known
+        // value, never a reason to retry or to change microphone permission.
+        val primary = runCatching { read(false) }.getOrNull()
+        if (primary != null && prefer(primary)) return primary
+        return runCatching { read(true) }.getOrNull() ?: primary
     }
     private fun readSettingsForVoice(overBle: Boolean = false): JSONObject? =
         readLauncherSnapshot(4, "request_general_settings", "generalSettings", overBle)
