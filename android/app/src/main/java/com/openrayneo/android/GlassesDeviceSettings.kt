@@ -155,44 +155,52 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     /** Explicit, read-first initialization of the two documented firmware
      * switches. Never changes microphone privacy, binding, firmware or cloud
      * account. Stop after an unconfirmed write rather than trying guessed commands. */
-    fun prepareNativeAssistant(overBle: Boolean = false) {
+    /** Current-link reports can be split between generalSettings and sync_ai_settings.
+     * Track actual reported fields, not the presence of an arbitrary partial snapshot.
+     * Never turn on microphone privacy or auto-enable a disabled firmware AI switch. */
+    fun prepareNativeAssistant(overBle: Boolean = false, automatic: Boolean = false, completed: () -> Unit = {}) {
         if (!overBle) check(state.loaded)
-        perform {
+        perform(completed) {
             val route = if (overBle) "BLE" else "SPP"
-            var fresh = checkNotNull(readSettingsForVoice(overBle)) { "$route 기기 설정 회신 없음 · 초기화하지 않았습니다." }
-            check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
-                "안경 마이크 허용 상태가 꺼져 있거나 미확인입니다. 개인정보 설정을 먼저 확인하세요."
-            }
-            val initial = checkNotNull(fresh.optJSONObject("voiceAssistantConfig")) { "펌웨어 AI 상태 미보고 · 변경하지 않았습니다." }
-            check(initial.deviceFlag("enabled") != null && initial.deviceFlag("voiceWakeup") != null) {
+            fun currentFlag(field: String): Boolean? = state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag(field)
+            fun micAllowed() = state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true
+            // A single reply may omit assistant fields that were separately reported
+            // on this authenticated connection. State is cleared on every disconnect.
+            runCatching { readSettingsForVoice(overBle) }
+            check(micAllowed()) { "안경 마이크 허용 상태가 꺼져 있거나 미확인입니다. 변경하지 않았습니다." }
+            check(currentFlag("enabled") != null && currentFlag("voiceWakeup") != null) {
                 "펌웨어 AI 또는 깨우기 값 미보고 · 변경하지 않았습니다."
             }
+            if (automatic && currentFlag("enabled") != true)
+                return@perform "펌웨어 AI 꺼짐 · 자동 준비하지 않음"
             for ((field, command) in listOf("enabled" to "set_ai_state", "voiceWakeup" to "set_ai_voice_wakeup")) {
-                val current = fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field)
-                    ?: error("기기 상태가 변경되어 나머지 초기화 중단")
-                // AIX IO arms wake on each standby setup even if the saved flag
-                // was already on. Explicit BLE experiment reasserts only wake=on.
+                check(micAllowed()) { "마이크 허용 상태 변경 · 초기화 중단" }
+                val current = currentFlag(field) ?: error("기기 상태 변경 · 초기화 중단")
                 if (current && !(overBle && field == "voiceWakeup")) continue
+                val before = System.nanoTime()
                 try {
                     requests.request(15, 16, JSONObject().put("cmd", command).put("payload", payload(mode = 1)), overBle = overBle) { type, body ->
                         type == 17 && body.optString("cmd") in setOf(command, "sync_ai_settings")
                     }
-                } catch (_: IllegalStateException) { /* Do not repeat ambiguous writes. */ }
-                fresh = checkNotNull(readSettingsForVoice(overBle)) { "$route $field 변경 후 새 상태 미확인 · 나머지 초기화 중단" }
-                check(fresh.optJSONObject("voiceAssistantConfig")?.deviceFlag(field) == true) {
-                    "$field 활성화가 재조회에서 확인되지 않아 나머지 초기화를 중단했습니다."
-                }
-                check(fresh.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
-                    "마이크 허용 상태 변경 · 초기화 중단"
+                } catch (_: IllegalStateException) { /* Never repeat an ambiguous write. */ }
+                runCatching { readSettingsForVoice(overBle) }
+                check((reported["voiceAssistantConfig.$field"] ?: 0L) >= before && currentFlag(field) == true) {
+                    "$route $field 새 기기 보고 미확인 · 나머지 초기화 중단"
                 }
             }
-            val final = fresh.optJSONObject("voiceAssistantConfig")
-            check(final?.deviceFlag("enabled") == true && final.deviceFlag("voiceWakeup") == true) {
-                "두 스위치가 동시에 활성화되었는지 확인하지 못했습니다."
+            check(currentFlag("enabled") == true && currentFlag("voiceWakeup") == true && micAllowed()) {
+                "두 스위치 활성화 상태 미확인"
             }
-            "$route 펌웨어 AI·깨우기 설정 재조회 확인 · 실제 호출 이벤트는 별도 확인하세요."
+            "$route 펌웨어 AI·깨우기 기기 보고 확인 · 실제 호출은 별도 확인하세요."
         }
     }
+    /** Automatic preparation is limited to an opted-in, idle link with known
+     * device reports. A user's explicit firmware AI/microphone OFF is preserved. */
+    fun needsAutomaticWakePreparation(): Boolean =
+        state.loaded && !state.busy && state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true &&
+            state.settings.optJSONObject("voiceAssistantConfig")?.let {
+                it.deviceFlag("enabled") == true && it.deviceFlag("voiceWakeup") == false
+            } == true
     fun voiceWake(enabled: Boolean) = apply("set_ai_voice_wakeup", 16, 17, payload(mode = if (enabled) 1 else 0), "voiceAssistantConfig") {
         it.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") == enabled
     }
@@ -357,20 +365,25 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             JSONObject().put("message", message).put("status", state.status).put("settings", state.settings)
         }, completion)
     }
-    private fun perform(work: () -> String) {
+    private fun perform(completed: () -> Unit = {}, work: () -> String) {
         check(!state.busy) { "현재 기기 작업을 기다리세요" }
         val token = ++revision
         state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
         requests.perform(work) { result ->
             if (token == revision) {
                 state = state.copy(busy = false, notice = result.getOrElse { it.message ?: "기기 작업 실패" }); changed()
+                completed()
             }
         }
     }
     fun observe(type: Int, body: JSONObject) {
         val now = System.nanoTime()
         body.optJSONObject("generalStatus")?.let { data -> data.keys().forEach { reported[it] = now }; state = state.copy(status = merge(state.status, data)) }
-        body.optJSONObject("generalSettings")?.let { data -> data.keys().forEach { reported[it] = now }; state = state.copy(settings = merge(state.settings, data), loaded = true) }
+        body.optJSONObject("generalSettings")?.let { data ->
+            state = state.copy(settings = merge(state.settings, data), loaded = true)
+            data.keys().forEach { reported[it] = now }
+            data.optJSONObject("voiceAssistantConfig")?.let { markAssistantFields(it, now) }
+        }
         val command = body.optString("cmd"); val payload = body.optJSONObject("payload")
         if (payload != null && command in setOf("sync_ai_settings", "system_unints_config", "system_units_config") && type in setOf(6,17)) {
             val raw = payload.opt("data")
@@ -381,6 +394,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
                     listOf("ai_state" to "enabled", "ai_voice_wakeup" to "voiceWakeup", "ai_work_mode" to "workMode", "ai_wakeup_word" to "wakeupWord").forEach { (wire, key) -> if (data.has(wire)) normalized.put(key, data.opt(wire)) }
                     state = state.copy(settings = merge(state.settings, JSONObject().put("voiceAssistantConfig", normalized)))
                     reported["voiceAssistantConfig"] = now
+                    markAssistantFields(normalized, now)
                 } else {
                     state = state.copy(settings = merge(state.settings, JSONObject().put("systemUnitsConfig", data)))
                     // A same-command payload may be an ACK echo; only full settings reads confirm unit writes.
@@ -388,6 +402,11 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
             }
         }
         changed()
+    }
+    private fun markAssistantFields(data: JSONObject, now: Long) {
+        for (field in listOf("enabled", "voiceWakeup")) {
+            if (data.deviceFlag(field) != null) reported["voiceAssistantConfig.$field"] = now
+        }
     }
     private fun merge(previous: JSONObject, next: JSONObject): JSONObject = JSONObject(previous.toString()).apply {
         next.keys().forEach { key -> val old = optJSONObject(key); val value = next.opt(key)
