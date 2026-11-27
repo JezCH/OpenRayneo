@@ -1,71 +1,71 @@
 {
-  "tag_name": "validation-v1283",
+  "tag_name": "validation-v1286",
   "draft": false,
   "prerelease": true,
-  "body": "## What's Changed\n* Preserve native menu evidence and honor pending hint cancellation by @JezCH in https://github.com/JezCH/OpenRayneo/pull/86\n\n\n**Full Changelog**: https://github.com/JezCH/OpenRayneo/compare/validation-v1279...validation-v1283",
+  "body": "## What's Changed\n* Read current-link mic settings before nonessential initialization by @JezCH in https://github.com/JezCH/OpenRayneo/pull/87\n\n\n**Full Changelog**: https://github.com/JezCH/OpenRayneo/compare/validation-v1283...validation-v1286",
   "assets": [
     {
-      "name": "delta-1268-to-1283.orp",
+      "name": "delta-1274-to-1286.orp",
       "state": "uploaded",
-      "size": 11511184,
-      "digest": "sha256:7784f711bb984432b5ba871449d77c8b39f42af2a367446404948e89ff260aeb",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/delta-1268-to-1283.orp"
+      "size": 11527568,
+      "digest": "sha256:32fac9c93788418f3a03999ee095f9f63ff1879dcf8aed08a6eacd0b49df9833",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/delta-1274-to-1286.orp"
     },
     {
-      "name": "delta-1274-to-1283.orp",
+      "name": "delta-1279-to-1286.orp",
       "state": "uploaded",
-      "size": 11511184,
-      "digest": "sha256:02f6fd91f7d9e54e23a410b15f954ecd92db038f9251b66804d6f20fff0b054b",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/delta-1274-to-1283.orp"
+      "size": 11527568,
+      "digest": "sha256:6d63d878915bada942c7ad53c19bc00850b8addec3b540281677b1c5b637203b",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/delta-1279-to-1286.orp"
     },
     {
-      "name": "delta-1279-to-1283.orp",
+      "name": "delta-1283-to-1286.orp",
       "state": "uploaded",
-      "size": 11511184,
-      "digest": "sha256:0d782a69ec4d59bca5fcecd2a320d8a58a984e1771808b1b0766e77bb224e6b2",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/delta-1279-to-1283.orp"
+      "size": 11527287,
+      "digest": "sha256:a69609304268972a538c6855c07054ee8acaeeba09832ad35ea236586e10f666",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/delta-1283-to-1286.orp"
     },
     {
       "name": "mozilla-native-8eada038-r2.sources.tar.gz",
       "state": "uploaded",
       "size": 22653302,
       "digest": "sha256:befddb1e191089957f4795bdacddc80191b6428ac722ee54986b62b4582f3710",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/mozilla-native-8eada038-r2.sources.tar.gz"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/mozilla-native-8eada038-r2.sources.tar.gz"
     },
     {
       "name": "openrayneo-badging.txt",
       "state": "uploaded",
       "size": 7253,
-      "digest": "sha256:e728d5dc273e057b822c73a14bcec04bb6139097e81a4bd9eae7f7168a8abe74",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/openrayneo-badging.txt"
+      "digest": "sha256:08dce517391e86d27e6966e6f2dbb0818a3138ebc2c19cdb3179b6fde303302d",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/openrayneo-badging.txt"
     },
     {
       "name": "openrayneo-certs.txt",
       "state": "uploaded",
       "size": 961,
       "digest": "sha256:502d49893d48652ce89b20428533ad5def8c99036be5624f65cef70b8562178d",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/openrayneo-certs.txt"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/openrayneo-certs.txt"
     },
     {
       "name": "openrayneo-dsh-0.1.12.tgz",
       "state": "uploaded",
       "size": 19625,
       "digest": "sha256:a30b3983af0c16db2efa55f392fa983393464e4b8f97271cf5ef779d08effcec",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/openrayneo-dsh-0.1.12.tgz"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/openrayneo-dsh-0.1.12.tgz"
     },
     {
       "name": "OpenRayneo-validation.apk",
       "state": "uploaded",
-      "size": 1339288394,
-      "digest": "sha256:191a42fc1058cb5ba4bcc0dbaf2d37187bdd3180913c7c80720a031ac4401109",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/OpenRayneo-validation.apk"
+      "size": 1339304778,
+      "digest": "sha256:5e8d7c6555cac3bf3d7b26ac091f3b4c907b809a27c63dd098d342a29a22a56d",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/OpenRayneo-validation.apk"
     },
     {
       "name": "update-manifest.json",
       "state": "uploaded",
       "size": 1642,
-      "digest": "sha256:2ba464c9e101ff0788e4fb4735d9816da8e6cb980e1d475590e243f4034382c5",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1283/update-manifest.json"
+      "digest": "sha256:aa0be584fe9f24672e54eacf3244ff32d24af5324659cd025ae1e4899bb65e6c",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1286/update-manifest.json"
     }
   ]
 }
