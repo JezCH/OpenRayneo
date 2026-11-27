@@ -480,13 +480,15 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 Note(model.service().connection.linkEvidence)
                 Note(model.service().capabilityStatus)
                 Note(model.service().peerCapabilityStatus)
+                Note(model.service().nativeMenuDiagnostics)
             }
             Note("최근 연결 종료와 복구 기록입니다. 이전 서비스 종료 기록 누락은 앱 업데이트, 재부팅, 강제 종료 등으로 정상 종료 기록이 남지 않았음을 뜻합니다. 음성·대화·기기 주소는 저장하지 않습니다.")
             TextButton(onClick = {
                 context.getSystemService(ClipboardManager::class.java)
                     .setPrimaryClip(ClipData.newPlainText("연결 진단", if (s.available)
                         listOf(health, model.service().connection.linkEvidence, model.service().capabilityStatus,
-                            model.service().peerCapabilityStatus).joinToString("\n") else health))
+                            model.service().peerCapabilityStatus, model.service().nativeMenuDiagnostics,
+                            model.service().hostVisibilityStatus, model.service().nativeWakeStatus).joinToString("\n") else health))
                 model.notice = "연결 진단 복사됨"
             }) { Text("연결 진단만 복사") }
         }
