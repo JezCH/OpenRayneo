@@ -133,7 +133,7 @@ internal object GlassesCoordinator {
             }
             GlassesEvent.RetryAudio -> state.session?.takeIf {
                 state.link.phase == LinkPhase.FULL && state.ownership == DisplayOwnership.APP &&
-                    !state.disconnecting && it.receivesGlassesAudio && it.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)
+                    !state.disconnecting && it.receivesGlassesAudio && !it.nativePaused && it.phase in setOf(PagePhase.LAYOUT, PagePhase.SETTLING, PagePhase.READY)
             }?.let {
                 state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "디코더 재시작됨, 새 안경 오디오 패킷 대기"))
                 effects += GlassesEffect.StopAudio
@@ -169,6 +169,19 @@ internal object GlassesCoordinator {
                         state = state.copy(ownership = DisplayOwnership.YIELDED, error = signal.message)
                     }
                     else -> if (session.phase != PagePhase.CLOSING) when (signal) {
+                        PageSignal.NativePaused -> if ((session.nativeSubtitle != null || session.nativeHint != null) && !session.nativePaused) {
+                            cancelRestore()
+                            state = state.copy(session = session.copy(nativePaused = true),
+                                audio = AudioState(detail = "안경에서 일시정지 · 음성 수신 중지"))
+                            effects += GlassesEffect.StopAudio
+                        }
+                        is PageSignal.NativeResumed -> if (session.nativePaused && session.receivesGlassesAudio &&
+                            (session.nativeSubtitle != null || session.nativeHint != null)) {
+                            state = state.copy(session = session.copy(nativePaused = false,
+                                phase = if (session.writtenContent == session.content) PagePhase.READY else PagePhase.SETTLING),
+                                audio = AudioState(AudioPhase.WAITING_PACKET, "안경에서 재개 · 실제 오디오 대기"))
+                            effects += GlassesEffect.StartAudio(session.id, signal.channels)
+                        }
                         is PageSignal.AudioAwaitingPeer -> if (session.receivesGlassesAudio) {
                             state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "안경 시작 응답 전송됨 · 실제 오디오 대기"))
                             effects += GlassesEffect.StartAudio(session.id, signal.channels)
@@ -200,7 +213,7 @@ internal object GlassesCoordinator {
                     }
                 }
             }
-            is GlassesEvent.AudioChanged -> if (state.session?.id == event.id && state.session?.receivesGlassesAudio == true && state.session?.phase != PagePhase.CLOSING) state = state.copy(audio = event.state)
+            is GlassesEvent.AudioChanged -> if (state.session?.id == event.id && state.session?.receivesGlassesAudio == true && state.session?.nativePaused == false && state.session?.phase != PagePhase.CLOSING) state = state.copy(audio = event.state)
             is GlassesEvent.RestoreAnswer -> {
                 val answer = state.intent as? DisplayIntent.Answer
                 if (state.session?.id == event.id && state.session?.phase == PagePhase.READY &&

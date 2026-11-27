@@ -27,6 +27,7 @@ internal data class PageSession(
     val receivesGlassesAudio: Boolean = true,
     val nativeSubtitle: NativeSubtitleStart? = null,
     val nativeHint: NativeHintStart? = null,
+    val nativePaused: Boolean = false,
 )
 internal data class TranslationView(val source: String = "", val target: String = "", val final: Boolean = true)
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
@@ -62,6 +63,7 @@ internal data class GlassesState(
         link.phase == LinkPhase.BLE_ONLY -> "BLE 진단 연결 전용, 표시나 음성 수신은 시작하지 않음"
         link.phase != LinkPhase.FULL -> link.detail
         session == null -> "연결됨, 안경 표시 유휴"
+        session.nativePaused -> "안경 순정 세션 일시정지 · 음성 수신 중지"
         session.phase == PagePhase.STARTING -> "안경의 시작 확인 대기"
         session.phase == PagePhase.LAYOUT -> "내비게이션 레이아웃 확인 중"
         (session.nativeSubtitle != null || session.nativeHint != null) && audio.phase == AudioPhase.WAITING_PACKET -> "안경 시작 응답 전송 · 음성 수신 대기"
@@ -75,6 +77,8 @@ internal data class GlassesState(
     }
 }
 internal sealed interface PageSignal {
+    data object NativePaused : PageSignal
+    data class NativeResumed(val channels: Int) : PageSignal
     data class AudioAwaitingPeer(val channels: Int) : PageSignal
     data class AudioAccepted(val channels: Int) : PageSignal
     data object LayoutPending : PageSignal
