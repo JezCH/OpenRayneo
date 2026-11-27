@@ -1697,7 +1697,7 @@ internal class BridgeService : Service() {
             val pending = pendingNativeHint
             if (pending != null) {
                 val body = runCatching { JSONObject(message.json ?: return false) }.getOrNull()
-                if (body?.optString("sid") == pending.sid && body.optInt("reason_code", -1) == 2) {
+                if (body != null && body.optString("sid") == pending.sid && body.optInt("reason_code", -1) == 2) {
                     pendingNativeHint = null
                     if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME)
                         conversations.stop()
