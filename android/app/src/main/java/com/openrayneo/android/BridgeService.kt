@@ -404,7 +404,7 @@ internal class BridgeService : Service() {
         }
         voiceTransport.bargeIn = { deviceSettings.state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode") == true &&
             settings.read().optBoolean("nativeAutoAnswer") && conversations.state.running && conversations.state.source == ConversationSource.NATIVE }
-        translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
+        translator = LiveTranslator(this, main, { source, target, final -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target, final))) }, ::notifyUI) {
             if (mediaCaptionState.busy) stopMediaCaption(translator.status)
             else if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }

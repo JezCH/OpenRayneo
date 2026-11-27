@@ -91,4 +91,70 @@ class StandaloneDeviceProtocolTest {
         assertEquals(LocalDeviceQuery.Kind.BRIGHTNESS_SET, LocalDeviceQuery.parseExplicit("안경 밝기 5단계로 설정해줘")?.kind)
         assertNull(LocalDeviceQuery.parseExplicit("배터리"))
     }
+
+    @Test fun nativeSubtitleStartAdoptsOnlyKnownStockRequest() {
+        fun request(mode: String = "classic", source: String = "ko-KR", target: String = "", sid: String = "device-session",
+                    protocol: Int = 0x13, type: Int = 1): ProtocolCodec.Frame {
+            val body = org.json.JSONObject().put("sid", sid).put("code", 0).put("settings",
+                org.json.JSONObject().put("mode", mode).put("source_language", source).put("target_language", target).put("save_audio", true))
+            return ProtocolCodec.StreamDecoder().append(ProtocolCodec.display(protocol, 1, type, body.toString())).single()
+        }
+        val accepted = checkNotNull(NativeSubtitleStart.parse(request()))
+        assertTrue(accepted.captions)
+        assertEquals("device-session", accepted.reply().getString("sid"))
+        assertEquals(1, accepted.reply().getInt("code"))
+        assertFalse(accepted.reply().getJSONObject("final_settings").getBoolean("save_audio"))
+        assertFalse(checkNotNull(NativeSubtitleStart.parse(request("bilingual", "ko-KR", "en-US"))).captions)
+        assertNull(NativeSubtitleStart.parse(request("multi_transcript")))
+        assertNull(NativeSubtitleStart.parse(request("bilingual", "ko", "ja-JP")))
+        assertNull(NativeSubtitleStart.parse(request("bilingual", "ko", "ko-KR")))
+        assertNull(NativeSubtitleStart.parse(request(sid = "")))
+        assertNull(NativeSubtitleStart.parse(request(protocol = 0x20)))
+        assertNull(NativeSubtitleStart.parse(request(type = 2)))
+    }
+
+    @Test fun nativeSubtitleAdoptionKeepsDeviceSidAndOnlySendsActualCaptionText() {
+        val request = NativeSubtitleStart("device-sid", "classic", "ko-KR", "", "ahead")
+        val before = GlassesState(link = LinkState(LinkPhase.FULL), ownership = DisplayOwnership.YIELDED)
+        val adoption = GlassesCoordinator.reduce(before, GlassesEvent.StartNativeSubtitle(request))
+        val session = checkNotNull(adoption.state.session)
+        assertEquals(request, session.nativeSubtitle)
+        assertTrue(adoption.state.captionMode)
+        assertTrue(session.content.text.isEmpty())
+        assertEquals(session, adoption.effects.filterIsInstance<GlassesEffect.StartPage>().single().session)
+        assertTrue(GlassesCoordinator.reduce(before.copy(link = LinkState(LinkPhase.BLE_ONLY)), GlassesEvent.StartNativeSubtitle(request)).effects.isEmpty())
+        assertTrue(GlassesCoordinator.reduce(adoption.state, GlassesEvent.StartNativeSubtitle(request)).effects.isEmpty())
+        val caption = GlassesCoordinator.reduce(adoption.state, GlassesEvent.TranslationText(TranslationView("실시간 자막", "한국어 문장", false)))
+        val updated = caption.effects.filterIsInstance<GlassesEffect.UpdatePage>().single().content
+        assertEquals("한국어 문장", updated.text)
+        assertFalse(updated.final)
+        val frames = mutableListOf<ProtocolCodec.Frame>()
+        val signals = mutableListOf<PageSignal>()
+        val timers = mutableListOf<Runnable>()
+        val display = GlassesDisplay({ bytes, done ->
+            frames.add(ProtocolCodec.StreamDecoder().append(bytes).single()); done(Result.success(Unit))
+        }, { task, _ -> timers.add(task); Unit }, { task -> timers.remove(task); Unit }, {}, { _, signal -> signals.add(signal); Unit }, { _, _ -> }, {})
+        display.start(session)
+        assertEquals(1, frames.size)
+        assertEquals(0x13, frames.single().protocol)
+        assertEquals(2, ProtocolCodec.message(frames.single().payload).type)
+        assertEquals("device-sid", org.json.JSONObject(ProtocolCodec.message(frames.single().payload).json!!).getString("sid"))
+        assertTrue(signals.any { it is PageSignal.AudioAwaitingPeer })
+        assertFalse(signals.any { it is PageSignal.AudioAccepted })
+        timers.toList().forEach { it.run() }
+        assertEquals(1, frames.size)
+        display.update(session.id, updated)
+        val m = ProtocolCodec.message(frames.last().payload)
+        assertEquals(5, m.type)
+        val body = org.json.JSONObject(m.json!!)
+        assertEquals("device-sid", body.getString("sid"))
+        assertEquals(3, body.getInt("mode"))
+        assertEquals(0, body.getInt("status"))
+        assertEquals("한국어 문장", body.getJSONObject("content").getString("source_transcript"))
+        assertFalse(body.getJSONObject("content").has("target_translation"))
+        display.stop(session.id)
+        val stop = ProtocolCodec.message(frames.last().payload)
+        assertEquals(3, stop.type)
+        assertEquals(10, org.json.JSONObject(stop.json!!).getInt("reason_code"))
+    }
 }

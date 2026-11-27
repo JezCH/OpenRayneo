@@ -20,14 +20,14 @@ internal data class LinkState(val phase: LinkPhase = LinkPhase.DISCONNECTED, val
                               val lastFailure: String? = null, val reconnectWaiting: Boolean = false)
 internal enum class PageMode { NAVIGATION, PROMPT }
 internal enum class PagePhase { STARTING, LAYOUT, SETTLING, READY, CLOSING }
-internal data class PageContent(val key: String, val text: String, val answer: String? = null)
+internal data class PageContent(val key: String, val text: String, val answer: String? = null, val final: Boolean = true)
 internal data class PageSession(
     val id: Long, val mode: PageMode, val phase: PagePhase, val content: PageContent,
     val writtenContent: PageContent? = null,
     val receivesGlassesAudio: Boolean = true,
     val nativeSubtitle: NativeSubtitleStart? = null,
 )
-internal data class TranslationView(val source: String = "", val target: String = "")
+internal data class TranslationView(val source: String = "", val target: String = "", val final: Boolean = true)
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
 internal enum class AudioPhase { STOPPED, WAITING_PACKET, WAITING_PCM, RECEIVING, STALLED, FAILED }
 internal data class AudioState(val phase: AudioPhase = AudioPhase.STOPPED, val detail: String = "안경 음성 수신이 중지됨")
@@ -63,7 +63,8 @@ internal data class GlassesState(
         session == null -> "연결됨, 안경 표시 유휴"
         session.phase == PagePhase.STARTING -> "안경의 시작 확인 대기"
         session.phase == PagePhase.LAYOUT -> "내비게이션 레이아웃 확인 중"
-        session.phase == PagePhase.SETTLING -> "페이지 확인됨, 내용 전송 중"
+        session.nativeSubtitle != null && audio.phase == AudioPhase.WAITING_PACKET -> "안경 자막 응답 전송 · 음성 수신 대기"
+        session.phase == PagePhase.SETTLING -> if (session.nativeSubtitle != null) "안경 자막 응답 전송 · 실제 표시 미확인" else "페이지 확인됨, 내용 전송 중"
         session.writtenContent != session.content -> "안경 내용 업데이트 중"
         session.mode == PageMode.NAVIGATION -> "내비게이션 세션 준비됨"
         intent == DisplayIntent.BlankPrompt -> "화면을 지웠고 음성 수신은 유지됨"
@@ -73,6 +74,7 @@ internal data class GlassesState(
     }
 }
 internal sealed interface PageSignal {
+    data class AudioAwaitingPeer(val channels: Int) : PageSignal
     data class AudioAccepted(val channels: Int) : PageSignal
     data object LayoutPending : PageSignal
     data object Settling : PageSignal

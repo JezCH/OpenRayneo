@@ -50,7 +50,7 @@ internal class GlassesDisplay(
                 if (result.isFailure) { fail("안경 자막 시작 응답 전송 실패"); return@send }
                 audioAccepted = true; accepted = true
                 report("안경 자막 시작 응답 전송 · 실제 음성/표시 확인 대기")
-                signal(next.id, PageSignal.AudioAccepted(2))
+                signal(next.id, PageSignal.AudioAwaitingPeer(2))
                 if (generation != ownerGeneration) return@send
                 signal(next.id, PageSignal.Settling)
                 if (generation == ownerGeneration) schedule(settle, 500)
@@ -159,11 +159,13 @@ internal class GlassesDisplay(
         val id = sid ?: return
         val active = session ?: return
         pending = null
-        if (content == lastWritten) return
+        if (content == lastWritten || (active.nativeSubtitle != null && content.text.isBlank())) return
         writing = true
         val text = (if (active.mode == PageMode.NAVIGATION && navigationFrameSent) "\u3000" else "") + content.text
         val payload = if (active.mode == PageMode.NAVIGATION) NavigationFrame.result(id, text)
-            else JSONObject().put("sid", id).put("mode", if (active.nativeSubtitle != null) 3 else 4).put("status", 1).put("content", JSONObject()
+            else if (active.nativeSubtitle != null) JSONObject().put("sid", id).put("mode", 3).put("status", if (content.final) 1 else 0)
+                .put("content", JSONObject().put("source_transcript", text).apply { if (!active.nativeSubtitle.captions && !content.answer.isNullOrBlank()) put("target_translation", content.answer) })
+            else JSONObject().put("sid", id).put("mode", 4).put("status", 1).put("content", JSONObject()
                 .put("source_transcript", text).put("target_translation", content.answer.orEmpty()).put("keyword_info", JSONObject.NULL).put("label", 0))
         send(protocol(active), 5, payload) { result ->
             if (sid != id) return@send

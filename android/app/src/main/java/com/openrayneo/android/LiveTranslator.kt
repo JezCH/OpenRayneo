@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 internal class LiveTranslator(
     private val context: android.content.Context,
     private val main: Handler,
-    private val show: (source: String, target: String) -> Unit,
+    private val show: (source: String, target: String, final: Boolean) -> Unit,
     private val changed: () -> Unit,
     /** The translator gave up on its own (e.g. repeated ASR failures); the owner should close the window. */
     private val gaveUp: () -> Unit,
@@ -60,6 +60,7 @@ internal class LiveTranslator(
     // Main-thread display state.
     private val history = ArrayDeque<Pair<String, String>>()
     @Volatile private var latestFinal = 0L
+    private var sourceFinal = false
     private var sourceLine = ""
     private var targetLine = ""
     private var failures = 0
@@ -154,7 +155,7 @@ internal class LiveTranslator(
             active = true
             resampler = ConversationAudio()
         }
-        history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; failures = 0
+        history.clear(); latestFinal = 0; sourceLine = ""; targetLine = ""; sourceFinal = false; failures = 0
         if (mediaTranslate) mediaTranslation.begin(checkNotNull(mediaId), mediaLanguage)
         conversationTranslationId?.let { mediaTranslation.begin(it, MediaTranslationRoute.BILINGUAL) }
         if (wakeOptions != null) {
@@ -173,7 +174,7 @@ internal class LiveTranslator(
         if (keyword) require(KoreanKeywordModels.model.installed(context)) { "경량 호출 모델을 먼저 내려받으세요" }
         startSpeech(korean, true, false, wakeOptions = options, wakeCallback = action, keywordWake = keyword)
         status = if (keyword) "경량 호출 모델 준비 중" else "한국어 호출 대기 · " + options.phrases.joinToString(" / ")
-        show("한국어 호출 대기", options.phrases.first() + ", 질문하세요")
+        show("한국어 호출 대기", options.phrases.first() + ", 질문하세요", false)
         changed()
     }
     fun pollWake(now: Long) {
@@ -301,17 +302,18 @@ internal class LiveTranslator(
             // Never pair a new ASR partial with an older translated sentence.
             when {
                 mediaTranslation.state.phase == LocalMediaTranslationPhase.ERROR ->
-                    show("번역 오류 · 원문", clip(sourceLine, TARGET_LIMIT))
-                mediaFinalTarget.isNotBlank() -> show(clip(mediaFinalSource, SOURCE_LIMIT), clip(mediaFinalTarget, TARGET_LIMIT))
-                else -> show("한국어 번역 대기", clip(sourceLine, TARGET_LIMIT))
+                    show("번역 오류 · 원문", clip(sourceLine, TARGET_LIMIT), sourceFinal)
+                mediaFinalTarget.isNotBlank() -> show(clip(mediaFinalSource, SOURCE_LIMIT), clip(mediaFinalTarget, TARGET_LIMIT), true)
+                else -> show("한국어 번역 대기", clip(sourceLine, TARGET_LIMIT), false)
             }
-        } else if (captionOnly) show(if (mediaSessionId != null) "미디어 원문 자막" else "실시간 자막", clip(sourceLine, TARGET_LIMIT))
-        else show(clip(sourceLine, SOURCE_LIMIT), targetLine)
+        } else if (captionOnly) show(if (mediaSessionId != null) "미디어 원문 자막" else "실시간 자막", clip(sourceLine, TARGET_LIMIT), sourceFinal)
+        else show(clip(sourceLine, SOURCE_LIMIT), targetLine, sourceFinal && targetLine != "…")
     }
 
     private fun interim(token: Int, text: String) {
         if (token != generation || !active || wakeActive || (mediaSessionId == null && misheard(text))) return
         heard()
+        sourceFinal = false
         sourceLine = text
         // Do not display an earlier final's translation beside a newer partial.
         if (!captionOnly && !mediaTranslate) targetLine = "…"
@@ -352,6 +354,7 @@ internal class LiveTranslator(
             render()
             return
         }
+        sourceFinal = true
         if (captionOnly) { sourceLine = text; render(); return }
         if (text.isBlank()) return
         val sequence = ++latestFinal
@@ -389,7 +392,7 @@ internal class LiveTranslator(
                 if (token != generation || !active) return@post
                 result.fold({ translated ->
                     history.addLast(text to translated); while (history.size > 3) history.removeFirst()
-                    if (sequence == latestFinal) { sourceLine = text; targetLine = clip(translated, TARGET_LIMIT); status = listening(); render(); changed() }
+                    if (sequence == latestFinal) { sourceFinal = true; sourceLine = text; targetLine = clip(translated, TARGET_LIMIT); status = listening(); render(); changed() }
                 }, { error ->
                     if (sequence == latestFinal) {
                         sourceLine = text; targetLine = "(번역 실패)"; render()

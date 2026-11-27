@@ -9,7 +9,7 @@ import org.json.JSONObject
 internal data class NativeSubtitleStart(
     val sid: String, val mode: String, val source: String, val target: String, val direction: String
 ) {
-    val captions get() = mode in setOf("classic", "multi_transcript", "multi_classic")
+    val captions get() = mode == "classic"
     val languageHint get() = language(source)
     fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
         JSONObject().put("mode", mode).put("source_language", source).put("target_language", target)
@@ -33,7 +33,7 @@ internal data class NativeSubtitleStart(
             for (key in listOf("mode", "source_language", "target_language", "direction"))
                 if (settings.has(key) && settings.opt(key) !is String) return null
             val mode = settings.optString("mode", "classic")
-            if (mode !in setOf("classic", "multi_transcript", "multi_classic", "bilingual", "multi_bilingual")) return null
+            if (mode !in setOf("classic", "bilingual")) return null
             val source = settings.optString("source_language", "auto")
             val target = settings.optString("target_language", "")
             val direction = settings.optString("direction", "ahead")
