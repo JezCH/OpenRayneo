@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
     val drafts = model.formDrafts
@@ -33,11 +33,18 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         Text("앱 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
         Note("음성 특징과 화자 처리는 이 기기에서 실행되며 ASR과 기록 요약은 설정한 서비스를 사용합니다. 답변, 짧은 힌트, 작업 판단은 휴대폰 로컬 Agent가 맡고 키는 Android Keystore로 암호화 저장됩니다.")
         Note("아래 항목을 눌러 이동하세요. 변경한 음성·언어·기억 설정은 화면 아래 저장 버튼을 눌러 적용합니다.")
-        listOf(listOf("음성 모델", "언어·재생", "호출·알림"), listOf("녹음·화자", "기억·개인화", "요약 모델")).forEachIndexed { row, names ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                names.forEachIndexed { index, title ->
-                    OutlinedButton(onClick = { jumpScope.launch { jumps[row * 3 + index].bringIntoView() } },
-                        modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)) { Text(title) }
+        OpticalPanel {
+            SectionLabel("설정 바로가기")
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                maxItemsInEachRow = 3,
+            ) {
+                listOf("음성 모델", "언어·재생", "호출·알림", "녹음·화자", "기억·개인화", "요약 모델").forEachIndexed { index, title ->
+                    OutlinedButton(onClick = { jumpScope.launch { jumps[index].bringIntoView() } },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text(title) }
                 }
             }
         }

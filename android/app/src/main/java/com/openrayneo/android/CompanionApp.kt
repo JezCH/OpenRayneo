@@ -595,10 +595,8 @@ private fun NavigationScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { SectionLabel("안경 화면") }
-        item { GlassesOutputPreview(s.glasses) }
         item {
-            ContentCard {
+            OpticalPanel {
                 Text("네이버지도 실시간 안내", style = MaterialTheme.typography.titleMedium)
                 if (instruction != null) {
                     Text(
@@ -624,6 +622,15 @@ private fun NavigationScreen(
                     if (nav.enabled) "네이버지도 안내 연동" else "네이버지도 연결",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                if (nav.enabled) {
+                    ToolOutlinedButton(
+                        onClick = { model.attempt { model.service().stopNavigation() } },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("안경 추종 중지")
+                    }
+                    Note("안경 안내만 종료하며 네이버지도의 길 안내는 계속됩니다. 기본 호출 후 '안경 길 안내 종료해 줘'라고 요청할 수 있습니다. 음성 전환은 안경 펌웨어에서 실제 검증이 필요합니다.")
+                }
                 Note(s.notificationReadStatus)
                 if (
                     s.notificationReadPhase == NotificationReadPhase.FAILED &&
@@ -680,16 +687,12 @@ private fun NavigationScreen(
                                 Text("안경 내비게이션 재개")
                             }
                     }
-                    ToolOutlinedButton(
-                        onClick = { model.attempt { model.service().stopNavigation() } },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("안경 추종 중지")
-                    }
-                    Note("안경 안내만 종료하며 네이버지도의 길 안내는 계속됩니다. 기본 호출 후 '안경 길 안내 종료해 줘'라고 요청할 수 있습니다. 음성 전환은 안경 펌웨어에서 실제 검증이 필요합니다.")
+
                 }
             }
         }
+        item { SectionLabel("안경 화면") }
+        item { GlassesOutputPreview(s.glasses) }
         if (candidates.size > 1 || nav.enabled && candidates.any { it.key != nav.key } && instruction == null) item {
             OutlinedCard(onClick = sources) {
                 ListItem(
