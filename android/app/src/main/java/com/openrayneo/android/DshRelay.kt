@@ -283,7 +283,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.state == "running") persist()
         status(id)
     }
-    fun hasOutstanding(): Boolean = synchronized(lock) { requests.values.any { it.state in setOf("queued", "running") } }
+    fun hasOutstanding(): Boolean = synchronized(lock) { expireHints(); requests.values.any { it.state in setOf("queued", "running") } }
     fun closeDirect() { directInference.close() }
     fun cancelRequest(id: String) = cancelMatching { it.id == id }
     fun cancelPassiveHints() = cancelMatching { it.kind == "hint" && it.input?.optString("source") == "ALWAYS_ON" && it.input?.has("hintDeadline") == true }
