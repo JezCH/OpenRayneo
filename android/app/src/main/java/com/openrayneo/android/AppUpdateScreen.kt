@@ -98,7 +98,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         // On recreation or when another activity is running, the manual confirmation button remains.
         if (pendingConfirmation != null && !busy && openConfirmation) {
             openConfirmation = false
-            if (idle()) runCatching { context.startActivity(pendingConfirmation) }
+            if (idle()) runCatching { AppUpdateInstall.launchConfirmation(context, pendingConfirmation) }
                 .onFailure { status = "Android 설치 확인 버튼으로 다시 시도하세요" }
         }
     }
@@ -152,6 +152,16 @@ internal fun AppUpdateScreen(model: AppModel) {
             }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null, modifier = Modifier.fillMaxWidth()) {
                 Text(if (cached) "받아 둔 APK 검증 및 설치" else if (item.delta != null) "변경분 업데이트" else "다운로드 및 설치")
             }
+            if (cached) TextButton(onClick = {
+                if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
+                else launchWork {
+                    AppUpdateInstall.openSystemInstaller(context, item) {
+                        idle() && !updates.checking && updates.error.isBlank() && updates.candidate == item
+                    }
+                }
+            }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) {
+                Text("시스템 설치 화면으로 복구 설치 (재다운로드 없음)")
+            }
             if (!cached) TextButton(onClick = { model.attempt { updates.startDownload(item) } },
                 enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
             if (!cached && item.delta != null) TextButton(onClick = {
@@ -177,7 +187,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         if (updates.downloadStatus.isNotBlank()) Text(updates.downloadStatus)
         AppUpdateInstall.confirmation?.let { confirm ->
             Button(onClick = {
-                if (idle()) runCatching { context.startActivity(confirm) }
+                if (idle()) runCatching { AppUpdateInstall.launchConfirmation(context, confirm) }
                     .onFailure { status = "설치 확인 화면을 열 수 없습니다. 설치 요청을 취소하고 다시 시도하세요." }
             }, enabled = !busy && idle()) { Text("Android 설치 확인") }
         }
