@@ -103,12 +103,18 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                         else if (!valid()) { cancelHint(request); false }
                         else {
                             request.state = if (result.isSuccess) "completed" else "failed"
+                            if (input?.optString("purpose") == "agent_probe") {
+                                result.getOrNull()?.reportedModel?.let { actual ->
+                                    request.modelRoute = AgentProbePolicy.ModelRoute.from(profile.label, actual,
+                                        if (input.optString("probeRoute") == "ambient") "ambient_default" else "default")
+                                }
+                            }
                             request.automaticContext = null
                             persist()
                             true
                         }
                     }
-                    if (accepted) complete(result)
+                    if (accepted) complete(result.map { it.text })
                 }
             }
         } else if (kind == "task") scheduleUnclaimed(request)
