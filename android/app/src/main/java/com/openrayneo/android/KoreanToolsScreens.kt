@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, deviceSettings: () -> Unit) {
     val s = model.state
@@ -135,7 +136,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             if (savedOptions.isFailure) Note("기존 호출 설정을 읽을 수 없습니다. 올바른 설정을 다시 저장하세요.")
             if (dirty) Note("호출을 시작하기 전에 변경 내용을 저장하세요.")
             if (!editable) Note("호출을 중지한 후 변경할 수 있습니다.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolButton(onClick = {
                     val value = parsed.getOrNull() ?: return@ToolButton
                     model.saveConfig(mapOf("wakePhrases" to value.phrases.joinToString(", "), "wakeSeconds" to listen.toString(), "wakeFollowSeconds" to followup.toString()))
@@ -249,7 +250,7 @@ internal fun KoreanGlyphScreen(model: AppModel) {
     val start = 0xAC00 + page * count
     val sample = if (range) (start..minOf(start + count - 1, 0xD7A3)).joinToString(" ") { it.toChar().toString() } else samples[page.coerceIn(0, samples.lastIndex)]
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text("내장 폰트 확인", style = MaterialTheme.typography.titleMedium)
             Note(deviceConnectionStatus(s).label)
             if (!linked) Note("안경 연결이 완료되면 시험 문장을 보낼 수 있습니다.")

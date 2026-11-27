@@ -13,13 +13,14 @@ import kotlinx.coroutines.delay
 
 @Composable
 internal fun PersonalizationScreen() {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        OpticalPanel {
+            SectionLabel("개인화와 자동 참조")
+            Note("직접 입력한 개인화 정보와 자동 추출된 기억은 별개입니다. AI에 자동 첨부할 범위는 따로 지정합니다.")
+            OrdinaryContextButton()
+        }
         AboutYouSection()
-        HorizontalDivider()
-        Text("자동 기억 참조", style = MaterialTheme.typography.titleMedium)
-        Note("일반 질문에 자동으로 참고할 개인화 정보 및 기록 범위를 선택합니다.")
-        OrdinaryContextButton()
     }
 }
 
@@ -48,7 +49,7 @@ internal fun LocalClockScreen(model: AppModel) {
             readout = model.service().clockReadout()
         }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
         Note("기존 음성 명령과 같은 휴대폰 타이머·스톱워치를 사용합니다. 별도 AI 요청이나 녹음은 없습니다.")

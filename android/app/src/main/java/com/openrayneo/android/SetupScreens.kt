@@ -382,13 +382,16 @@ internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig:
         Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Icon(
-            if (mobile) Icons.Outlined.Smartphone else Icons.Outlined.Computer,
-            null,
-            Modifier.size(40.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Text(if (mobile) "기록 요약 모델 설정" else "컴퓨터 연결 설정", style = MaterialTheme.typography.headlineMedium)
+        OpticalPanel {
+            Text("컴퓨터 연결", style = MaterialTheme.typography.headlineSmall)
+            Note(when {
+                !model.state.available -> "서비스 상태 미확인"
+                model.state.computerConnected -> "컴퓨터 연결 확인"
+                model.config.optString("codexUrl").isNotBlank() && model.config.optString("codexToken").isNotBlank() -> "설정 저장됨 · 연결 미확인"
+                else -> "연결 설정 필요"
+            })
+            Note(if (url != model.config.optString(urlKey) || name != model.config.optString(nameKey) || secret != model.config.optString(secretKey)) "저장되지 않은 입력이 있습니다." else "저장된 설정")
+        }
         Note(
             if (mobile) "앱 내 기록 요약에 사용되며 Chat Completions 호환 클라우드 또는 휴대폰 로컬 서비스를 지원합니다. 로컬 서비스에 인증이 없으면 API Key를 비워 둘 수 있습니다."
             else "먼저 컴퓨터에서 OpenRayneo의 Codex 연결 스크립트를 실행한 뒤 생성된 설정을 가져오세요. USB 모드는 포트 포워딩도 켜야 합니다."

@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AboutYouSection() {
     val context = LocalContext.current.applicationContext
@@ -26,6 +27,10 @@ internal fun AboutYouSection() {
     var confirmClear by remember(store) { mutableStateOf(false) }
     val limit = AboutYouPolicy.MAX_FIELD_LENGTH
     val valid = listOf(draft.about, draft.interests, draft.preferences).all { it.trim().length <= limit }
+    OpticalPanel {
+        Text(if (draft != saved) "저장되지 않은 변경" else if (saved.hasContent) "저장된 개인화 정보" else "개인화 정보 없음", style = MaterialTheme.typography.titleMedium)
+        Note("저장된 Agent 읽기 허용: " + if (saved.shareWithAgent) "허용" else "허용 안 함")
+    }
     OutlinedTextField(draft.about, { draft = draft.copy(about = it); status = "" },
         Modifier.fillMaxWidth(), label = { Text("나에 대한 소개") }, supportingText = { Text("${draft.about.trim().length}/$limit") }, isError = draft.about.trim().length > limit)
     OutlinedTextField(draft.interests, { draft = draft.copy(interests = it); status = "" },
@@ -37,7 +42,7 @@ internal fun AboutYouSection() {
         Text("연결한 Agent가 개인화 정보를 필요할 때 읽도록 허용")
     }
     Note("초기값은 읽기 허용 안 함입니다. 허용해도 모든 발화에 자동 첨부하지 않습니다. 연결한 Agent가 읽으면 사용하는 모델에 전달될 수 있습니다. 업무 기밀이나 비밀번호는 입력하지 마세요. 아래 개인화 정보 저장 버튼을 눌러야 적용되며, 이미 전달된 정보는 철회되지 않습니다.")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ToolButton(onClick = {
             runCatching { store.save(draft); AboutYouPolicy.validated(draft) }.fold({
                 saved = it; draft = it; failed = false; status = "개인화 정보 저장 완료"

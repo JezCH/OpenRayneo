@@ -514,16 +514,27 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
     val ready = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
     val connecting =
         s.glasses.link.phase in setOf(LinkPhase.CONNECTING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("안경 연결하기", style = MaterialTheme.typography.headlineSmall)
+        item {
+            OpticalPanel {
+                Text(if (ready) "현재 안경 연결" else "안경 연결하기", style = MaterialTheme.typography.headlineSmall)
+                Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.titleSmall)
         Note("안경을 깨워 휴대폰 가까이 두세요. 기존 페어링은 유지합니다.")
         if (s.glasses.link.lastFailure != null) Note("다른 앱이 연결을 점유한 경우에만 해당 앱의 안경 연결을 종료하고 다시 시도하세요. 페어링·계정·앱 데이터를 삭제하거나 안경을 초기화하지 마세요.")
         Text(s.glasses.link.detail, color = MaterialTheme.colorScheme.primary)
         s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
         if (s.glasses.link.reconnectWaiting) Note("현재 안경은 미연결 상태입니다. 자동 재연결을 기다리거나 아래에서 다시 스캔하세요.")
+                if (ready || connecting)
+                    ToolOutlinedButton(onClick = { model.attempt { model.service().disconnect() } }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (ready) "안경 연결 해제" else "연결 취소")
+                    }
+            }
+        }
+        item {
         if (!model.bluetoothAllowed) {
             ToolButton(onClick = actions.scan, modifier = Modifier.fillMaxWidth()) {
                 Text("근처 기기 허용 후 스캔")
@@ -542,29 +553,26 @@ private fun DevicePicker(model: AppModel, actions: UiActions) {
         }
         if (connecting || s.glasses.link.phase == LinkPhase.SCANNING)
             LinearProgressIndicator(Modifier.fillMaxWidth())
-        LazyColumn(
-            Modifier.heightIn(max = 300.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        }
+        if (!ready && !connecting) {
+            item { SectionLabel("찾은 안경") }
             items(s.devices, key = { it.bluetooth.address }) { device ->
                 OutlinedCard(
                     onClick = { model.connect(device, false) },
-                    enabled = !ready && !connecting,
+                    enabled = s.available && model.bluetoothAllowed && !ready && !connecting,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     ListItem(
                         headlineContent = { Text(device.name) },
-                        supportingContent = { Text(if (ready) "연결됨" else "탭하여 연결") },
+                        supportingContent = { Text("탭하여 연결") },
                         leadingContent = { Icon(Icons.Outlined.Visibility, null) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     )
                 }
             }
         }
-        if (s.devices.isEmpty() && model.bluetoothAllowed && !connecting) Note("안경이 보이지 않으면 안경을 깨운 뒤 다시 스캔하세요.")
-        if (ready || connecting)
-            ToolOutlinedButton(onClick = { model.attempt { model.service().disconnect() } }) {
-                Text(if (ready) "안경 연결 해제" else "연결 취소")
-            }
+        if (s.devices.isEmpty() && model.bluetoothAllowed && !connecting && !ready)
+            item { Note("안경이 보이지 않으면 안경을 깨운 뒤 다시 스캔하세요.") }
     }
 }
 

@@ -26,7 +26,9 @@ import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (String) -> Unit) {
     val state = model.state.conversation
@@ -38,6 +40,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     LaunchedEffect(state.activeRecord?.id) { liveSpeaker = null }
     val recordListState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
+    var searchAllDates by rememberSaveable { mutableStateOf(true) }
+    val searchQuery = query.trim()
     var dateText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var monthly by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -62,6 +66,12 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
     var source by rememberSaveable { mutableStateOf(ConversationSource.ALWAYS_ON) }
     var resumeOnReconnect by rememberSaveable { mutableStateOf(false) }
     val s = model.state
+    val matchingRecords = state.records.filter { row ->
+            searchQuery.isBlank() || row.title.contains(searchQuery, true) || row.summary.contains(searchQuery, true) ||
+                row.segments.any { it.text.contains(searchQuery, true) || state.people.firstOrNull { p -> p.id == it.personId }?.name?.contains(searchQuery, true) == true } ||
+                row.memories.any { it.subject.contains(searchQuery, true) || it.text.contains(searchQuery, true) } ||
+                row.summaries.any { it.text.contains(searchQuery, true) }
+    }
     val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val startReady = linked && state.modelReady && model.recommendedEditable &&
         !state.running && !state.stopping && !s.alwaysOnResumePending &&
@@ -123,7 +133,7 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                     Text(if (state.reprocessing) "저장된 원본 재전사 중 · 새 녹음 아님" else recording(s).label + " · " + state.mode.title + " · 오디오 ${state.decodedSeconds.toInt()}초 수신")
                     if (state.activeRecord?.transcriptOnly == true) Note("기기 내장 전사 · 원본 음성 미보존")
                     if (state.voiceGate.isNotEmpty()) Text(state.voiceGate)
-                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !state.stopping) { Text(if (state.stopping) "마무리 중…" else if (state.reprocessing) "재전사 중지" else "기록 및 음성 수신 중지") }
+                    ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !state.stopping, modifier = Modifier.fillMaxWidth()) { Text(if (state.stopping) "마무리 중…" else if (state.reprocessing) "재전사 중지" else "기록 및 음성 수신 중지") }
                 }
                 Note(state.status)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -142,14 +152,29 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             item { SectionLabel("현재 대화") }
             items(state.segments.takeLast(12), key = { it.id }) { segment -> SpeechRow(segment, state.people, state.activeRecord) { liveSpeaker = segment } }
         }
-        item { SectionLabel("저장된 기록") }
+        item {
+            SectionLabel("저장된 기록")
+            OutlinedTextField(
+                query, { query = it }, Modifier.fillMaxWidth(),
+                label = { Text("원문, 인물, 기억 검색") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Clear, "검색어 지우기") }
+                },
+                singleLine = true,
+            )
+            if (searchQuery.isNotBlank() && chosenTopic == null) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(searchAllDates, { searchAllDates = true }, label = { Text("전체 기간") })
+                FilterChip(!searchAllDates, { searchAllDates = false }, label = { Text("선택한 기간") })
+            }
+        }
         item { TopicPanel(topicState, topicId) { topicId = it } }
         if (chosenTopic != null) {
-            val linkedRecords = state.records.filter { it.id in chosenTopic.recordIds }.sortedByDescending { it.createdAt }
+            val linkedRecords = matchingRecords.filter { it.id in chosenTopic.recordIds }.sortedByDescending { it.createdAt }
             item {
                 SectionLabel("${chosenTopic.title} · 전체 기간 · ${linkedRecords.size}개 기록")
-                if (linkedRecords.isEmpty()) Note("날짜별 전체에서 기록을 열어 이 주제를 연결하세요.")
-                if (linkedRecords.size < chosenTopic.recordIds.size) Note("현재 기기에 없는 기록 연결은 표시하지 않습니다.")
+                if (linkedRecords.isEmpty()) Note(if (searchQuery.isBlank()) "날짜별 전체에서 기록을 열어 이 주제를 연결하세요." else "이 주제에서 일치하는 기록이 없습니다.")
+                if (state.records.count { it.id in chosenTopic.recordIds } < chosenTopic.recordIds.size) Note("현재 기기에 없는 기록 연결은 표시하지 않습니다.")
             }
             items(linkedRecords, key = { "topic:${it.id}" }) { row ->
                 Card(onClick = { selected = row.id }, modifier = Modifier.fillMaxWidth(),
@@ -158,8 +183,27 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                         Text(row.title, style = MaterialTheme.typography.titleMedium)
                         Note("${row.source.title} · ${recordTime(row)} · ${row.segments.size}개 원문")
                         if (row.transcriptIncomplete) Note("전사 누락 구간 있음")
-                        if (row.summary.isNotBlank() && !row.summaryStale) Text(row.summary.take(160))
+                        if (searchQuery.isNotBlank()) Note(recordSearchExcerpt(row, state.people, searchQuery))
+                        else if (row.summary.isNotBlank() && !row.summaryStale) Text(row.summary.take(160))
                         else row.segments.firstOrNull()?.let { Note(it.text.take(160)) }
+                    }
+                }
+            }
+            return@LazyColumn
+        }
+        if (searchQuery.isNotBlank() && searchAllDates) {
+            item {
+                SectionLabel("전체 기간 검색 · ${matchingRecords.size}개 기록")
+                if (matchingRecords.isEmpty()) Note("일치하는 기록이 없습니다. 검색어를 바꾸세요.")
+            }
+            items(matchingRecords.sortedByDescending { it.createdAt }, key = { "search:${it.id}" }) { row ->
+                Card(onClick = { selected = row.id }, modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(row.title, style = MaterialTheme.typography.titleMedium)
+                        Note("${localDate(row.createdAt)} · ${row.source.title} · ${recordTime(row)}")
+                        Text(recordSearchExcerpt(row, state.people, searchQuery), style = MaterialTheme.typography.bodyMedium)
+                        if (row.transcriptIncomplete) Note("전사 누락 구간 있음")
                     }
                 }
             }
@@ -180,24 +224,10 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             }, second = { control ->
                 ToolOutlinedButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }, modifier = control) { Text(if (monthly) "다음 달" else "다음 날") }
             })
-            OutlinedTextField(
-                query, { query = it }, Modifier.fillMaxWidth(),
-                label = { Text("이 기간의 원문, 인물, 기억 검색") },
-                leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Clear, "검색어 지우기") }
-                },
-                singleLine = true,
-            )
+
         }
         val begin = (if (monthly) date.withDayOfMonth(1) else date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val end = (if (monthly) date.withDayOfMonth(1).plusMonths(1) else date.plusDays(1)).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        val matchingRecords = state.records.filter { row ->
-                query.isBlank() || row.title.contains(query, true) || row.summary.contains(query, true) ||
-                    row.segments.any { it.text.contains(query, true) || state.people.firstOrNull { p -> p.id == it.personId }?.name?.contains(query, true) == true } ||
-                    row.memories.any { it.subject.contains(query, true) || it.text.contains(query, true) } ||
-                    row.summaries.any { it.text.contains(query, true) }
-        }
         val records = matchingRecords.filter { row ->
             row.createdAt < end && calendarRecordEnd(row, now) > begin
         }.sortedBy { it.createdAt }
@@ -241,7 +271,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                             Note("${row.source.title} · ${recordTime(row)} · 당일 ${daySegments.size}개 원문")
                             if (row.transcriptOnly) Note(if (row.transcriptIncomplete) "전사만 보존 · 누락 구간 복구 불가" else "전사만 보존 · 원본 음성 없음")
                             else if (row.processingPending) Note("오디오 저장됨, 전사와 화자 분석 보충 대기")
-                            if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
+                            if (searchQuery.isNotBlank()) Note(recordSearchExcerpt(row, state.people, searchQuery))
+                            else if (row.source == ConversationSource.ALWAYS_ON) daySegments.take(3).forEach { segment ->
                                 Note("${SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(row.timeOf(segment)))} · ${segment.text}")
                             } else if (row.summary.isNotBlank() && !row.summaryStale) Text(row.summary.take(160))
                             else if (row.summaryStale) daySegments.firstOrNull()?.let { Note(it.text.take(160)) }
@@ -253,6 +284,24 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
             }
         }
     }
+}
+
+/** Local matching passage; no AI request or new data storage. */
+private fun recordSearchExcerpt(record: ConversationRecord, people: List<VoicePerson>, query: String): String {
+    fun excerpt(text: String): String {
+        val index = text.indexOf(query, ignoreCase = true)
+        val start = (index - 40).coerceAtLeast(0)
+        val end = (start + maxOf(160, query.length + 40)).coerceAtMost(text.length)
+        return (if (start > 0) "…" else "") + text.substring(start, end) + if (end < text.length) "…" else ""
+    }
+    record.segments.firstOrNull { it.text.contains(query, true) }?.let { return "원문 · " + excerpt(it.text) }
+    record.segments.firstOrNull { segment -> people.any { it.id == segment.personId && it.name.contains(query, true) } }?.let { segment ->
+        return "인물 · " + people.first { it.id == segment.personId }.name + " · " + excerpt(segment.text)
+    }
+    record.memories.firstOrNull { it.subject.contains(query, true) || it.text.contains(query, true) }?.let { return "기억 · " + excerpt(it.subject + " · " + it.text) }
+    if (record.summary.contains(query, true)) return (if (record.summaryStale) "이전 요약 · " else "요약 · ") + excerpt(record.summary)
+    record.summaries.firstOrNull { it.text.contains(query, true) }?.let { return (if (it.stale) "이전 요약 · " else "요약 · ") + excerpt(it.text) }
+    return "제목 · " + excerpt(record.title)
 }
 
 @Composable
@@ -284,7 +333,14 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
     var speakerEdit by remember { mutableStateOf<SpeechSegment?>(null) }
     var memoryEdit by remember { mutableStateOf<AttributedMemory?>(null) }
     var filter by rememberSaveable(record.id) { mutableStateOf<String?>(null) }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val list = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val ordinaryDerived = record.derived.filterNot { it.id.startsWith(FollowUpPolicy.PREFIX) }
+    // Four fixed items precede the optional sections.
+    val timelineIndex = 4 + (if (ordinaryDerived.isNotEmpty()) 1 + ordinaryDerived.size else 0) +
+        (if (record.speakerSamples.isNotEmpty()) 1 else 0) +
+        (if (record.memories.isNotEmpty()) 1 + record.memories.size else 0)
+    LazyColumn(state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             TextButton(back) { Text("기록으로 돌아가기") }
             OpticalPanel {
@@ -293,6 +349,14 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                 TopicMembership(topicState, record.id)
             }
             Note(if (record.source == ConversationSource.ALWAYS_ON) "종일 기록 타임라인과 요약. 원문을 탭하면 인물을 수정할 수 있습니다." else "${record.mode.title} · 원문을 탭하면 화자를, 기억을 탭하면 서술 대상을 수정할 수 있습니다.")
+            OpticalQuickPair(first = { control ->
+                ToolOutlinedButton(onClick = { scope.launch { list.scrollToItem(2) } }, modifier = control) { Text("요약 보기") }
+            }, second = { control ->
+                ToolOutlinedButton(onClick = { scope.launch { list.scrollToItem(timelineIndex) } }, modifier = control) { Text("원문 ${record.segments.size}개 보기") }
+            })
+        }
+        item(key = "record-actions") {
+            SectionLabel("기록 관리")
             if (record.transcriptOnly) Note(if (record.transcriptIncomplete) "완료된 전사만 보존했습니다. 원본 음성이 없어 누락 구간을 복구할 수 없습니다." else "원본 음성을 저장하지 않은 기록입니다. WAV 내보내기와 보충 전사를 사용할 수 없습니다.")
             else if (record.processingPending) Note("원본 오디오가 저장되었습니다. 전사와 화자 분석은 보충 대기 중이며 완료되면 함께 표시됩니다.")
             ToolButton(onClick = { model.service().conversations.summarize(record.id) }, enabled = !state.summarizing && record.segments.isNotEmpty()) {
@@ -305,6 +369,11 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                     TextButton(onClick = { model.attempt { model.service().retranscribe(record.id) } }, enabled = !state.running && !state.stopping) { Text("원본 오디오에서 누락 구간 보충") }
                 }
             }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+        item(key = "record-summary") {
+            if (record.summary.isBlank() && record.summaries.none { it.kind != "rolling" } && !record.summaryStale)
+                Note("저장된 요약이 없습니다. 기록 관리에서 요약 및 기억 정리를 실행할 수 있습니다.")
             if (record.summary.isNotBlank()) {
                 OpticalPanel {
                     SectionLabel(if (record.summaryStale) "이전 요약" else "AI 요약")
@@ -317,10 +386,8 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
                 if (summary.stale) Note("출처가 수정되어 새로 고침 대기 · 아래는 이전 요약")
                 Text(summary.text)
             }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
         item { FollowUpSection(model, record) }
-        val ordinaryDerived = record.derived.filterNot { it.id.startsWith(FollowUpPolicy.PREFIX) }
         if (ordinaryDerived.isNotEmpty()) item { SectionLabel("연결된 Agent 분석 및 메모") }
         items(ordinaryDerived, key = { "derived:${it.id}" }) { derived ->
             OpticalPanel {
@@ -354,7 +421,7 @@ private fun ConversationDetail(model: AppModel, record: ConversationRecord, acti
             SectionLabel("원문 타임라인")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(filter == null, { filter = null }, label = { Text("전체") })
-                record.segments.map { it.speaker }.distinct().take(6).forEach { name ->
+                record.segments.map { it.speaker }.distinct().forEach { name ->
                     FilterChip(filter == name, { filter = name }, label = { Text(KoreanLanguage.speakerLabel(name)) })
                 }
             }
