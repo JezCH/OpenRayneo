@@ -378,7 +378,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                             if (authenticationHandled) replyEarlyCapability()
                         } else if (authenticationHandled) {
                             if (frame.protocol == 0x0f && initialLauncherWait != null) observeInitialLauncher(frame)
-                            listener.onFrame(frame, "BLE")
+                            if (connection === gatt) listener.onFrame(frame, "BLE")
                         }
                     }
                 }
@@ -521,6 +521,12 @@ internal class RayneoConnection(private val context: Context, private val listen
      * a reply is evidence, not permission to alter pairing or disable GPT. */
     private fun beginInitialLauncherRead() {
         val session = generation
+        // AIX readback is for an established bond. Do not delay first registration.
+        if (adapter.getRemoteDevice(checkNotNull(expectedAddress)).bondState != BluetoothDevice.BOND_BONDED) {
+            initialLauncherStatus = "최초 페어링 · 기존 등록 절차 유지"
+            openRfcomm()
+            return
+        }
         val body = JSONObject().put("cmd", "request_general_status")
             .put("payload", JSONObject().put("value", 0).put("mode", 0).put("data", ""))
         val bytes = ProtocolCodec.display(0x0f, earlyCapabilitySequence++ and 65535, 1, body.toString())
@@ -532,7 +538,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         val deadline = Runnable {
             if (session == generation && initialLauncherWait != null) {
                 initialLauncherStatus = "SPP 전 BLE 상태 회신 미확인"
-                finishInitialLauncherRead()
+                guarded { finishInitialLauncherRead() }
             }
         }
         initialLauncherWait = deadline
