@@ -31,7 +31,7 @@ private fun SystemRow.priority() = when {
     else -> 4
 }
 private fun SystemRow.working() = status.phase in setOf(Phase.ACTIVE, Phase.BUSY)
-private fun connection(s: CompanionState) = when {
+internal fun deviceConnectionStatus(s: CompanionState) = when {
     !s.available -> status(Phase.UNKNOWN, "서비스 대기")
     s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting -> when (s.deviceSettings.readback) {
         DeviceReadback.VERIFIED -> status(Phase.READY, "기기 응답 확인")
@@ -79,7 +79,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
             add(SystemRow(g, title, if (!s.available && g != "유지관리" && title != "휴대폰 마이크") unknown else st,
                 if (!s.available && g != "유지관리" && title != "휴대폰 마이크") "서비스 상태 확인 대기" else detail, route, permit, s.available && needsAction))
         }
-        addRow("기기", "안경 연결", connection(s), if (linked) {
+        addRow("기기", "안경 연결", deviceConnectionStatus(s), if (linked) {
             val battery = if (s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
             "BLE·SPP 연결 · " + s.deviceSettings.readback.label + if (battery != null) " · 배터리 $battery%" else ""
         } else when {
@@ -211,7 +211,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         s.audioLevels.active -> "음성 수신 세션"
         else -> "기록 꺼짐"
     }
-    val link = connection(s)
+    val link = deviceConnectionStatus(s)
     val ai = selectedAiStatus(model)
     val pending = s.approvals.size + s.agentReviews.size
     Surface(onClick = open, color = MaterialTheme.colorScheme.surfaceContainerLow) {

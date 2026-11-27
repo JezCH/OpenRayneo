@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.openrayneo.android
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -11,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -206,23 +209,69 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         dismissButton = { TextButton(onClick = { hintRequested = false }) { Text("취소") } })
 }
 
+private data class ToolDestination(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val open: () -> Unit,
+)
+
+/** Group related destinations without giving every navigation row its own card. */
+@Composable
+private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SectionLabel(title)
+        OutlinedCard(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            destinations.forEachIndexed { index, destination ->
+                if (index > 0) HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                ListItem(
+                    headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
+                    supportingContent = { Text(destination.subtitle) },
+                    leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
+                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { SectionLabel("자막 및 번역") }
-        item { FeatureLink("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") } }
-        item { FeatureLink("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") } }
-        item { FeatureLink("주변 대화 번역", "한국어 ↔ 영어 · 내장 모델 · 인터넷 불필요", Icons.Outlined.Translate) { open("translation") } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("AI 및 기록") }
-        item { FeatureLink("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") } }
-        item { FeatureLink("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("생활 및 업무") }
-        item { FeatureLink("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") } }
-        item { FeatureLink("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") } }
-        item { FeatureLink("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") } }
-        item { FeatureLink("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") } }
-        item { Spacer(Modifier.height(8.dp)); SectionLabel("안경 확인") }
-        item { FeatureLink("안경 화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            ToolDestinationGroup("자막 및 번역", listOf(
+                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") },
+                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") },
+                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate) { open("translation") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("AI 및 기록", listOf(
+                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") },
+                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) },
+            ))
+        }
+        item {
+            ToolDestinationGroup("생활 및 업무", listOf(
+                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") },
+                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") },
+                ToolDestination("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") },
+                ToolDestination("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("안경 확인", listOf(
+                ToolDestination("안경 화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") },
+            ))
+        }
         item { Note("안경 화면과 마이크를 공유하는 기능은 동시에 사용하지 못할 수 있습니다. 실행 중인 기능은 홈에서 중지하세요.") }
     }
 }
@@ -346,22 +395,57 @@ internal fun ConnectionReleaseControls(model: AppModel) {
 @Composable
 internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String) -> Unit) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val connection = deviceConnectionStatus(s)
+    val battery = if (linked && s.deviceSettings.loaded && s.deviceSettings.readback == DeviceReadback.VERIFIED)
+        s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 } else null
+    val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(
+        LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING,
+    )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { ContentCard {
-            GlassesArtwork(Modifier.fillMaxWidth().height(90.dp), MaterialTheme.colorScheme.primary)
-            Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-            Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
-            val managing = s.glasses.link.reconnectWaiting || s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY, LinkPhase.CONNECTING, LinkPhase.SCANNING, LinkPhase.RETRY_WAIT, LinkPhase.CLOSING)
-            ToolButton(onClick = { if (managing) open("display-controls") else connect() }, modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
-        } }
-        item { FeatureLink("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") } }
-        item { FeatureLink("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") } }
-        item { FeatureLink("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") } }
-        item { FeatureLink("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") } }
-        item { SectionLabel("고급 및 문제 해결") }
-        item { FeatureLink("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune) { open("diagnostics") } }
-        item { FeatureLink("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility) { open("korean-glyphs") } }
+        item {
+            ContentCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
+                        Text(connection.label, style = MaterialTheme.typography.titleMedium,
+                            color = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface)
+                    }
+                    GlassesArtwork(Modifier.width(92.dp).height(64.dp), MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
+                Note(when {
+                    !s.available -> "서비스 상태 확인 대기"
+                    linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
+                    else -> s.glasses.link.detail
+                })
+                Text(battery?.let { "보고된 배터리 ${it}%" } ?: "배터리 미확인", style = MaterialTheme.typography.titleMedium)
+                if (battery != null) {
+                    LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+                if (linked) Note("표시 세션: " + s.glasses.displayDescription)
+                if (linked) Note("통신 및 기기 응답 확인은 실제 안경 표시·음성 수신 성공과 별개입니다.")
+                ToolButton(onClick = { if (managing) open("display-controls") else connect() },
+                    modifier = Modifier.fillMaxWidth()) { Text(if (managing) "연결 관리" else "안경 연결") }
+                if (s.available) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
+            }
+        }
+        item {
+            ToolDestinationGroup("안경 사용 및 설정", listOf(
+                ToolDestination("안경 설정", "밝기 · 배터리 · 화면 위치 · 제스처 · 언어", Icons.Outlined.Settings) { open("device-settings") },
+                ToolDestination("휴대폰 알림", "앱별 전달 · 본문 표시", Icons.Outlined.NotificationsNone) { open("phone-notifications") },
+                ToolDestination("홈 화면 및 위젯", "레이아웃 · 콘텐츠", Icons.Outlined.Dashboard) { open("content") },
+                ToolDestination("화면 및 오디오", "현재 표시 · 수신 상태 · 중지", Icons.Outlined.Visibility) { open("display-controls") },
+            ))
+        }
+        item {
+            ToolDestinationGroup("고급 및 문제 해결", listOf(
+                ToolDestination("연결 문제 해결", "테스트 알림 · 연결 로그", Icons.Outlined.Tune) { open("diagnostics") },
+                ToolDestination("한글 표시 검사", "내장 폰트 · 글리프 확인", Icons.Outlined.Visibility) { open("korean-glyphs") },
+            ))
+        }
         item { ContentCard {
             Text("다른 앱과 연결 전환", style = MaterialTheme.typography.titleMedium)
             ConnectionReleaseControls(model)
