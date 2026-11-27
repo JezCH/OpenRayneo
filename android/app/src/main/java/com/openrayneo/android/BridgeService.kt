@@ -320,6 +320,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        runCatching { ChatGptSubscription.initialize(this) }
         chatContinuity = ChatContinuityStore.open(this)
         speechOutput = KoreanSpeechOutput(this, main, ::notifyUI)
         LocalModels.keepResident(this, settings.read())

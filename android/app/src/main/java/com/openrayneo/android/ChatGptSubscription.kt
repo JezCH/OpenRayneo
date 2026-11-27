@@ -37,7 +37,7 @@ internal object ChatGptSubscription {
     @Volatile private var listener: ServerSocket? = null
     @Volatile private var cancelling = false
     @Volatile private var exchanging = false
-    private var active = false
+    @Volatile private var active = false
     private val random = SecureRandom()
     data class Model(val id: String, val name: String)
     data class Status(val registered: Boolean, val connected: Boolean, val models: List<Model>)
@@ -78,7 +78,7 @@ internal object ChatGptSubscription {
         return Status(value.optString("client").isNotBlank(), connected,
             if (connected) catalog(value) else emptyList())
     }
-    fun hasModel(id: String): Boolean = status().models.any { it.id == id }
+    fun hasModel(id: String): Boolean = !active && status().models.any { it.id == id }
     private fun randomValue() = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(random::nextBytes))
     private fun decode(s: String): ByteArray = Base64.getUrlDecoder().decode(s)
     private fun encode(b: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
@@ -122,8 +122,8 @@ internal object ChatGptSubscription {
         return claims.getString("sub")
     }
     private fun updatedTokens(value: JSONObject, result: JSONObject, previousScope: String = ""): JSONObject {
-        val access = result.getString("access_token")
-        val refresh = result.getString("refresh_token")
+        val access = result.opt("access_token") as? String ?: error("ChatGPT 액세스 토큰 없음")
+        val refresh = result.opt("refresh_token") as? String ?: error("ChatGPT 갱신 토큰 없음")
         val scope = result.optString("scope", previousScope)
         val expires = result.getLong("expires_in")
         check(access.isNotBlank() && refresh.isNotBlank() && expires in 1..31_536_000 &&
@@ -150,7 +150,13 @@ internal object ChatGptSubscription {
             "client_id" to value.getString("client"), "refresh_token" to value.getString("refresh"), "resource" to RESOURCE))
         val result = http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                if (response.code == 400 || response.code == 401) {
+                val code = runCatching {
+                    val source = checkNotNull(response.body).source()
+                    check(!source.request(65_537))
+                    val error = JSONObject(source.readUtf8()).opt("error")
+                    if (error is JSONObject) error.optString("code") else error as? String
+                }.getOrNull()
+                if (code in setOf("invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired", "refresh_token_invalidated", "refresh_token_reused")) {
                     persist(clearTokens(value))
                     error("ChatGPT 구독 재로그인 필요")
                 }
@@ -177,8 +183,10 @@ internal object ChatGptSubscription {
         return visible
     }
     fun refreshCatalog() = synchronized(lock) {
-        val access = freshAccess()
-        persist(copy().put("catalog", fetchCatalog(access)))
+        check(!active) { "ChatGPT 로그인 이미 진행 중" }
+        active = true
+        try { val access = freshAccess(); persist(copy().put("catalog", fetchCatalog(access))) }
+        finally { active = false }
     }
 
     fun cancelSignIn() {
@@ -279,6 +287,8 @@ internal object ChatGptSubscription {
     /** Stops the local grant even if the server is unreachable. Keep registration. */
     fun signOut(): Boolean = synchronized(lock) {
         check(!active) { "로그인을 먼저 종료하세요" }
+        active = true
+        try {
         val value = copy()
         val refresh = value.optString("refresh")
         val revoked = refresh.isBlank() || runCatching {
@@ -291,5 +301,6 @@ internal object ChatGptSubscription {
         }.getOrDefault(false)
         persist(clearTokens(value))
         revoked
+        } finally { active = false }
     }
 }
