@@ -165,6 +165,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         }, remaining)
     }
     fun next(authorized: () -> Boolean): JSONObject {
+        if (!AiModelSelection.legacy(selectedConfig())) return JSONObject().put("request", JSONObject.NULL)
         val deadline = System.currentTimeMillis() + 20_000
         val selected = synchronized(lock) {
             expireHints()
@@ -175,6 +176,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                 expireHints()
             }
             check(authorized()) { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
+            if (!AiModelSelection.legacy(selectedConfig())) return JSONObject().put("request", JSONObject.NULL)
             expireHints()
             // Explicit/durable tasks take precedence over suggestions.
             val request = requests.values.firstOrNull { it.state == "queued" && it.hintDeadline == 0L }
