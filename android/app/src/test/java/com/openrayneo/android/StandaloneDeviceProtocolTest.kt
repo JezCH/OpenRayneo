@@ -23,6 +23,9 @@ class StandaloneDeviceProtocolTest {
     @Test fun capabilityAndRecordingVisibilityUseSeparateWireContracts() {
         val capability = ProtocolCodec.StreamDecoder().append(ProtocolCodec.emptyCapabilityReply(0x6900)).single()
         assertEquals(6, capability.protocol)
+        val query = ProtocolCodec.StreamDecoder().append(ProtocolCodec.capabilityQuery(0x6901)).single()
+        assertEquals(6, query.protocol)
+        assertEquals("""{"type":1}""", query.payload.toString(Charsets.UTF_8))
         assertEquals("""{"type":2,"ret":"OK","capabilities":[]}""", capability.payload.toString(Charsets.UTF_8))
         for (visible in listOf(true, false)) {
             val f = ProtocolCodec.StreamDecoder().append(ProtocolCodec.recordingVisibility(0x6800, visible)).single()
@@ -50,6 +53,12 @@ class StandaloneDeviceProtocolTest {
         assertEquals(2, ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 1, 2)))
         assertEquals(1, ProtocolCodec.pairingStatus(byteArrayOf(22, 0, 1, 1)))
         assertNull(ProtocolCodec.pairingStatus(byteArrayOf(23, 0, 2, 2)))
+        // Exact observed upstream raw notification, not a synthetic TLV.
+        assertEquals(listOf(2, 0), ProtocolCodec.pairingStatusBytes(byteArrayOf(0x17, 0, 2, 2, 0)))
+        assertEquals(2, ProtocolCodec.pairingStatus(byteArrayOf(0x17, 0, 2, 2, 0)))
+        assertEquals(listOf(1, 255), ProtocolCodec.pairingStatusBytes(byteArrayOf(22, 0, 2, 1, -1)))
+        assertNull(ProtocolCodec.pairingStatusBytes(byteArrayOf(31, 0, 1, 2)))
+        assertNull(ProtocolCodec.pairingStatusBytes(byteArrayOf(23, 0, 1, 2, 0)))
     }
     @Test fun bleControlAllowsOnlyReadAndExplicitWakeEnable() {
         assertTrue(ProtocolCodec.allowedBleLauncher(4, "request_general_settings", 0, 0, ""))
