@@ -33,7 +33,8 @@ private fun FeatureStateRow(title: String, status: FeatureStatusPolicy.Status, a
     val color = when (phase) {
         FeatureStatusPolicy.Phase.ERROR -> MaterialTheme.colorScheme.error
         FeatureStatusPolicy.Phase.BLOCKED, FeatureStatusPolicy.Phase.SETUP -> MaterialTheme.colorScheme.tertiary
-        FeatureStatusPolicy.Phase.ACTIVE, FeatureStatusPolicy.Phase.READY -> MaterialTheme.colorScheme.primary
+        FeatureStatusPolicy.Phase.ACTIVE -> OpticalActiveInk()
+        FeatureStatusPolicy.Phase.READY -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -94,7 +95,7 @@ internal fun HomeFeatureDashboard(model: AppModel, navigate: (Int) -> Unit, open
         waiting = true, blocker = when { s.focusMode -> "집중 모드"; !s.appNotificationsEnabled -> "앱 알림 꺼짐"; mic == false -> "안경 마이크 꺼짐"; else -> null },
         setupDetail = when { !linked -> "안경 연결 필요"; !speechReady -> "기록 엔진·음성 인식 설정 확인"; else -> aiSetup },
         activeDetail = "빠른 실시간 힌트 경로 · " + s.agentServer.receiverStatus, waitingDetail = "실시간 기록 시작 필요")
-    ContentCard {
+    OpticalPanel {
         Text("기능 제어판", style = MaterialTheme.typography.titleMedium)
         Note("스위치는 사용 허용 설정입니다. 실제 실행 여부와 필요한 준비는 아래 상태에서 확인하세요.")
         if (!editing && captureBusy) Note("음성 기능을 사용 중입니다. 호출·힌트 설정을 바꾸려면 먼저 종료하세요.")

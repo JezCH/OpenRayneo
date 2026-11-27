@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -87,3 +88,8 @@ internal fun OpticalQuickTile(title: String, subtitle: String, icon: ImageVector
         }
     }
 }
+
+// Active means observed runtime, not merely configuration or readiness.
+@Composable
+internal fun OpticalActiveInk(): Color =
+    if (MaterialTheme.colorScheme.background.luminance() < .5f) Color(0xFFA5E7B6) else Color(0xFF21663C)

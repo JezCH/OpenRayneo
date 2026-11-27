@@ -82,8 +82,10 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
         dismissButton = { TextButton(onClick = { pendingStart = null }) { Text("취소") } })
     LazyColumn(state = recordListState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            ContentCard {
+            OpticalPanel {
                 Text(if (state.running || state.stopping || s.alwaysOnResumePending) "현재 기록" else "새 기록", style = MaterialTheme.typography.headlineSmall)
+                Text(recording(s).label, style = MaterialTheme.typography.labelLarge,
+                    color = if (recording(s).phase == SystemStatusPolicy.Phase.ACTIVE) OpticalActiveInk() else MaterialTheme.colorScheme.onSurfaceVariant)
                 if (!s.available) Note("서비스 상태를 확인하고 있습니다.")
                 if (!state.running && !state.stopping && !s.alwaysOnResumePending)
                     Note("일상과 회의를 기록합니다. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
@@ -150,7 +152,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 if (linkedRecords.size < chosenTopic.recordIds.size) Note("현재 기기에 없는 기록 연결은 표시하지 않습니다.")
             }
             items(linkedRecords, key = { "topic:${it.id}" }) { row ->
-                OutlinedCard(Modifier.fillMaxWidth().clickable { selected = row.id }) {
+                Card(onClick = { selected = row.id }, modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(row.title, style = MaterialTheme.typography.titleMedium)
                         Note("${row.source.title} · ${recordTime(row)} · ${row.segments.size}개 원문")
@@ -164,16 +167,19 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
         }
         item {
             SectionLabel("기록 일정")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (monthly) "${date.year}년 ${date.monthValue}월" else "${date.monthValue}월 ${date.dayOfMonth}일",
+                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 8.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(!monthly, { monthly = false }, label = { Text("일별") })
                 FilterChip(monthly, { monthly = true }, label = { Text("월별") })
                 TextButton(onClick = { dateText = LocalDate.now().toString() }) { Text("오늘") }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { dateText = (if (monthly) date.minusMonths(1) else date.minusDays(1)).toString() }) { Text(if (monthly) "이전 달" else "이전 날") }
-                Text(if (monthly) "${date.year}년 ${date.monthValue}월" else "${date.monthValue}월 ${date.dayOfMonth}일")
-                TextButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }) { Text(if (monthly) "다음 달" else "다음 날") }
-            }
+            OpticalQuickPair(first = { control ->
+                ToolOutlinedButton(onClick = { dateText = (if (monthly) date.minusMonths(1) else date.minusDays(1)).toString() }, modifier = control) { Text(if (monthly) "이전 달" else "이전 날") }
+            }, second = { control ->
+                ToolOutlinedButton(onClick = { dateText = (if (monthly) date.plusMonths(1) else date.plusDays(1)).toString() }, modifier = control) { Text(if (monthly) "다음 달" else "다음 날") }
+            })
             OutlinedTextField(
                 query, { query = it }, Modifier.fillMaxWidth(),
                 label = { Text("이 기간의 원문, 인물, 기억 검색") },
@@ -228,7 +234,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                     val daySegments = row.segments.filter { segment ->
                         row.timeOf(segment) < dayEnd && row.endTimeOf(segment) > dayBegin
                     }
-                    OutlinedCard(Modifier.fillMaxWidth().clickable { selected = row.id }) {
+                    Card(onClick = { selected = row.id }, modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(row.title, style = MaterialTheme.typography.titleMedium)
                             Note("${row.source.title} · ${recordTime(row)} · 당일 ${daySegments.size}개 원문")
