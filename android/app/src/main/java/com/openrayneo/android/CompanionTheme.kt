@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,10 +31,10 @@ internal val SignalGreen = Color(0xFFB8EFCD)
 internal val LensBlack = Color(0xFF13251D)
 private val Day =
     lightColorScheme(
-        primary = Color(0xFF252B28),
+        primary = Pine,
         onPrimary = Color.White,
-        primaryContainer = Color(0xFFE8EBE9),
-        onPrimaryContainer = Color(0xFF252B28),
+        primaryContainer = Color(0xFFDCEFE4),
+        onPrimaryContainer = Color(0xFF173D2D),
         secondary = Color(0xFF515955),
         secondaryContainer = Color(0xFFEBEEEC),
         onSecondaryContainer = Color(0xFF303733),
@@ -53,10 +54,10 @@ private val Day =
     )
 private val Night =
     darkColorScheme(
-        primary = Color(0xFFE1E7E3),
-        onPrimary = Color(0xFF1B211E),
-        primaryContainer = Color(0xFF2A302C),
-        onPrimaryContainer = Color(0xFFE1E7E3),
+        primary = SignalGreen,
+        onPrimary = LensBlack,
+        primaryContainer = Color(0xFF244936),
+        onPrimaryContainer = SignalGreen,
         secondary = Color(0xFFBAC4BD),
         secondaryContainer = Color(0xFF303732),
         onSecondaryContainer = Color(0xFFDCE4DF),
@@ -178,7 +179,7 @@ internal fun SectionLabel(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp).semantics { heading() },
     )
 }
 
@@ -235,7 +236,7 @@ internal fun ToolButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Button(onClick, modifier, enabled, shape = MaterialTheme.shapes.small, content = content)
+    Button(onClick, modifier.heightIn(min = 48.dp), enabled, shape = MaterialTheme.shapes.medium, content = content)
 }
 
 @Composable
@@ -247,9 +248,9 @@ internal fun ToolOutlinedButton(
 ) {
     OutlinedButton(
         onClick,
-        modifier,
+        modifier.heightIn(min = 48.dp),
         enabled,
-        shape = MaterialTheme.shapes.small,
+        shape = MaterialTheme.shapes.medium,
         content = content,
     )
 }

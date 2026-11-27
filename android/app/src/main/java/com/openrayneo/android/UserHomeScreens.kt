@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String) -> Unit, connect: () -> Unit) {
     val s = model.state
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val c = s.conversation
     val otherMode = s.translationActive || s.captionActive || s.mediaCaption.busy || s.mediaTranslation.preparing || s.offlinePreparing || s.speechPlaying || s.wakeActive || s.wakePending ||
         s.nativeWakeAvailable || s.teleprompter.active != null || s.teleprompter.busy || s.migration.busy ||
@@ -26,6 +26,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     var hintRequested by remember { mutableStateOf(false) }
     var resume by remember { mutableStateOf(false) }
     val activity = when {
+        !s.available -> "서비스 상태 확인 중"
         s.alwaysOnResumePending || c.stopping || c.running -> recording(s).label
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
@@ -34,31 +35,17 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
         s.teleprompter.busy -> "프롬프터 준비 중"
+        s.glasses.navigation.enabled -> "길 안내 중"
+        s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
         s.migration.busy -> "기록 이전 중"
         s.mediaTranslation.preparing || s.offlinePreparing -> "번역 엔진 준비 중"
         s.speechPlaying -> "음성 재생 중"
-        c.summarizing -> "기록 요약 중"
         s.nativeWakeAvailable -> "안경 기본 호출 처리 중"
-        s.glasses.navigation.enabled -> "길 안내 중"
-        s.phoneRunning || s.computerRunning -> "AI 응답 대기 중"
+        c.summarizing -> "기록 요약 중"
+        otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            ContentCard {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
-                        if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
-                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.let { Note("배터리 $it%") }
-                    }
-                    TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
-                }
-                if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
-            }
-        }
         item {
             ContentCard {
                 Text("현재 활동", style = MaterialTheme.typography.labelLarge)
@@ -74,18 +61,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 })
                 if (!c.modelReady) Note("기록 엔진 초기화 대기")
                 if (model.config.optBoolean("ambientWakeEnabled") && c.running && !c.reprocessing && (c.source == ConversationSource.ALWAYS_ON || (c.source == ConversationSource.REALTIME && model.config.optBoolean("fastRealtimeHints")))) Note("한국어 호출: " + s.ambientWakeStatus)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text("AI 연결", style = MaterialTheme.typography.labelLarge)
-                        Note(when {
-                            !model.aiConfigured -> "연결하지 않음"
-                            !model.aiReady -> "연결 기능 켜짐 · 응답 수신 대기"
-                            else -> "요청 수신 확인됨"
-                        })
-                    }
-                    TextButton(onClick = { open("agent-api") }) { Text("관리") }
-                }
-                if (c.running || s.alwaysOnResumePending) {
+                if (c.running || c.stopping || s.alwaysOnResumePending) {
                     ToolButton(onClick = { model.attempt { model.service().stopConversation() } }, enabled = !c.stopping,
                         modifier = Modifier.fillMaxWidth()) { Text(if (c.stopping) "마무리 중…" else if (c.reprocessing) "재전사 중지" else "기록 중지") }
                 } else if (s.wakeActive || s.wakePending) {
@@ -121,6 +97,30 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (c.error != null) Text(c.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("AI 연결", style = MaterialTheme.typography.labelLarge)
+                        Note(selectedAiStatus(model).label)
+                        if (!model.aiLegacy && model.aiConfigured) Note(model.aiStatus)
+                    }
+                    TextButton(onClick = { open(if (model.aiLegacy) "agent-api" else "model") }) { Text("관리") }
+                }
+            }
+        }
+        item {
+            ContentCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Outlined.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
+                        Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
+                        if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
+                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
+                    }
+                    TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
+                }
+                if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
             }
         }
         if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {

@@ -34,6 +34,13 @@ internal object SystemStatusPolicy {
         recent -> Status(Phase.READY, "수신 확인")
         else -> Status(Phase.WAITING, "수신 대기")
     }
+    /** Direct configuration is not evidence of a received AI response. */
+    fun selectedAi(available: Boolean, legacy: Boolean, configured: Boolean, recent: Boolean): Status = when {
+        !available -> Status(Phase.UNKNOWN, "미확인")
+        legacy -> receiver(configured, recent)
+        !configured -> Status(Phase.BLOCKED, "설정 필요")
+        else -> Status(Phase.READY, "설정됨 · 응답 미확인")
+    }
     fun activity(active: Boolean, allowed: Boolean = active): Status =
         if (active) Status(Phase.ACTIVE, "작동 중") else if (allowed) Status(Phase.READY, "켜짐") else Status(Phase.OFF, "꺼짐")
 }
