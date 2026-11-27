@@ -33,6 +33,21 @@ internal class BridgeService : Service() {
     private val nativeSubtitleRequests = LinkedHashSet<String>()
     private val nativeHintRequests = LinkedHashSet<String>()
     private var pendingNativeHint: NativeHintStart? = null
+    // Current-connection evidence only. Never include SID, text, audio, or device identity.
+    private val nativeMenuEvidence = linkedMapOf<Int, String>()
+    private fun noteNativeMenu(protocol: Int, status: String) {
+        nativeMenuEvidence[protocol] = status
+        notifyUI()
+    }
+    val nativeMenuDiagnostics: String get() {
+        val menu = listOf(0x13 to "자막/통역", 0x17 to "AI 힌트", 0x20 to "순정 내비").joinToString(" · ") { (id, label) ->
+            "$label: " + (nativeMenuEvidence[id] ?: "시작 요청 미수신")
+        }
+        val mic = when (deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")) {
+            true -> "허용"; false -> "꺼짐"; null -> "미확인"
+        }
+        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic"
+    }
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
     val navigation get() = NavigationFeed
@@ -497,9 +512,12 @@ internal class BridgeService : Service() {
                 val transition = GlassesCoordinator.reduce(state, currentEvent)
                 val previous = state
                 state = transition.state
+                if (previous.link.phase != LinkPhase.CONNECTING && state.link.phase == LinkPhase.CONNECTING)
+                    nativeMenuEvidence.clear()
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     pendingNativeHint = null
+                    nativeMenuEvidence.clear()
                     hostVisibilityRevision++
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
@@ -1175,6 +1193,7 @@ internal class BridgeService : Service() {
                         check(state.session?.nativeHint?.sid == native.sid) { "안경 힌트 세션 시작 실패" }
                         nativeHintRequests.add(native.sid)
                         if (nativeHintRequests.size > 64) nativeHintRequests.remove(nativeHintRequests.first())
+                        noteNativeMenu(0x17, "세션 시작 · 기기 음성/표시 확인 필요")
                     } else {
                         conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby)
                     }
@@ -1672,15 +1691,39 @@ internal class BridgeService : Service() {
     private fun handleNativeMenuFrame(frame: ProtocolCodec.Frame, source: String): Boolean {
         if (frame.protocol !in setOf(0x13, 0x17, 0x20) || frame.acknowledgement) return false
         val message = ProtocolCodec.message(frame.payload)
+        // A native hint can be cancelled while the worker prepares ASR.
+        // The documented hint-exit reason is 2; require the same pending SID.
+        if (frame.protocol == 0x17 && message.type == 3) {
+            val pending = pendingNativeHint
+            if (pending != null) {
+                val body = runCatching { JSONObject(message.json ?: return false) }.getOrNull()
+                if (body != null && body.optString("sid") == pending.sid && body.optInt("reason_code", -1) == 2) {
+                    pendingNativeHint = null
+                    // Ignore a retransmitted start from the already cancelled device session.
+                    nativeHintRequests.add(pending.sid)
+                    if (nativeHintRequests.size > 64) nativeHintRequests.remove(nativeHintRequests.first())
+                    if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME)
+                        conversations.stop()
+                    noteNativeMenu(0x17, "안경에서 준비 중 취소")
+                    onLog("안경 AI 힌트 준비 중 종료 요청 수신 · 늦은 페이지 시작 차단")
+                    return true
+                }
+            }
+        }
         if (message.type != 1) return false
+        noteNativeMenu(frame.protocol, "시작 요청 수신 ($source, ${state.link.phase.name})")
         if (frame.protocol == 0x17) return handleNativeHintStart(frame, source)
         if (frame.protocol != 0x13) {
+            noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 처리 미구현")
             onLog("안경 기본 메뉴 시작 요청: business=${frame.protocol.toString(16)} type=1 · $source · 전용 처리 미구현")
             return false
         }
         val request = NativeSubtitleStart.parse(frame)
-        if (request == null) { onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
-        if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) return true
+        if (request == null) { noteNativeMenu(0x13, "시작 요청 수신 · 지원 범위 외 형식"); onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
+        if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) {
+            noteNativeMenu(0x13, "동일 세션 요청 · 재시작 방지")
+            return true
+        }
         var starting = false
         runCatching {
             check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "안경 연결 준비 중" }
@@ -1697,10 +1740,12 @@ internal class BridgeService : Service() {
             check(state.session?.nativeSubtitle?.sid == request.sid && translator.active) { "안경 자막 세션 시작 실패" }
             nativeSubtitleRequests.add(request.sid)
             if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
+            noteNativeMenu(0x13, "세션 시작 · 기기 음성/표시 확인 필요")
         }.onFailure { error ->
             if (state.session?.nativeSubtitle?.sid == request.sid) {
                 translator.stop(); dispatch(GlassesEvent.PauseDisplay)
             } else if (starting && translator.active) translator.stop()
+            noteNativeMenu(0x13, "시작 보류 · 연결/마이크/기능 준비 확인")
             onLog("안경 자막 시작 보류: " + (error.message ?: "준비 상태 확인 필요"))
         }
         return true
@@ -1711,9 +1756,12 @@ internal class BridgeService : Service() {
      * The device SID is not replaced with a second phone-originated start. */
     private fun handleNativeHintStart(frame: ProtocolCodec.Frame, source: String): Boolean {
         val request = NativeHintStart.parse(frame)
-        if (request == null) { onLog("안경 AI 힌트 시작 · 지원 범위 외 형식 · $source"); return true }
+        if (request == null) { noteNativeMenu(0x17, "시작 요청 수신 · 지원 범위 외 형식"); onLog("안경 AI 힌트 시작 · 지원 범위 외 형식 · $source"); return true }
         if (pendingNativeHint?.sid == request.sid || state.session?.nativeHint?.sid == request.sid ||
-            request.sid in nativeHintRequests) return true
+            request.sid in nativeHintRequests) {
+            noteNativeMenu(0x17, "동일 세션 요청 · 재시작 방지")
+            return true
+        }
         var starting = false
         runCatching {
             check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "안경 연결 준비 중" }
@@ -1731,16 +1779,19 @@ internal class BridgeService : Service() {
             pendingNativeHint = request
             starting = true
             startConversation(ConversationMode.DAILY, ConversationSource.REALTIME)
+            noteNativeMenu(0x17, "시작 요청 수신 · 음성 모델 준비 중")
             main.postDelayed({
                 if (pendingNativeHint === request) {
                     pendingNativeHint = null
                     if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
+                    noteNativeMenu(0x17, "음성 준비 시간 초과")
                     onLog("안경 AI 힌트 준비 시간 초과 · 새 세션으로 자동 전환하지 않음")
                 }
             }, 3_000)
         }.onFailure { error ->
             if (pendingNativeHint === request) pendingNativeHint = null
             if (starting && conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
+            noteNativeMenu(0x17, "시작 보류 · 연결/마이크/AI 준비 확인")
             onLog("안경 AI 힌트 시작 보류: " + (error.message ?: "준비 상태 확인 필요"))
         }
         return true

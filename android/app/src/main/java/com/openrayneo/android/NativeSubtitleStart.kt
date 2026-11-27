@@ -25,10 +25,11 @@ internal data class NativeSubtitleStart(
             if (frame.protocol != 0x13 || frame.acknowledgement || frame.payload.size !in 1..4096) return null
             val message = ProtocolCodec.message(frame.payload)
             if (message.type != 1 || message.audio?.isNotEmpty() == true) return null
-            val body = JSONObject(message.json ?: return null)
+            val body = runCatching { JSONObject(message.json ?: return null) }.getOrNull() ?: return null
             val sid = body.opt("sid") as? String ?: return null
             if (!sid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return null
             if (body.has("code") && body.opt("code") != 0) return null
+            if (body.optBoolean("force", false)) return null
             val settings = body.optJSONObject("settings") ?: return null
             for (key in listOf("mode", "source_language", "target_language", "direction"))
                 if (settings.has(key) && settings.opt(key) !is String) return null
