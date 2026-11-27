@@ -17,14 +17,16 @@ import java.util.concurrent.TimeUnit
 internal class DirectModelInference {
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(55, TimeUnit.SECONDS).build()
+        .callTimeout(175, TimeUnit.SECONDS).build()
     private val workers = Executors.newFixedThreadPool(2)
     private data class Work(@Volatile var cancelled: Boolean = false, @Volatile var call: Call? = null)
     private val active = ConcurrentHashMap<String, Work>()
 
+    data class Answer(val text: String, val reportedModel: String?)
+
     fun submit(id: String, profile: AiModelSelection.Profile, text: String, instruction: String,
                input: JSONObject?, context: (() -> JSONObject?)?, valid: () -> Boolean,
-               complete: (Result<String>) -> Unit) {
+               complete: (Result<Answer>) -> Unit) {
         val work = Work()
         check(active.putIfAbsent(id, work) == null)
         workers.execute {
@@ -53,9 +55,10 @@ internal class DirectModelInference {
                     check(response.isSuccessful) { "선택 모델 응답 실패 (HTTP ${response.code})" }
                     val source = checkNotNull(response.body).source()
                     check(!source.request(2L * 1024 * 1024 + 1)) { "AI 응답 길이 초과" }
-                    val choice = JSONObject(source.readUtf8()).getJSONArray("choices").getJSONObject(0)
+                    val body = JSONObject(source.readUtf8())
+                    val choice = body.getJSONArray("choices").getJSONObject(0)
                     check(choice.optString("finish_reason") == "stop") { "AI 답변 미완료" }
-                    choice.getJSONObject("message").getString("content").trim().ifBlank { error("빈 AI 답변") }
+                    Answer(choice.getJSONObject("message").getString("content").trim().ifBlank { error("빈 AI 답변") }, body.optString("model").takeIf { it.isNotBlank() })
                 }
             }
             if (active.remove(id, work) && !work.cancelled) complete(result)
