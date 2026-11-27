@@ -23,6 +23,7 @@ internal object AppUpdate {
     const val PACKAGE = "com.openrayneo.android.validation"
     private const val ROOT = "https://github.com/JezCH/OpenRayneo/releases/download/"
     private const val LIST = "https://api.github.com/repos/JezCH/OpenRayneo/releases?per_page=30"
+    private const val INDEX = "https://raw.githubusercontent.com/JezCH/OpenRayneo/refs/heads/wearable/update-index/validation-release.json"
     private const val APK = "OpenRayneo-validation.apk"
     private const val MANIFEST = "update-manifest.json"
     const val MAX_APK = 1900L * 1024 * 1024
@@ -30,7 +31,7 @@ internal object AppUpdate {
     private val tagPattern = Regex("validation-v([1-9][0-9]{0,9})")
     private val digestPattern = Regex("[0-9a-f]{64}")
     private val hosts = setOf("api.github.com", "github.com", "release-assets.githubusercontent.com",
-        "objects.githubusercontent.com", "github-releases.githubusercontent.com")
+        "objects.githubusercontent.com", "github-releases.githubusercontent.com", "raw.githubusercontent.com")
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.MINUTES).build()
@@ -69,7 +70,8 @@ internal object AppUpdate {
         var next = url.toHttpUrl()
         repeat(6) {
             check(next.isHttps && next.host in hosts && next.port == 443 &&
-                next.username.isEmpty() && next.password.isEmpty()) { "허용되지 않은 다운로드 주소" }
+                next.username.isEmpty() && next.password.isEmpty() &&
+                (next.host != "raw.githubusercontent.com" || next.toString() == INDEX)) { "허용되지 않은 다운로드 주소" }
             val res = http.newCall(Request.Builder().url(next).header("User-Agent", "OpenRayneo-validation-updater")
                 .header("Accept", if (next.host == "api.github.com") "application/vnd.github+json" else "application/octet-stream").build()).execute()
             if (res.code in listOf(301, 302, 303, 307, 308)) {
@@ -113,8 +115,21 @@ internal object AppUpdate {
         return a
     }
 
-    suspend fun checkLatest(context: Context): Candidate? = withContext(Dispatchers.IO) {
-        check(supported && context.packageName == PACKAGE)
+    // This small, public index is updated only after successful release publication.
+    // It avoids the unauthenticated REST quota. It is metadata, not an installation
+    // trust anchor: manifest, APK digest, installed certificate and archive checks remain mandatory.
+    private fun indexedRelease(): Pair<Long, JSONObject>? = runCatching {
+        val item = JSONObject(json(INDEX))
+        check(!item.getBoolean("draft") && item.getBoolean("prerelease"))
+        val tag = item.getString("tag_name")
+        val code = checkNotNull(tagPattern.matchEntire(tag)?.groupValues?.get(1)?.toLongOrNull())
+        check(code in 1..Int.MAX_VALUE.toLong())
+        asset(item, MANIFEST, tag)
+        asset(item, APK, tag)
+        code to item
+    }.getOrNull()
+
+    private suspend fun apiLatest(): Pair<Long, JSONObject>? {
         val releases = mutableListOf<Pair<Long, JSONObject>>()
         var exhausted = false
         for (page in 1..5) {
@@ -130,7 +145,13 @@ internal object AppUpdate {
             if (list.length() < 30) { exhausted = true; break }
         }
         check(exhausted) { "배포 목록 조회 범위를 초과했습니다. 배포 목록을 정리한 뒤 다시 확인하세요." }
-        val (code, release) = releases.maxByOrNull { it.first } ?: return@withContext null
+        return releases.maxByOrNull { it.first }
+    }
+
+    suspend fun checkLatest(context: Context): Candidate? = withContext(Dispatchers.IO) {
+        check(supported && context.packageName == PACKAGE)
+        val (code, release) = indexedRelease() ?: apiLatest() ?: return@withContext null
+        if (code <= BuildConfig.VERSION_CODE.toLong()) return@withContext null
         val tag = release.getString("tag_name")
         val metadata = asset(release, MANIFEST, tag)
         check(metadata.getLong("size") in 1..MAX_JSON)
