@@ -1238,6 +1238,27 @@ internal class BridgeService : Service() {
         onLog("휴대폰 타이머 완료")
         updateNotification(); notifyUI()
     }
+    private fun aiConfigured(): Boolean {
+        val cfg = settings.read()
+        return if (AiModelSelection.legacy(cfg)) agentServer.state.enabled else AiModelSelection.direct(cfg) != null
+    }
+    private fun aiReady(): Boolean = aiConfigured() &&
+        (!AiModelSelection.legacy(settings.read()) || agentServer.state.pollRecent)
+
+    /** Switching does not abort an already-approved task or mix its output with
+     * the newly selected model. The service and UI check the same idle boundary. */
+    fun canSwitchAiModel(): Boolean = !destroyed && !agent.running && !codex.running &&
+        !conversations.state.running && !conversations.state.stopping && !conversations.state.summarizing &&
+        !translator.active && !mediaCaptionState.busy && !agent.harness.hasOutstanding() &&
+        !voiceTransport.nativeActive && !state.disconnecting && !migration.state.busy &&
+        !teleprompter.state.smartFollow && followUpExtraction == null
+    fun aiModelChanged() {
+        cancelNativeChat(); resetAmbientWake(); cancelKoreanWake(); cancelRealtimeStream()
+        resetAgentProbe()
+        onLog("AI 모델 선택 변경: " + AiModelSelection.label(settings.read()))
+        notifyUI()
+    }
+
     private fun submitVoiceRequest(request: VoiceRequest): Boolean? {
         // Backfill is retained by the record controller, not a new authorization to execute work.
         if (request.backfill) { request.retainInAgentContext = false; return true }
@@ -1247,7 +1268,7 @@ internal class BridgeService : Service() {
             request.retainInAgentContext = false; return true
         }
         val cfg = settings.read()
-        if (!agentServer.state.enabled && request.source != ConversationSource.NATIVE) {
+        if (!aiConfigured() && request.source != ConversationSource.NATIVE) {
             request.retainInAgentContext = false; return true
         }
         val identity = nativeIdentity()
@@ -1462,11 +1483,12 @@ internal class BridgeService : Service() {
         fun respond(message: String) {
             if (token == nativeChatGeneration && current()) voiceTransport.reply(message, request.text, wake)
         }
-        if (!agentServer.state.enabled) { respond("AI 연결을 설정해 주세요."); return true }
-        if (!agentServer.state.pollRecent) { respond("외부 AI가 수신 대기 중인지 확인해 주세요."); return true }
+        if (!aiConfigured()) { respond("선택한 AI 모델 연결을 설정해 주세요."); return true }
+        if (!aiReady()) { respond("선택한 AI 연결 상태를 확인해 주세요."); return true }
         val workPrefix = Regex("^업무\\s*실행(?:\\s+|[:：,，]\\s*)")
         val work = workPrefix.find(request.text.trim())
         if (work != null) {
+            if (!AiModelSelection.legacy(cfg)) { respond("선택 모델의 업무 실행은 아직 지원되지 않습니다."); return true }
             val task = request.text.trim().substring(work.range.last + 1).trim()
             val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
                 segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
@@ -1745,7 +1767,7 @@ internal class BridgeService : Service() {
             !agent.running && !codex.running) { "진행 중인 기록·화면·AI 작업을 먼저 종료하세요" }
         val config = settings.read()
         translator.captionConfig(config)
-        if (wake && allowAI) check(agentServer.state.enabled) { "먼저 AI 연결을 설정하세요" }
+        if (wake && allowAI) check(aiConfigured()) { "먼저 모델 선택에서 AI 연결을 설정하세요" }
         cancelKoreanWake()
         cancelVoiceAlwaysOnStart()
         cancelAlwaysOnRecovery()
@@ -1846,8 +1868,8 @@ internal class BridgeService : Service() {
                 requestVoiceNavigation(navCommand) else "안경 기본 호출 또는 전용 한국어 호출로 길 안내를 요청하세요.")
             return true
         }
-        if (!agentServer.state.enabled) { answer("호출 인식 완료 · AI 연결 설정 필요"); return true }
-        if (!agentServer.state.pollRecent) { answer("외부 AI의 최근 수신 요청 없음 · 연결 상태 확인"); return true }
+        if (!aiConfigured()) { answer("호출 인식 완료 · 선택 모델 연결 필요"); return true }
+        if (!aiReady()) { answer("선택한 AI 연결 상태 확인"); return true }
         ambientWakeStatus = "호출 인식 · AI 응답 대기"
         show("AI 응답 대기"); notifyUI()
         // History is opt-in and scoped to the current record and a recognized person
@@ -1931,10 +1953,10 @@ internal class BridgeService : Service() {
             runCatching { sendCompanionNotification("한국어 호출", local, FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
         }
-        if (!allowAI || !agentServer.state.enabled || agent.running || codex.running) {
+        if (!allowAI || !aiConfigured() || agent.running || codex.running) {
             wakeResult = "지원되는 로컬 명령이 아니거나 AI 질문이 허용되지 않았습니다."; notifyUI(); return
         }
-        if (!agentServer.state.pollRecent) {
+        if (!aiReady()) {
             wakeResult = "외부 AI의 최근 수신 요청 없음 · 연결 상태 확인"
             runCatching { sendCompanionNotification("한국어 호출", wakeResult, FocusPolicy.Output.DIRECT_ANSWER) }
             notifyUI(); return
@@ -2040,8 +2062,10 @@ internal class BridgeService : Service() {
         check(references == null || (source == AnswerSource.MOBILE_AGENT && !allowTools && !retainHistory)) { "기억 첨부는 휴대폰 질문 전용에서만 지원합니다" }
         check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
-            check(agentServer.state.enabled) { "먼저 설정의 'DSH Go 및 외부 Agent'에서 로컬 엔드포인트를 활성화하고 DSH Go 플러그인을 시작하세요" }
-            check(agentServer.state.pollRecent) { "외부 Agent의 최근 수신 요청이 없습니다. DSH Go가 실행 중인지 확인하세요. 처리 중이라면 완료 후 다시 시도하세요." }
+            check(aiConfigured() && aiReady()) { "모델 선택에서 선택한 AI 연결을 설정하고 상태를 확인하세요" }
+            check(!allowTools || AiModelSelection.legacy(settings.read())) { "선택 모델의 업무 실행은 아직 지원되지 않습니다" }
+        } else check(AiModelSelection.legacy(settings.read())) {
+            "선택 모델과 별도의 Codex 실행은 기존 연결 모드에서만 가능합니다"
         }
         when (source) {
             AnswerSource.MOBILE_AGENT -> check(!agent.running) { "답변을 기다리거나 먼저 중지하세요" }
@@ -2238,7 +2262,7 @@ internal class BridgeService : Service() {
     private var agentProbeToken: String? = null
     private var agentProbeRequest: String? = null
     fun startAgentProbe(target: AgentProbePolicy.Target = AgentProbePolicy.Target.DEFAULT) {
-        check(!destroyed && agentServer.state.enabled && !agent.running && !codex.running &&
+        check(!destroyed && aiConfigured() && !agent.running && !codex.running &&
             !conversations.state.running && !translator.active && !teleprompter.state.smartFollow) {
             "로컬 Agent를 연결하고 현재 작업 및 음성 기능을 종료하세요"
         }
@@ -2292,7 +2316,7 @@ internal class BridgeService : Service() {
     private var followUpExtraction: String? = null
     fun extractFollowUps(recordId: String, revision: Int, page: Int, completion: (Result<Int>) -> Unit) {
         check(!destroyed && !conversations.state.running && followUpExtraction == null) { "현재 기록 또는 후보 추출을 먼저 마치세요" }
-        check(agentServer.state.enabled && agentServer.state.pollRecent) { "DSH Go 및 외부 Agent가 수신 대기 중인지 확인하세요" }
+        check(aiReady()) { "선택 모델 연결 상태를 확인하세요" }
         val repository = conversations.repository
         val record = repository.referenceSnapshot().firstOrNull { it.id == recordId && it.revision == revision }
             ?: error("원본 기록이 변경되었습니다. 다시 확인하세요")
@@ -2456,7 +2480,7 @@ internal class BridgeService : Service() {
         }
         val activity = activities.ifEmpty { listOf("대기 중") }.joinToString(" · ")
         return listOf("안경 " + link.label, activity,
-            "AI " + SystemStatusPolicy.receiver(agentServer.state.enabled, agentServer.state.pollRecent).label).joinToString(" · ")
+            "AI " + if (AiModelSelection.legacy(settings.read())) SystemStatusPolicy.receiver(agentServer.state.enabled, agentServer.state.pollRecent).label else AiModelSelection.label(settings.read()) + if (aiConfigured()) " 설정됨" else " 연결 필요").joinToString(" · ")
     }
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java)
