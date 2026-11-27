@@ -567,7 +567,7 @@ internal class ConversationController(private val context: Context, private val 
     } }
     fun removeVoice(id: String) { worker.post { repository.removeVoice(id); publish(state.copy(people = repository.people)) } }
     private fun day(time: Long) = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate().toString()
-    private fun summaryConfigured(config: JSONObject) = MobileModelEndpoint.isConfigured(config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey"))
+    private fun summaryConfigured(config: JSONObject) = AiModelSelection.endpoint(config) != null
     fun summarize(recordId: String) { worker.post { enqueueSummary(recordId, "manual") } }
     private fun scheduleDaySummaries(includeToday: Boolean) {
         val cfg = settings.read()
