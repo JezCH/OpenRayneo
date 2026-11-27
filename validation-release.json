@@ -1,71 +1,71 @@
 {
-  "tag_name": "validation-v1248",
+  "tag_name": "validation-v1262",
   "draft": false,
   "prerelease": true,
-  "body": "## What's Changed\n* Fix registered-device reconnect and test authenticated BLE wake control by @JezCH in https://github.com/JezCH/OpenRayneo/pull/76\n* Complete early authenticated link negotiation and recover raw device-state evidence by @JezCH in https://github.com/JezCH/OpenRayneo/pull/77\n\n\n**Full Changelog**: https://github.com/JezCH/OpenRayneo/compare/validation-v1238...validation-v1248",
+  "body": "## What's Changed\n* Decouple Android update discovery from GitHub REST rate limits by @JezCH in https://github.com/JezCH/OpenRayneo/pull/78\n* Unlock settings after a native wake declined by disabled auto-answer by @JezCH in https://github.com/JezCH/OpenRayneo/pull/79\n* Centralize AI model selection and direct text inference without cross-provider fallback by @JezCH in https://github.com/JezCH/OpenRayneo/pull/80\n* Connect native ChatGPT plan sign-in and account-selected Responses inference by @JezCH in https://github.com/JezCH/OpenRayneo/pull/81\n\n\n**Full Changelog**: https://github.com/JezCH/OpenRayneo/compare/validation-v1248...validation-v1262",
   "assets": [
     {
-      "name": "delta-1230-to-1248.orp",
+      "name": "delta-1230-to-1262.orp",
       "state": "uploaded",
-      "size": 11605504,
-      "digest": "sha256:013992303ebdce8950916d2eb8bc7488048fab6136e239b62ce80aaee47cbd52",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/delta-1230-to-1248.orp"
+      "size": 43338794,
+      "digest": "sha256:1dbfd72e19b1ea73beee7f9c95c021fb971c0dd05282faef9ad6c48d5f3f935a",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/delta-1230-to-1262.orp"
     },
     {
-      "name": "delta-1238-to-1248.orp",
+      "name": "delta-1238-to-1262.orp",
       "state": "uploaded",
-      "size": 11605504,
-      "digest": "sha256:bd665f093ebfee4d47517a2e79c5671e07d3c3fd683843067c0f781ee7f6e7a5",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/delta-1238-to-1248.orp"
+      "size": 43338794,
+      "digest": "sha256:2b349a2c26a3c41a7b258376d9385846aff2f7b21bd18ca5726cf5a96893d701",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/delta-1238-to-1262.orp"
     },
     {
-      "name": "delta-1247-to-1248.orp",
+      "name": "delta-1248-to-1262.orp",
       "state": "uploaded",
-      "size": 11605224,
-      "digest": "sha256:8f22e75ba88cf9bc290c72d14e372f05080f5126a273a4c28cce14c8ec5e7325",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/delta-1247-to-1248.orp"
+      "size": 43338794,
+      "digest": "sha256:2e87d2ae59d8686defbbe54d4e76f9f7ac2d3c230ae232aa1f9f1512d018d244",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/delta-1248-to-1262.orp"
     },
     {
       "name": "mozilla-native-8eada038-r2.sources.tar.gz",
       "state": "uploaded",
       "size": 22653302,
       "digest": "sha256:befddb1e191089957f4795bdacddc80191b6428ac722ee54986b62b4582f3710",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/mozilla-native-8eada038-r2.sources.tar.gz"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/mozilla-native-8eada038-r2.sources.tar.gz"
     },
     {
       "name": "openrayneo-badging.txt",
       "state": "uploaded",
       "size": 7253,
-      "digest": "sha256:81e9d497cbed04310537be20e248a736f450c3d00677428ce04ee6a5ec7ce255",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/openrayneo-badging.txt"
+      "digest": "sha256:3a7f85794ad26ac6de2a9f4dd53f73680740f685191041abacda61bbac12863b",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/openrayneo-badging.txt"
     },
     {
       "name": "openrayneo-certs.txt",
       "state": "uploaded",
       "size": 961,
       "digest": "sha256:502d49893d48652ce89b20428533ad5def8c99036be5624f65cef70b8562178d",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/openrayneo-certs.txt"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/openrayneo-certs.txt"
     },
     {
       "name": "openrayneo-dsh-0.1.12.tgz",
       "state": "uploaded",
       "size": 19625,
       "digest": "sha256:a30b3983af0c16db2efa55f392fa983393464e4b8f97271cf5ef779d08effcec",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/openrayneo-dsh-0.1.12.tgz"
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/openrayneo-dsh-0.1.12.tgz"
     },
     {
       "name": "OpenRayneo-validation.apk",
       "state": "uploaded",
-      "size": 1339075402,
-      "digest": "sha256:e1e120d40ad41efad0c61c3349bac4850a3bb7a9e4e97fc760d80932a9942189",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/OpenRayneo-validation.apk"
+      "size": 1339206474,
+      "digest": "sha256:7d04dfeeb601f49a162861b7c53af3fa5dc2cddc3344182315983633691ae6d1",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/OpenRayneo-validation.apk"
     },
     {
       "name": "update-manifest.json",
       "state": "uploaded",
       "size": 1642,
-      "digest": "sha256:d7ee0caaee34fc021b65046594239b074af0dee4f27c16471271b9f26f1b9435",
-      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1248/update-manifest.json"
+      "digest": "sha256:90ffc8ba5c9f35116333dc286a809cb0a2ce0374ebaeb3d3465a6c947dcb857e",
+      "browser_download_url": "https://github.com/JezCH/OpenRayneo/releases/download/validation-v1262/update-manifest.json"
     }
   ]
 }
