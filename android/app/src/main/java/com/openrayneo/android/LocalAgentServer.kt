@@ -40,7 +40,8 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         val startedAt: Long = SystemClock.elapsedRealtime(),
         @Volatile var cancelled: Boolean = false, var state: String = "running",
         var phase: String = if (approval) "awaiting_approval" else "executing",
-        var result: JSONObject? = null, var error: String? = null)
+        var result: JSONObject? = null, var error: String? = null,
+        val ownerAllowed: () -> Boolean = { true }, val completion: ((Result<JSONObject>) -> Unit)? = null)
     private val tasks = linkedMapOf<String, Task>() // Main-thread owned.
     private val reviewMs = 40_000L
     private val taskMs = 120_000L
@@ -72,6 +73,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         task.phase = if (executing) "outcome_unknown" else "not_executed"
         task.error = reason + if (executing) " · 이미 실행된 변경은 취소되지 않을 수 있습니다. 재조회하세요." else " · 실행하지 않았습니다."
         changed()
+        task.completion?.invoke(Result.failure(IllegalStateException(task.error ?: "업무 요청 취소")))
     }
     fun cancelReviewExecution(id: String) {
         val task = checkNotNull(tasks[id]) { "요청이 없거나 만료되었습니다" }
@@ -84,7 +86,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private fun expire(task: Task) {
         if (task.state != "running") return
         val age = SystemClock.elapsedRealtime() - task.startedAt
-        if (age >= taskMs || (task.phase == "awaiting_approval" && age >= reviewMs)) end(task, "요청 시간 만료")
+        if (!task.ownerAllowed() || age >= taskMs || (task.phase == "awaiting_approval" && age >= reviewMs)) end(task, "요청 시간 만료 또는 취소")
     }
     fun review(id: String, approve: Boolean) {
         val task = checkNotNull(tasks[id]) { "요청이 없거나 만료되었습니다" }
@@ -95,7 +97,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         executeTask(task)
     }
     private fun executeTask(task: Task) {
-        val allowed = { !task.cancelled && SystemClock.elapsedRealtime() - task.startedAt < taskMs }
+        val allowed = { !task.cancelled && task.ownerAllowed() && SystemClock.elapsedRealtime() - task.startedAt < taskMs }
         fun finish(result: Result<JSONObject>) {
             if (task.state != "running") return
             if (!allowed()) { end(task, "요청 시간 만료 또는 취소"); return }
@@ -103,7 +105,9 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             task.result = result.getOrNull(); task.error = result.exceptionOrNull()?.message
             task.phase = if (result.isFailure && task.approval) "outcome_unknown" else if (result.isFailure) "failed" else "returned"
             changed()
+            task.completion?.invoke(result)
         }
+        if (!allowed()) { end(task, "요청 시간 만료 또는 취소"); return }
         try { execute(task.name, JSONObject(task.args.toString()), allowed, ::finish) }
         catch (error: Exception) { finish(Result.failure(error)) }
     }
@@ -114,8 +118,11 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         is String -> JSONObject.quote(value)
         else -> value.toString()
     }
-    private fun submitTool(name: String, args: JSONObject): JSONObject {
-        val approval = CompanionTools.requiresReview(name)
+    private fun submitTool(name: String, args: JSONObject, ownerAllowed: () -> Boolean = { true },
+                           completion: ((Result<JSONObject>) -> Unit)? = null): JSONObject {
+        check(ownerAllowed()) { "업무 요청 취소" }
+        tasks.entries.removeAll { it.value.state != "running" && SystemClock.elapsedRealtime() - it.value.startedAt > taskMs }
+        val approval = CompanionTools.requiresReview(name) || (completion != null && name in setOf("memory_reference", "about_you_read", "location_current"))
         val requestId = args.optString("request_id")
         if (CompanionTools.mutates(name)) require(requestId.isNotBlank()) { "쓰기 작업에는 고정 request_id가 필요합니다" }
         if (requestId.isNotBlank()) {
@@ -123,6 +130,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             val prior = tasks.values.firstOrNull { it.args.optString("request_id") == requestId }
             if (prior != null) {
                 check(prior.name == name && canonical(prior.args) == canonical(args)) { "같은 request_id에 다른 작업을 제출할 수 없습니다" }
+                check(completion == null) { "중복 직접 도구 요청" }
                 expire(prior)
                 return taskJSON(prior)
             }
@@ -132,12 +140,31 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
             require(args.toString().length <= 16_384) { "휴대폰에서 검토 가능한 요청 길이를 초과했습니다" }
             check(tasks.values.count { it.state == "running" && it.phase == "awaiting_approval" } < 4) { "승인 대기 요청이 너무 많습니다" }
         }
-        val task = Task(name, JSONObject(args.toString()), approval)
+        val task = Task(name, JSONObject(args.toString()), approval, ownerAllowed = ownerAllowed, completion = completion)
         tasks[task.id] = task
         main.postDelayed({ expire(task) }, reviewMs)
         main.postDelayed({ expire(task) }, taskMs)
         if (approval) changed() else executeTask(task)
         return taskJSON(task)
+    }
+    /** Direct model tasks use exactly the same approvals, receipts and device
+     * permission gate, without opening the external Agent HTTP listener. */
+    fun selectedTool(name: String, args: JSONObject, valid: () -> Boolean,
+                     completion: (Result<JSONObject>) -> Unit): () -> Unit {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        var taskId: String? = null // Main-thread owned.
+        val allowed = { !cancelled.get() && valid() }
+        main.post {
+            try {
+                check(allowed()) { "업무 요청 취소" }
+                taskId = submitTool(name, args, allowed, completion).getString("id")
+            } catch (error: Exception) { completion(Result.failure(error)) }
+        }
+        return {
+            cancelled.set(true)
+            main.post { taskId?.let { id -> tasks[id]?.let { end(it, "선택 모델 업무 중지") } } }
+            Unit
+        }
     }
     private val network = Executors.newFixedThreadPool(3)
     private val slots = java.util.concurrent.Semaphore(8)

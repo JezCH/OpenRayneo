@@ -12,7 +12,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     private val continuity: ChatContinuity,
     private val ordinaryContext: (String) -> (() -> JSONObject?)?,
     private val restored: (String, String, JSONObject) -> Unit, private val changed: () -> Unit,
-    private val tool: (String, JSONObject, () -> Boolean, (Result<JSONObject>) -> Unit) -> Unit,
+    private val tool: SelectedToolExecutor,
     private val finalAnswer: (String, String) -> Unit) {
     companion object { const val CHAT_TIMEOUT_MS = 180_000L }
     private val main = Handler(Looper.getMainLooper())
@@ -25,7 +25,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     var answer = ""; private set
     var question = ""; private set
     var ephemeral = false; private set
-    val harness = DshRelay(main, repository, restored, settings::read) { message -> if (running) { status = message; changed() } }
+    val harness = DshRelay(main, repository, restored, settings::read, tool) { message -> if (running) { status = message; changed() } }
     fun submit(text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = true, references: JSONObject? = null) {
         check(!running) { "답변을 기다리거나 먼저 중지하세요" }
         // Restricted requests must not enter a durable tool-executing session.
@@ -39,7 +39,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
         val policy = KoreanLanguage.withAnswerPolicy(listOf(context, instruction).filter { it.isNotBlank() }.joinToString("\n"), settings.read().optString("answerLanguage"))
         val session = ++generation
         question = text; answer = ""; running = true; ephemeral = !retainHistory
-        status = if (allowTools) "외부 Agent 작업 수신 대기 중…" else "질문 전용 AI 응답 대기 중…"; changed()
+        status = if (allowTools) (if (AiModelSelection.legacy(settings.read())) "외부 Agent 작업 수신 대기 중…" else "선택 모델 업무 처리 중 · 필요한 승인을 확인하세요") else "질문 전용 AI 응답 대기 중…"; changed()
         val kind = if (allowTools) "task" else "hint"
         val input = if (allowTools) null else JSONObject().put("purpose", "explicit_question").put("question", text).apply {
             if (references != null) put("references", references)

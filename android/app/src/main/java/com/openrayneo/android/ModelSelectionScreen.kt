@@ -95,7 +95,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
             Note("기존 DSH Go·요약 설정 호환 모드입니다. 통합 모델 선택이 아니며 기존 사용자의 설정 보존을 위한 옵션입니다.")
             ToolOutlinedButton(onClick = { legacy = true }, enabled = model.aiSwitchAllowed && selected != AiModelSelection.LEGACY) { Text(if (selected == AiModelSelection.LEGACY) "선택됨" else "기존 방식 선택") }
         }
-        Note("직접 연결 모델은 현재 질문·요약·온라인 번역을 지원합니다. 업무 실행 및 PC Codex는 동일 모델 경로가 구현될 때까지 기존 연결 방식에서만 사용할 수 있습니다.")
+        Note("직접 연결 모델은 질문·요약·온라인 번역과 명시적 업무 실행을 사용합니다. 업무 도구 지원 여부는 공급자 모델에 따라 다르며 쓰기·일부 개인정보 조회에는 승인이 필요합니다. PC Codex는 기존 연결 방식에서만 지원합니다.")
     }
     editId?.let { id ->
         val candidate = AiModelSelection.Profile(id, label.trim(), url.trim(), name.trim(), key.trim())

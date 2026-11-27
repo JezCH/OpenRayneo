@@ -427,7 +427,7 @@ internal class BridgeService : Service() {
                 navigation.activeNavigationCount == 0)
                 voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
         }
-        agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
+        agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> agentServer.selectedTool(name, args, allowed, completion) }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
         }
@@ -1493,7 +1493,6 @@ internal class BridgeService : Service() {
         val workPrefix = Regex("^업무\\s*실행(?:\\s+|[:：,，]\\s*)")
         val work = workPrefix.find(request.text.trim())
         if (work != null) {
-            if (!AiModelSelection.legacy(cfg)) { respond("선택 모델의 업무 실행은 아직 지원되지 않습니다."); return true }
             val task = request.text.trim().substring(work.range.last + 1).trim()
             val unmixed = request.hintContext?.optJSONArray("segments")?.let { segments ->
                 segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
@@ -1501,9 +1500,19 @@ internal class BridgeService : Service() {
             if (task.isBlank() || !unmixed) { respond("업무 내용을 겹치지 않게 다시 말씀해 주세요."); return true }
             // Preserve the existing durable task and per-write approval contract.
             try {
-                agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
-                    result.fold({ answer -> deliverExternalVoice(task, answer, input) }, { conversations.report(it.message ?: "외부 Agent 작업이 완료되지 않음") })
+                val direct = !AiModelSelection.legacy(cfg)
+                val id = agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
+                    if (direct) {
+                        if (token != nativeChatGeneration) return@submit
+                        nativeChatRequest = null
+                        if (!current()) return@submit
+                    }
+                    result.fold({ answer -> deliverExternalVoice(task, answer, input) }, { error ->
+                        conversations.report(error.message ?: "AI 업무가 완료되지 않음")
+                        if (direct) respond("업무 중단 · 실제 작업 상태를 확인하세요")
+                    })
                 }
+                if (direct) nativeChatRequest = id
             } catch (error: Exception) { respond("업무 요청 전송 실패") }
             return true
         }
@@ -2068,7 +2077,6 @@ internal class BridgeService : Service() {
         check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(aiConfigured() && aiReady()) { "모델 선택에서 선택한 AI 연결을 설정하고 상태를 확인하세요" }
-            check(!allowTools || AiModelSelection.legacy(settings.read())) { "선택 모델의 업무 실행은 아직 지원되지 않습니다" }
         } else check(AiModelSelection.legacy(settings.read())) {
             "선택 모델과 별도의 Codex 실행은 기존 연결 모드에서만 가능합니다"
         }

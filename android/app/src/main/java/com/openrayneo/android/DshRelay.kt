@@ -10,7 +10,7 @@ import java.util.UUID
 
 /** Encrypted Agent outbox. Offline queued work survives phone/service restarts. */
 internal class DshRelay(private val main: Handler, private val repository: ConversationRepository,
-    private val restored: (String, String, JSONObject) -> Unit, private val selectedConfig: () -> JSONObject, private val progress: (String) -> Unit) {
+    private val restored: (String, String, JSONObject) -> Unit, private val selectedConfig: () -> JSONObject, private val selectedTool: SelectedToolExecutor, private val progress: (String) -> Unit) {
     private val directInference = DirectModelInference()
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
@@ -70,24 +70,24 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val profile = if (useDirect) checkNotNull(AiModelSelection.direct(config)) {
             "선택 모델 연결 설정이 필요합니다."
         } else null
-        check(!useDirect || (kind == "hint" && hintLifetimeMs > 0)) {
-            "선택 모델은 질문·요약 전용입니다. 외부 업무 실행 연결은 아직 지원하지 않습니다."
-        }
+        val directTask = useDirect && kind == "task"
+        check(!useDirect || directTask || (kind == "hint" && hintLifetimeMs > 0)) { "지원하지 않는 선택 모델 요청" }
+        val lifetime = if (directTask) 360_000L else hintLifetimeMs
         val request = Request(id, text, context, complete, kind, input,
-            hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview,
+            hintDeadline = if (lifetime > 0L) SystemClock.elapsedRealtime() + lifetime else 0L, preview = preview,
             automaticContext = automaticContext, direct = useDirect,
             state = if (useDirect) "running" else "queued")
         synchronized(lock) {
             expireHints()
-            if (request.hintDeadline > 0L && !request.explicitHint) {
+            if (request.kind == "hint" && request.hintDeadline > 0L && !request.explicitHint) {
                 // Ambient updates may coalesce, but must never replace an explicit review or diagnostic.
-                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && (it.state == "queued" || (it.direct && it.state == "running")) }.forEach { cancelHint(it) }
+                requests.values.filter { it.kind == "hint" && it.hintDeadline > 0L && !it.explicitHint && (it.state == "queued" || (it.direct && it.state == "running")) }.forEach { cancelHint(it) }
             }
             requests[request.id] = request; persist(); lock.notifyAll()
         }
         if (request.hintDeadline > 0L) main.postDelayed({
             synchronized(lock) { expireHints(); lock.notifyAll() }
-        }, hintLifetimeMs)
+        }, lifetime)
         if (profile != null) {
             // Never hand a direct request to the DSH poller. The selected profile
             // is immutable for this request, and replies from a previous selection are discarded.
@@ -96,7 +96,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                     SystemClock.elapsedRealtime() < request.hintDeadline } &&
                     runCatching { AiModelSelection.direct(selectedConfig()) == profile }.getOrDefault(false)
             }
-            directInference.submit(id, profile, text, context, input, automaticContext, valid) { result ->
+            directInference.submit(id, profile, text, context, input, automaticContext, valid,
+                toolExecutor = if (directTask) selectedTool else null) { result ->
                 main.post {
                     val accepted = synchronized(lock) {
                         if (requests[id] !== request || request.state != "running") false
@@ -129,7 +130,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.direct) directInference.cancel(request.id)
         request.state = "cancelled"
         request.automaticContext = null
-        main.post { request.complete(Result.failure(IllegalStateException("선제 힌트 만료 또는 대체"))) }
+        main.post { request.complete(Result.failure(IllegalStateException(if (request.kind == "task") "업무 요청 만료 · 이미 실행된 변경은 유지될 수 있습니다" else "선제 힌트 만료 또는 대체"))) }
     }
     // Do not replay a durable task that was never claimed in a reasonable time.
     // Preserve claimed work and its existing timeout/approval semantics.

@@ -341,9 +341,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 if (mobile) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
-                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
+                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiConfigured)
                     }
-                    if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
+                    if (executeTask) Note("선택 AI로 업무 실행 · 쓰기 및 일부 개인 정보 조회는 승인 필요")
                     else {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
@@ -599,7 +599,7 @@ private fun AgentReceiptCard(model: AppModel, receipts: List<LocalAgentServer.Re
 @Composable
 private fun AgentWriteReviewCard(model: AppModel, review: LocalAgentServer.Review) {
     ContentCard {
-        Text("외부 Agent 작업 승인", style = MaterialTheme.typography.titleLarge)
+        Text("AI 작업 승인", style = MaterialTheme.typography.titleLarge)
         Note("요청 내용을 확인하세요. 휴대폰에서 승인해야 실행합니다. 거절하거나 40초 이내 승인하지 않으면 실행하지 않습니다.")
         Text(review.name, fontWeight = FontWeight.Medium)
         SelectionContainer { Text(review.arguments, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
