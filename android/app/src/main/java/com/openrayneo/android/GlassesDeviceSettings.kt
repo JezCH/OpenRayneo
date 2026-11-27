@@ -36,11 +36,7 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
                 requests.request(15, 5, JSONObject().put("cmd", "sync_time")
                     .put("payload", payload(data = data.toString())), wait = false)
             }.isSuccess else null
-            val status = runCatching {
-                requests.request(15, 1, envelope("request_general_status")) { type, body ->
-                    type == 1 && body.optJSONObject("generalStatus")?.length()?.let { it > 0 } == true
-                }?.optJSONObject("generalStatus")
-            }.getOrNull()
+            val status = runCatching { readLauncherSnapshot(1, "request_general_status", "generalStatus") }.getOrNull()
             val settings = runCatching {
                 readSettingsForVoice()
             }.getOrNull()
@@ -92,8 +88,8 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     fun disconnected() { revision++; state = DeviceSettingsState(); reported.clear(); changed() }
     private fun readAll() {
-        requests.request(15, 1, envelope("request_general_status")) { type, body -> type == 1 && body.has("generalStatus") }
-        requests.request(15, 4, envelope("request_general_settings")) { type, body -> type == 4 && body.has("generalSettings") }
+        checkNotNull(readLauncherSnapshot(1, "request_general_status", "generalStatus")) { "안경 상태 회신 없음" }
+        checkNotNull(readSettingsForVoice()) { "안경 설정 회신 없음" }
     }
     fun brightness(value: Int) { require(value in 1..17); apply("brightness_change", 2, 3, payload(value), "brightness") { it.status.deviceInt("brightness") == value } }
     fun display(height: Int, distance: Int) {
@@ -235,19 +231,27 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
     }
     /** Read from the current request's reply, not cached state or an acknowledgement echo. */
     private fun readStatusIntForVoice(key: String, range: IntRange): Int? {
-        val reply = requests.request(15, 1, envelope("request_general_status")) { type, body ->
-            type == 1 && body.has("generalStatus")
-        }
-        val value = reply?.optJSONObject("generalStatus")?.opt(key) as? Number ?: return null
+        val value = readLauncherSnapshot(1, "request_general_status", "generalStatus")?.opt(key) as? Number ?: return null
         val number = value.toDouble()
         return number.toInt().takeIf { number == it.toDouble() && it in range }
     }
     fun readBatteryForVoice(): Int? = readStatusIntForVoice("battery", 0..100)
 
+    /** Read-only launcher traffic is supported by both upstream SPP and the
+     * Turbo IO BLE implementation. Try BLE once if SPP returns no fresh
+     * snapshot. Never retry a write or claim the reply came over the route
+     * used to send the query (the device may reply on the other channel).
+     * An explicit BLE diagnostic stays BLE-only for outgoing requests. */
+    private fun readLauncherSnapshot(type: Int, command: String, field: String, overBle: Boolean = false): JSONObject? {
+        fun read(ble: Boolean): JSONObject? =
+            requests.request(15, type, envelope(command), overBle = ble) { reply, body ->
+                reply == type && body.optJSONObject(field)?.length()?.let { it > 0 } == true
+            }?.optJSONObject(field)
+        if (overBle) return read(true)
+        return runCatching { read(false) }.getOrNull() ?: runCatching { read(true) }.getOrNull()
+    }
     private fun readSettingsForVoice(overBle: Boolean = false): JSONObject? =
-        requests.request(15, 4, envelope("request_general_settings"), overBle = overBle) { type, body ->
-            type == 4 && body.optJSONObject("generalSettings")?.length()?.let { it > 0 } == true
-        }?.optJSONObject("generalSettings")
+        readLauncherSnapshot(4, "request_general_settings", "generalSettings", overBle)
     private fun exactInt(value: Any?): Int? {
         val number = (value as? Number)?.toDouble() ?: return null
         return number.toInt().takeIf { number == it.toDouble() }
