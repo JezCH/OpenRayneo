@@ -29,7 +29,7 @@ internal object AiModelSelection {
                 val row = a.getJSONObject(i)
                 val id = row.getString("id")
                 require(id == GPT || id == CHATGPT_PLAN || id.matches(Regex("custom-[a-f0-9-]{36}")))
-                val label = when (id) { GPT -> "GPT API"; CHATGPT_PLAN -> "ChatGPT 구독"; else -> row.getString("label").trim().take(60) }
+                val label = when (id) { GPT -> "GPT"; CHATGPT_PLAN -> "ChatGPT 구독"; else -> row.getString("label").trim().take(60) }
                 val url = if (id == GPT || id == CHATGPT_PLAN) GPT_URL else row.getString("url").trim()
                 val model = row.getString("model").trim().take(256)
                 require(label.isNotBlank() && url.length <= 2048)

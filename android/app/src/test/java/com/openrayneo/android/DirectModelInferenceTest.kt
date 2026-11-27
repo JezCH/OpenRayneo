@@ -42,4 +42,38 @@ class DirectModelInferenceTest {
             server.shutdown()
         }
     }
+
+    @Test fun subscriptionRequestUsesSupportedStatelessStreamingContract() {
+        val messages = org.json.JSONArray().put(JSONObject().put("role", "system").put("content", "instruction"))
+            .put(JSONObject().put("role", "user").put("content", "question"))
+        val body = SelectedModelTransport.subscriptionBody("account-model", messages)
+        assertEquals("account-model", body.getString("model"))
+        assertFalse(body.getBoolean("store"))
+        assertTrue(body.getBoolean("stream"))
+        assertEquals("developer", body.getJSONArray("input").getJSONObject(0).getString("role"))
+        assertEquals(setOf("model", "input", "store", "stream"), body.keys().asSequence().toSet())
+    }
+
+    @Test fun subscriptionRequiresCompletedEventAndDoesNotReturnPartialOrQuotaFailure() {
+        fun sse(vararg events: String) = okio.Buffer().writeUtf8(events.joinToString("") { "data: " + it + "\n\n" })
+        val partial = """{"type":"response.output_text.delta","delta":"partial"}"""
+        val complete = """{"type":"response.completed","response":{"status":"completed","model":"real-model","output":[{"type":"message","content":[{"type":"output_text","text":"actual answer"}]}]}}"""
+        val answer = SelectedModelTransport.readSubscription(sse(partial, complete))
+        assertEquals("actual answer", answer.text)
+        assertEquals("real-model", answer.reportedModel)
+        assertTrue(runCatching { SelectedModelTransport.readSubscription(sse(partial)) }.isFailure)
+        val quota = """{"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}}"""
+        val failed = runCatching { SelectedModelTransport.readSubscription(sse(partial, quota)) }.exceptionOrNull()
+        assertTrue(failed?.message?.contains("한도") == true)
+        val incomplete = """{"type":"response.incomplete","response":{"status":"incomplete"}}"""
+        assertTrue(runCatching { SelectedModelTransport.readSubscription(sse(partial, incomplete)) }.isFailure)
+    }
+
+    @Test fun subscriptionCannotBeConfiguredWithAUserSuppliedKeyOrUnauthenticatedCatalog() {
+        val profile = AiModelSelection.Profile(AiModelSelection.CHATGPT_PLAN, "ChatGPT 구독", AiModelSelection.GPT_URL, "unverified-model", "test-key")
+        assertFalse(profile.configured)
+        assertFalse(profile.copy(key = "").configured)
+        assertTrue(runCatching { SelectedModelTransport.request(profile, org.json.JSONArray()) }.isFailure)
+        assertTrue(runCatching { SelectedModelTransport.request(profile.copy(key = ""), org.json.JSONArray()) }.isFailure)
+    }
 }

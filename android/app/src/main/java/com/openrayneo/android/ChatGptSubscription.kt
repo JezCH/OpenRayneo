@@ -32,7 +32,8 @@ internal object ChatGptSubscription {
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).callTimeout(30, TimeUnit.SECONDS).build()
     private val lock = Any()
-    private var store: AppSettings? = null
+    @Volatile private var store: AppSettings? = null
+    private val mutation = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var saved = JSONObject()
     @Volatile private var listener: ServerSocket? = null
     @Volatile private var cancelling = false
@@ -40,9 +41,14 @@ internal object ChatGptSubscription {
     @Volatile private var active = false
     private val random = SecureRandom()
     data class Model(val id: String, val name: String)
-    data class Status(val registered: Boolean, val connected: Boolean, val models: List<Model>)
+    data class Status(val registered: Boolean, val connected: Boolean, val models: List<Model>, val email: String? = null)
+    private data class Identity(val subject: String, val email: String?)
+    fun beginMutation(): Boolean = mutation.compareAndSet(false, true)
+    fun endMutation() { mutation.set(false) }
 
-    fun initialize(context: Context) = synchronized(lock) {
+    fun initialize(context: Context) {
+        if (store != null) return
+        synchronized(lock) {
         if (store == null) {
             val settings = AppSettings(context.applicationContext, "chatgpt_subscription")
             val value = settings.readStored()
@@ -52,6 +58,7 @@ internal object ChatGptSubscription {
             }
             saved = value
             store = settings
+        }
         }
     }
     private fun persist(value: JSONObject) {
@@ -76,9 +83,9 @@ internal object ChatGptSubscription {
         val connected = value.scopeGranted() && value.optString("access").isNotBlank() &&
             value.optString("refresh").isNotBlank()
         return Status(value.optString("client").isNotBlank(), connected,
-            if (connected) catalog(value) else emptyList())
+            if (connected) catalog(value) else emptyList(), value.optString("email").takeIf { it.isNotBlank() })
     }
-    fun hasModel(id: String): Boolean = !active && status().models.any { it.id == id }
+    fun hasModel(id: String): Boolean = !active && !mutation.get() && status().models.any { it.id == id }
     private fun randomValue() = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(random::nextBytes))
     private fun decode(s: String): ByteArray = Base64.getUrlDecoder().decode(s)
     private fun encode(b: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
@@ -92,7 +99,7 @@ internal object ChatGptSubscription {
         val body = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
         return Request.Builder().url(url).post(body).header("Accept", "application/json").build()
     }
-    private fun verifyIdentity(token: String, client: String, nonce: String): String {
+    private fun verifyIdentity(token: String, client: String, nonce: String): Identity {
         val parts = token.split('.')
         check(parts.size == 3 && token.length <= 32_768) { "ID 토큰 형식 오류" }
         val header = JSONObject(String(decode(parts[0]), Charsets.UTF_8))
@@ -119,7 +126,9 @@ internal object ChatGptSubscription {
         check(claims.optString("iss") == AUTH && accepted && claims.optString("nonce") == nonce &&
             claims.optLong("exp") > now && claims.optLong("nbf", 0) <= now &&
             claims.optString("sub").isNotBlank()) { "ChatGPT 계정 인증 검증 실패" }
-        return claims.getString("sub")
+        val email = (claims.opt("email") as? String ?: claims.optJSONObject("https://api.openai.com/profile")?.opt("email") as? String)
+            ?.takeIf { it.isNotBlank() && it.length <= 320 && it.none(Char::isISOControl) }
+        return Identity(claims.getString("sub"), email)
     }
     private fun updatedTokens(value: JSONObject, result: JSONObject, previousScope: String = ""): JSONObject {
         val access = result.opt("access_token") as? String ?: error("ChatGPT 액세스 토큰 없음")
@@ -230,10 +239,10 @@ internal object ChatGptSubscription {
             val result = readJson(form("$AUTH/api/accounts/oauth/token", mapOf("grant_type" to "authorization_code",
                 "client_id" to issued, "code" to callback.first, "code_verifier" to verifier,
                 "redirect_uri" to redirect, "resource" to RESOURCE)))
-            val subject = verifyIdentity(result.getString("id_token"), issued, nonce)
-            check(old.optString("subject").let { it.isBlank() || it == subject }) { "기존 등록 계정과 다른 ChatGPT 계정" }
+            val identity = verifyIdentity(result.getString("id_token"), issued, nonce)
+            check(old.optString("subject").let { it.isBlank() || it == identity.subject }) { "기존 등록 계정과 다른 ChatGPT 계정" }
             val next = updatedTokens(JSONObject().put("host", old.getString("host")).put("client", issued)
-                .put("subject", subject), result)
+                .put("subject", identity.subject).put("email", identity.email ?: old.optString("email")), result)
             synchronized(lock) {
                 // A catalog failure must not make the validated, renewable grant disappear.
                 persist(next)
@@ -266,19 +275,22 @@ internal object ChatGptSubscription {
                     check(parts.size == 3 && parts[0] == "GET" && parts[1].startsWith("/auth/callback?"))
                     val target = (redirect.substringBefore("/auth/callback") + parts[1]).toHttpUrl()
                     check(target.encodedPath == "/auth/callback" && target.queryParameterValues("state").singleOrNull() == state)
-                    check(target.queryParameter("error") == null)
+                    val denied = target.queryParameter("error") != null
                     val code = target.queryParameterValues("code").singleOrNull()
-                    check(!code.isNullOrBlank())
-                    code to target.queryParameterValues("client_id").singleOrNull().orEmpty()
+                    check(denied || !code.isNullOrBlank())
+                    Triple(code.orEmpty(), target.queryParameterValues("client_id").singleOrNull().orEmpty(), denied)
                 }.getOrNull()
-                val body = if (callback != null) "Authorization received. Return to OpenRayneo." else "Invalid callback."
+                val body = when { callback == null -> "Invalid callback."; callback.third -> "Authorization declined. Return to OpenRayneo."; else -> "Authorization received. Return to OpenRayneo." }
                 val bytes = body.toByteArray(Charsets.UTF_8)
                 runCatching { socket.getOutputStream().apply {
                     write(("HTTP/1.1 " + (if (callback != null) "200 OK" else "400 Bad Request") +
                         "\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: " +
                         bytes.size + "\r\n\r\n").toByteArray(Charsets.US_ASCII)); write(bytes); flush()
                 } }
-                if (callback != null) return callback
+                if (callback != null) {
+                    check(!callback.third) { "ChatGPT 인증 승인 거절" }
+                    return callback.first to callback.second
+                }
             }
         }
         error("ChatGPT 로그인 취소 또는 시간 초과")

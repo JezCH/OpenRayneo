@@ -97,6 +97,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         private set
     var subscriptionBusy by mutableStateOf(false)
         private set
+    var subscriptionSigningIn by mutableStateOf(false)
+        private set
+    @Volatile private var subscriptionCancelRequested = false
     private val subscriptionWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     @SuppressLint(
         "StaticFieldLeak"
@@ -141,10 +144,11 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         saveConfig(values)
     }
 
-    fun connectSubscription() = subscriptionAction("ChatGPT 구독 인증") {
+    fun connectSubscription() = subscriptionAction("ChatGPT 구독 인증", signingIn = true) {
         ChatGptSubscription.initialize(context)
         ChatGptSubscription.signIn { url ->
             main.post {
+                if (subscriptionCancelRequested) { ChatGptSubscription.cancelSignIn(); return@post }
                 runCatching {
                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -153,7 +157,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         }
         "ChatGPT 구독 인증 및 모델 목록 확인 완료 · 모델을 선택하세요"
     }
-    fun cancelSubscription() { ChatGptSubscription.cancelSignIn() }
+    fun cancelSubscription() { subscriptionCancelRequested = true; ChatGptSubscription.cancelSignIn() }
     fun refreshSubscriptionModels() = subscriptionAction("ChatGPT 모델 목록 조회") {
         ChatGptSubscription.refreshCatalog(); "ChatGPT 계정의 모델 목록을 갱신했습니다"
     }
@@ -161,19 +165,26 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         if (ChatGptSubscription.signOut()) "ChatGPT 구독 연결 해제 완료"
         else "휴대폰 인증 제거 완료 · 서버 해제 미확인, ChatGPT 설정에서 연결 해제 가능"
     }
-    private fun subscriptionAction(label: String, action: () -> String) = attempt {
+    private fun subscriptionAction(label: String, signingIn: Boolean = false, action: () -> String) = attempt {
         check(aiSwitchAllowed && bridge?.canSwitchAiModel() == true) { "기록·AI 작업을 종료한 뒤 인증 설정을 변경하세요" }
+        check(ChatGptSubscription.beginMutation()) { "ChatGPT 인증 변경 진행 중" }
+        subscriptionCancelRequested = false
+        subscriptionSigningIn = signingIn
         subscriptionBusy = true
-        subscriptionWorker.execute {
-            val result = runCatching(action)
+        try { subscriptionWorker.execute {
+            val result = try { runCatching(action) } finally { ChatGptSubscription.endMutation() }
             main.post {
                 subscriptionBusy = false
+                subscriptionSigningIn = false
                 subscriptionInfo = ChatGptSubscription.status()
                 refresh()
                 result.fold({ notice = it }, {
-                    error = "$label 실패 · 계정 권한, 브라우저 및 인터넷 연결을 확인하세요. 기존 API 설정은 변경하지 않았습니다."
+                    if (subscriptionCancelRequested) notice = "ChatGPT 로그인 취소"
+                    else error = "$label 실패 · 계정 권한, 브라우저 및 인터넷 연결을 확인하세요. 기존 API 설정은 변경하지 않았습니다."
                 })
             }
+        } } catch (failure: Exception) {
+            ChatGptSubscription.endMutation(); subscriptionBusy = false; subscriptionSigningIn = false; throw failure
         }
     }
 
@@ -551,7 +562,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() {
-        ChatGptSubscription.cancelSignIn()
+        cancelSubscription()
         subscriptionWorker.shutdown()
         updateCheck.close()
         bridge?.observers?.remove(observer)
