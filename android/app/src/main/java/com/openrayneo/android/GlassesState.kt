@@ -25,6 +25,7 @@ internal data class PageSession(
     val id: Long, val mode: PageMode, val phase: PagePhase, val content: PageContent,
     val writtenContent: PageContent? = null,
     val receivesGlassesAudio: Boolean = true,
+    val nativeSubtitle: NativeSubtitleStart? = null,
 )
 internal data class TranslationView(val source: String = "", val target: String = "")
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
@@ -90,6 +91,7 @@ internal sealed interface GlassesEvent {
     data object PauseDisplay : GlassesEvent
     data object OpenStandby : GlassesEvent
     data object StartTranslation : GlassesEvent
+    data class StartNativeSubtitle(val request: NativeSubtitleStart) : GlassesEvent
     data object StartCaption : GlassesEvent
     data object StartMediaCaption : GlassesEvent
     data class TranslationText(val view: TranslationView) : GlassesEvent

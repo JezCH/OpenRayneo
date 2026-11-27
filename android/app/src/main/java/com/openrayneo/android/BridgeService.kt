@@ -30,6 +30,7 @@ internal class BridgeService : Service() {
     private lateinit var supervisor: ConnectionSupervisor
     val connection get() = supervisor.transport
     private lateinit var display: GlassesDisplay
+    private val nativeSubtitleRequests = LinkedHashSet<String>()
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
     val navigation get() = NavigationFeed
@@ -341,7 +342,7 @@ internal class BridgeService : Service() {
                     if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} ${m.json.orEmpty().take(160)}")
                 }
                 voiceTransport.receive(frame)
-                display.receive(frame, source)
+                if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
             }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
@@ -525,6 +526,7 @@ internal class BridgeService : Service() {
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
+                    nativeSubtitleRequests.clear()
                     nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
                     capabilityStatus = "현재 연결의 SPP 협상 요청 미수신"
                     queryPeerCapabilities()
@@ -1644,6 +1646,43 @@ internal class BridgeService : Service() {
     }
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
     fun startCaption() = startCaptionMode(false, false)
+
+    /** Native menu entry is an explicit user action, not a new background recording. */
+    private fun handleNativeMenuFrame(frame: ProtocolCodec.Frame, source: String): Boolean {
+        if (frame.protocol !in setOf(0x13, 0x17, 0x20) || frame.acknowledgement) return false
+        val message = ProtocolCodec.message(frame.payload)
+        if (message.type != 1) return false
+        if (frame.protocol != 0x13) {
+            onLog("안경 기본 메뉴 시작 요청: business=${frame.protocol.toString(16)} type=1 · $source · 전용 처리 미구현")
+            return false
+        }
+        val request = NativeSubtitleStart.parse(frame)
+        if (request == null) { onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
+        if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) return true
+        var starting = false
+        runCatching {
+            check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "안경 연결 준비 중" }
+            requireNativeRecorderFree(); requirePrompterFree(); requireCaptureFree()
+            check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled && audioOwner == null &&
+                !reconnectCapture.pending && !migration.state.busy && wakeRequest == null && !agent.running && !codex.running &&
+                !speechOutput.speaking && !translator.mediaTranslation.state.preparing) { "다른 화면·기록·AI 작업 진행 중" }
+            check(deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) { "안경 마이크 허용 상태 미확인" }
+            val config = settings.read()
+            cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+            starting = true
+            translator.startNativeSubtitle(config, request)
+            nativeSubtitleRequests.add(request.sid)
+            if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
+            dispatch(GlassesEvent.StartNativeSubtitle(request))
+            check(state.session?.nativeSubtitle?.sid == request.sid && translator.active) { "안경 자막 세션 시작 실패" }
+        }.onFailure { error ->
+            if (state.session?.nativeSubtitle?.sid == request.sid) {
+                translator.stop(); dispatch(GlassesEvent.PauseDisplay)
+            } else if (starting && translator.active) translator.stop()
+            onLog("안경 자막 시작 보류: " + (error.message ?: "준비 상태 확인 필요"))
+        }
+        return true
+    }
 
     fun prepareMediaTranslation(language: String) {
         check(!destroyed && !mediaCaptionState.busy && !translator.active &&

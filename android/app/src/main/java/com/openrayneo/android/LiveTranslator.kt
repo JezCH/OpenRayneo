@@ -102,6 +102,24 @@ internal class LiveTranslator(
         startSpeech(speech, captions, local, bundledBilingual = bundled && !captions)
     }
 
+    /** On-glasses captions use installed ASR. Translation uses the selected model. */
+    fun startNativeSubtitle(settings: JSONObject, request: NativeSubtitleStart) {
+        if (!request.captions) { start(settings); return }
+        val language = request.languageHint?.takeUnless { it == "auto" }
+            ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en") }.orEmpty()
+        val preferred = JSONObject(settings.toString()).put("asrLanguage", language)
+        val engine = SpeechRounds.engine(preferred)
+        if (SpeechRounds.model(preferred) == null || !SpeechRounds.ready(context, preferred) || (engine == "stream" && language != "ko")) {
+            preferred.put("asrEngine", when {
+                language == "ko" && LocalModels.zipformer.installed(context) -> "stream"
+                LocalModels.senseVoice.installed(context) -> "local"
+                LocalModels.nemotron.installed(context) -> "nemotron"
+                else -> "local"
+            })
+        }
+        startSpeech(captionConfig(preferred), captions = true, local = false)
+    }
+
     /** Reuse the installed ASR; never change the user's everyday ASR settings or fall back to cloud. */
     fun mediaCaptionConfig(language: String): JSONObject {
         require(language in setOf("en", "ja", "zh", "ko"))

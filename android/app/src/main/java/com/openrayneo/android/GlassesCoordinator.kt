@@ -7,6 +7,7 @@ internal object GlassesCoordinator {
     fun reduce(previous: GlassesState, event: GlassesEvent): GlassesTransition {
         var state = previous
         val effects = mutableListOf<GlassesEffect>()
+        var nativeSubtitle: NativeSubtitleStart? = null
         fun cancelRestore() {
             if (state.restoreRevision != null) effects += GlassesEffect.CancelRestore
             state = state.copy(restoreRevision = null)
@@ -102,6 +103,13 @@ internal object GlassesCoordinator {
             GlassesEvent.StartTranslation -> {
                 setIntent(DisplayIntent.Translation)
                 state = state.copy(captionMode = false, mediaCaptionMode = false, translation = TranslationView())
+            }
+            is GlassesEvent.StartNativeSubtitle -> {
+                if (state.link.phase != LinkPhase.FULL || state.disconnecting || state.session != null ||
+                    state.intent != DisplayIntent.Idle || state.navigation.enabled) return GlassesTransition(state, emptyList())
+                setIntent(DisplayIntent.Translation)
+                state = state.copy(captionMode = event.request.captions, mediaCaptionMode = false, translation = TranslationView())
+                nativeSubtitle = event.request
             }
             GlassesEvent.StartCaption -> {
                 setIntent(DisplayIntent.Translation)
@@ -212,7 +220,7 @@ internal object GlassesCoordinator {
             effects += GlassesEffect.ClosePage(session.id)
         } else if (state.link.phase == LinkPhase.FULL && target != null && state.blockedRevision != state.revision) {
             if (session == null) {
-                val newSession = PageSession(state.nextSession, target.first, PagePhase.STARTING, target.second, receivesGlassesAudio = !state.mediaCaptionMode)
+                val newSession = PageSession(state.nextSession, target.first, PagePhase.STARTING, target.second, receivesGlassesAudio = !state.mediaCaptionMode, nativeSubtitle = nativeSubtitle)
                 state = state.copy(session = newSession, nextSession = state.nextSession + 1)
                 effects += GlassesEffect.StartPage(newSession)
             } else if (session.phase != PagePhase.CLOSING && session.content != target.second) {
