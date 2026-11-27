@@ -1051,6 +1051,16 @@ internal class BridgeService : Service() {
     }
     private fun nativeWake() {
         nativeWakeStatus = "안경 기본 호출 이벤트 수신"
+        // An unsolicited wake while auto-answer is disabled is not an owned
+        // audio session. Do not leave all settings locked until a type-8 exit
+        // that the firmware may never send.
+        if (!settings.read().optBoolean("nativeAutoAnswer")) {
+            voiceTransport.declineUnownedWake()
+            nativeWakeStatus += " · 앱 자동 응답 꺼짐"
+            onLog(nativeWakeStatus)
+            notifyUI()
+            return
+        }
         if (deviceSettings.state.initialization.recorder.occupied) {
             nativeWakeStatus += " · 안경 자체 녹음 사용 중"; notifyUI(); return
         }
@@ -1082,7 +1092,6 @@ internal class BridgeService : Service() {
         if (state.session != null || state.intent != DisplayIntent.Idle) {
             nativeWakeStatus += " · 기존 화면 사용 중"; notifyUI(); return
         }
-        if (!settings.read().optBoolean("nativeAutoAnswer")) { nativeWakeStatus += " · 앱 자동 응답 꺼짐"; notifyUI(); return }
         if (state.link.phase != LinkPhase.FULL || state.disconnecting) { nativeWakeStatus += " · 연결 불완전"; notifyUI(); return }
         if (conversations.state.stopping) {
             // A second wake while the old record is flushing must not overwrite the
