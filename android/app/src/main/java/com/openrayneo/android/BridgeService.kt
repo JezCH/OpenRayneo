@@ -427,7 +427,7 @@ internal class BridgeService : Service() {
                 voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
         }
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
-        if (settings.read().optBoolean("localAgentEnabled")) {
+        if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
         }
         codex = CodexClient(settings, ::notifyUI) { question, answer -> completed(AnswerSource.COMPUTER_CODEX, question, answer) }
@@ -1249,12 +1249,16 @@ internal class BridgeService : Service() {
      * the newly selected model. The service and UI check the same idle boundary. */
     fun canSwitchAiModel(): Boolean = !destroyed && !agent.running && !codex.running &&
         !conversations.state.running && !conversations.state.stopping && !conversations.state.summarizing &&
-        !translator.active && !mediaCaptionState.busy && !agent.harness.hasOutstanding() &&
+        !translator.active && !mediaCaptionState.busy && !agent.harness.hasOutstanding() && !agentServer.hasOutstanding() &&
         !voiceTransport.nativeActive && !state.disconnecting && !migration.state.busy &&
         !teleprompter.state.smartFollow && followUpExtraction == null
     fun aiModelChanged() {
         cancelNativeChat(); resetAmbientWake(); cancelKoreanWake(); cancelRealtimeStream()
         resetAgentProbe()
+        val config = settings.read()
+        if (!AiModelSelection.legacy(config)) agentServer.stop(persistSetting = false)
+        else if (config.optBoolean("localAgentEnabled")) runCatching { agentServer.start() }
+            .onFailure { onLog("기존 AI 연결 복원 실패 · 연결 상태를 확인하세요") }
         onLog("AI 모델 선택 변경: " + AiModelSelection.label(settings.read()))
         notifyUI()
     }
