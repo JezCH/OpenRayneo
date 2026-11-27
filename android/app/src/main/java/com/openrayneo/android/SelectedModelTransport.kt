@@ -14,15 +14,21 @@ internal object SelectedModelTransport {
     data class Answer(val text: String, val reportedModel: String?)
     private const val MAX_RESPONSE_BYTES = 2L * 1024 * 1024
 
+    fun usesResponses(profile: AiModelSelection.Profile) = profile.id in setOf(AiModelSelection.CHATGPT_PLAN, AiModelSelection.GPT)
+
+    fun responsesRequest(profile: AiModelSelection.Profile, body: JSONObject): Request {
+        require(usesResponses(profile) && profile.url == AiModelSelection.GPT_URL && profile.configured)
+        val bearer = if (profile.id == AiModelSelection.CHATGPT_PLAN) {
+            require(profile.key.isEmpty())
+            ChatGptSubscription.accessFor(profile.model)
+        } else profile.key.also { require(it.isNotBlank()) }
+        return Request.Builder().url(AiModelSelection.GPT_URL + "/responses")
+            .header("Authorization", "Bearer " + bearer)
+            .header("Accept", "text/event-stream")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+    }
     fun request(profile: AiModelSelection.Profile, messages: JSONArray): Request {
-        if (profile.id == AiModelSelection.CHATGPT_PLAN) {
-            require(profile.url == AiModelSelection.GPT_URL && profile.key.isEmpty())
-            val body = subscriptionBody(profile.model, messages)
-            return Request.Builder().url(AiModelSelection.GPT_URL + "/responses")
-                .header("Authorization", "Bearer " + ChatGptSubscription.accessFor(profile.model))
-                .header("Accept", "text/event-stream")
-                .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        }
+        if (usesResponses(profile)) return responsesRequest(profile, subscriptionBody(profile.model, messages))
         val body = JSONObject().put("model", profile.model).put("stream", false).put("messages", messages)
         return Request.Builder().url(MobileModelEndpoint.resolve(profile.url, profile.key))
             .apply { if (profile.key.isNotBlank()) header("Authorization", "Bearer ${profile.key}") }
@@ -31,7 +37,7 @@ internal object SelectedModelTransport {
 
     fun read(response: Response): Answer {
         if (response.request.url.toString() == AiModelSelection.GPT_URL + "/responses") {
-            check(response.isSuccessful) { "ChatGPT 구독 응답 실패 (HTTP ${response.code})" }
+            check(response.isSuccessful) { "선택 모델 응답 실패 (HTTP ${response.code})" }
             return readSubscription(checkNotNull(response.body).source())
         }
         check(response.isSuccessful) { "선택 모델 응답 실패 (HTTP ${response.code})" }
@@ -59,11 +65,37 @@ internal object SelectedModelTransport {
 
     /** Accept only a terminal completed event. A partial response must not be
      * displayed as a finished answer or committed to attributed memory. */
+    data class Terminal(val response: JSONObject, val delta: String)
     fun readSubscription(source: okio.BufferedSource): Answer {
+        val terminal = readResponsesTerminal(source)
+        val output = terminal.response.optJSONArray("output") ?: JSONArray()
+        check((0 until output.length()).none { output.optJSONObject(it)?.optString("type") == "function_call" }) {
+            "질문 전용 모델이 예상하지 않은 도구 호출을 반환했습니다"
+        }
+        return textAnswer(terminal)
+    }
+    fun textAnswer(terminal: Terminal): Answer {
+        val output = terminal.response.optJSONArray("output") ?: JSONArray()
+        val texts = mutableListOf<String>()
+        for (i in 0 until output.length()) {
+            val item = output.optJSONObject(i) ?: continue
+            if (item.optString("type") != "message") continue
+            val parts = item.optJSONArray("content") ?: continue
+            for (j in 0 until parts.length()) {
+                val part = parts.optJSONObject(j) ?: continue
+                if (part.optString("type") == "output_text") texts.add(part.optString("text"))
+                if (part.optString("type") == "refusal") texts.add(part.optString("refusal"))
+            }
+        }
+        val answer = (if (texts.isNotEmpty()) texts.joinToString("\n") else terminal.delta).trim()
+        check(answer.isNotBlank()) { "빈 AI 응답" }
+        return Answer(answer, terminal.response.optString("model").takeIf { it.isNotBlank() })
+    }
+    fun readResponsesTerminal(source: okio.BufferedSource): Terminal {
         var remaining = MAX_RESPONSE_BYTES
         val data = StringBuilder()
         val delta = StringBuilder()
-        fun finishEvent(): Answer? {
+        fun finishEvent(): Terminal? {
             if (data.isEmpty()) return null
             val event = JSONObject(data.toString())
             data.setLength(0)
@@ -83,20 +115,7 @@ internal object SelectedModelTransport {
                 "response.completed" -> {
                     val response = event.getJSONObject("response")
                     check(response.optString("status") == "completed") { "ChatGPT 구독 응답 미완료" }
-                    val output = response.optJSONArray("output") ?: JSONArray()
-                    val texts = mutableListOf<String>()
-                    for (i in 0 until output.length()) {
-                        val item = output.optJSONObject(i) ?: continue
-                        if (item.optString("type") != "message") continue
-                        val parts = item.optJSONArray("content") ?: continue
-                        for (j in 0 until parts.length()) {
-                            val part = parts.optJSONObject(j) ?: continue
-                            if (part.optString("type") == "output_text") texts.add(part.optString("text"))
-                        }
-                    }
-                    val answer = (if (texts.isNotEmpty()) texts.joinToString("\n") else delta.toString()).trim()
-                    check(answer.isNotBlank()) { "빈 ChatGPT 구독 응답" }
-                    Answer(answer, response.optString("model").takeIf { it.isNotBlank() })
+                    Terminal(response, delta.toString())
                 }
                 else -> null
             }
