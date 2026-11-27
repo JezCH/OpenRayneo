@@ -236,9 +236,9 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
                 } else BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth < 240.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            StatusStripItem("안경", link.label, statusColor(link.phase), Modifier.fillMaxWidth())
-                            StatusStripItem("기록·입력", capture, captureColor, Modifier.fillMaxWidth())
-                            StatusStripItem("AI", ai.label, statusColor(ai.phase), Modifier.fillMaxWidth())
+                            Text("안경 · ${link.label}", style = MaterialTheme.typography.labelMedium, color = statusColor(link.phase))
+                            Text("기록·입력 · $capture", style = MaterialTheme.typography.labelMedium, color = captureColor)
+                            Text("AI · ${ai.label}", style = MaterialTheme.typography.labelMedium, color = statusColor(ai.phase))
                         }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

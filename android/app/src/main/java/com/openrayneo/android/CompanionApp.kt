@@ -52,6 +52,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
     }
     val snackbars = remember { SnackbarHostState() }
     val pages = rememberSaveableStateHolder()
+    // Unsaved manuscript stays only in this live composition, not Bundle/disk.
+    val manuscript = remember { TeleprompterDraft() }
     val s = model.state
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     BackHandler(
@@ -202,7 +204,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 "voice-profiles" -> VoiceProfilesScreen(model)
                 "device-settings" -> GlassesSettingsScreen(model)
                 "content" -> CompanionContentScreen(model)
-                "teleprompter" -> TeleprompterScreen(model)
+                "teleprompter" -> TeleprompterScreen(model, manuscript)
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { key ->
                     if (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending) pendingNavigation = key
@@ -226,7 +228,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                                 0 -> HomeScreen(model, { tab = it }, { openRoute(it) }, { devices = true })
                                 1 -> AssistantScreen(model, actions, { openRoute(it) })
                                 2 -> ConversationScreen(model, actions, { openRoute(it) })
-                                3 -> ToolsScreen({ openRoute(it) }, { tab = it })
+                                3 -> ToolsScreen(model, { openRoute(it) }, { tab = it })
                                 else -> DeviceOverview(model, { devices = true }, { openRoute(it) })
                             }
                         }

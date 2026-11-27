@@ -153,7 +153,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
                         Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
                         if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
-                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
+                        if (linked && s.deviceSettings.loaded && s.deviceSettings.readback == DeviceReadback.VERIFIED) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
                     }
                     TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
                 }
@@ -217,6 +217,7 @@ private data class ToolDestination(
     val title: String,
     val subtitle: String,
     val icon: ImageVector,
+    val status: String? = null,
     val open: () -> Unit,
 )
 
@@ -238,7 +239,12 @@ private fun ToolDestinationGroup(title: String, destinations: List<ToolDestinati
                 )
                 ListItem(
                     headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = { Text(destination.subtitle) },
+                    supportingContent = {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(destination.subtitle)
+                            destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
+                        }
+                    },
                     leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
                     trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
                     modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
@@ -251,25 +257,45 @@ private fun ToolDestinationGroup(title: String, destinations: List<ToolDestinati
 }
 
 @Composable
-internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
+internal fun ToolsScreen(model: AppModel, open: (String) -> Unit, navigate: (Int) -> Unit) {
+    val s = model.state
+    val visible = s.available
+    val recordingStatus = if (visible && (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending)) recording(s).label else null
+    val translationPreparing = visible && s.mediaTranslation.preparing && s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             ToolDestinationGroup("자막 및 번역", listOf(
-                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") },
-                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") },
-                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate) { open("translation") },
+                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate, status = when {
+                    !visible -> null
+                    s.mediaCaption.busy -> s.mediaCaption.detail
+                    s.mediaTranslation.preparing && !translationPreparing -> "번역 준비 중"
+                    else -> null
+                }) { open("media-captions") },
+                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq, status = if (visible && s.captionActive) s.glasses.displayDescription else null) { open("captions") },
+                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate, status = when {
+                    !visible -> null
+                    s.translationActive && !s.captionActive && !s.mediaCaption.busy -> s.glasses.displayDescription
+                    translationPreparing || s.offlinePreparing -> "번역 준비 중"
+                    else -> null
+                }) { open("translation") },
             ))
         }
         item {
             ToolDestinationGroup("AI 및 기록", listOf(
-                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") },
-                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) },
+                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic, status = when {
+                    !visible -> null
+                    s.wakeActive -> "호출 대기 중"
+                    s.wakePending -> "질문 응답 대기 중"
+                    s.nativeWakeAvailable -> "기본 호출 처리 중"
+                    else -> null
+                }) { open("korean-wake") },
+                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq, status = recordingStatus) { navigate(2) },
             ))
         }
         item {
             ToolDestinationGroup("생활 및 업무", listOf(
-                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") },
-                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") },
+                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description, status = if (visible && (s.teleprompter.active != null || s.teleprompter.busy)) s.teleprompter.notice else null) { open("teleprompter") },
+                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe, status = if (visible && s.glasses.navigation.enabled) "길 안내 세션 사용 중" else null) { open("navigation") },
                 ToolDestination("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") },
                 ToolDestination("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") },
             ))

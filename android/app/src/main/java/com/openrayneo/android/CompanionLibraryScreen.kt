@@ -104,13 +104,33 @@ internal fun AgentServerScreen(model: AppModel, requestBluetoothPermission: () -
     )
 }
 
+/** Ephemeral editing state shared across routes. Never saved through rememberSaveable. */
+internal class TeleprompterDraft {
+    var selected by mutableStateOf<String?>(null)
+        private set
+    var title by mutableStateOf("")
+    var text by mutableStateOf("")
+    private var newId: String? = null
+
+    fun documentId(): String = selected ?: newId ?: java.util.UUID.randomUUID().toString().also { newId = it }
+    fun reset(id: String? = null, name: String = "", body: String = "") {
+        selected = id; newId = null; title = name; text = body
+    }
+    fun saved(id: String) { selected = id; newId = null }
+    fun currentId(): String? = selected ?: newId
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun TeleprompterScreen(model: AppModel) {
+internal fun TeleprompterScreen(model: AppModel, draft: TeleprompterDraft) {
     val state = model.state.teleprompter
-    var selected by remember { mutableStateOf<String?>(null) }
-    var title by remember { mutableStateOf("") }
-    var text by remember { mutableStateOf("") }
+    val selected = draft.currentId()
+    val title = draft.title
+    val text = draft.text
+    val saved = state.documents.firstOrNull { it.optString("did") == selected }
+    val dirty = if (saved == null) title.isNotBlank() || text.isNotBlank()
+        else title.trim() != saved.optString("title") || text != saved.optString("text")
+    var replacement by remember { mutableStateOf<Triple<String?, String, String>?>(null) }
     var speed by rememberSaveable { mutableIntStateOf(2) }
     var smartFollow by rememberSaveable { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf("") }
@@ -118,6 +138,19 @@ internal fun TeleprompterScreen(model: AppModel) {
     val documents = state.documents.filter { it.getString("title").contains(search, ignoreCase = true) }
     val editor = remember { BringIntoViewRequester() }
     var editRequest by remember { mutableIntStateOf(0) }
+    fun choose(id: String? = null, name: String = "", body: String = "") {
+        if (dirty) replacement = Triple(id, name, body)
+        else { draft.reset(id, name, body); editRequest++ }
+    }
+    replacement?.let { next ->
+        AlertDialog(onDismissRequest = { replacement = null },
+            title = { Text("저장하지 않은 원고가 있습니다") },
+            text = { Text("현재 편집 내용을 버리고 다른 원고를 열까요? 저장된 원고는 삭제하지 않습니다.") },
+            confirmButton = { TextButton(onClick = {
+                draft.reset(next.first, next.second, next.third); replacement = null; editRequest++
+            }) { Text("편집 내용 버리기") } },
+            dismissButton = { TextButton(onClick = { replacement = null }) { Text("계속 편집") } })
+    }
     LaunchedEffect(editRequest) {
         if (editRequest > 0) { withFrameNanos {}; editor.bringIntoView() }
     }
@@ -140,23 +173,29 @@ internal fun TeleprompterScreen(model: AppModel) {
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         SectionLabel("저장된 원고")
-        ToolOutlinedButton(onClick = { selected = null; title = ""; text = ""; editRequest++ }, modifier = Modifier.fillMaxWidth()) { Text("새 원고 작성") }
+        if (dirty) OpticalPanel {
+            Text("미저장 원고", style = MaterialTheme.typography.titleMedium)
+            Note("화면을 이동해도 앱이 열려 있는 동안 편집 내용은 유지됩니다. 앱 종료 시에는 유지되지 않으니 원고를 저장하세요.")
+            TextButton(onClick = { editRequest++ }) { Text("편집 중인 원고로 이동") }
+        }
+        ToolOutlinedButton(onClick = { choose() }, modifier = Modifier.fillMaxWidth()) { Text("새 원고 작성") }
         OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목 검색") }, singleLine = true)
         Note("${documents.size}개 원고 · 휴대폰에 저장")
         if (documents.isEmpty()) Note(if (search.isBlank()) "저장된 원고가 없습니다. 새 원고를 작성하세요." else "일치하는 원고가 없습니다.")
         if (documents.isNotEmpty()) ContentCard {
             documents.forEachIndexed { index, document ->
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                TextButton(onClick = { selected = document.getString("did"); title = document.getString("title"); text = document.getString("text"); editRequest++ },
+                TextButton(onClick = { choose(document.getString("did"), document.getString("title"), document.getString("text")) },
                     modifier = Modifier.fillMaxWidth()) {
                     Text(document.getString("title") + if (selected == document.getString("did")) " · 선택됨" else "")
                 }
             }
         }
-        SectionLabel(if (selected == null) "새 원고 작성" else "선택한 원고 편집")
+        SectionLabel(if (saved == null) "새 원고 작성" else "선택한 원고 편집")
+        if (!dirty && saved != null) Note("저장된 원고와 일치합니다.")
         Note("원고는 휴대폰에 저장되며 공식 클라우드를 사용하지 않습니다. 전송 시 현재 표시와 음성 수신을 중지한 뒤 안경으로 전송합니다.")
-        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("원고 제목") })
-        OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("본문") }, minLines = 6, maxLines = 16)
+        OutlinedTextField(title, { draft.title = it }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("원고 제목") })
+        OutlinedTextField(text, { draft.text = it }, Modifier.fillMaxWidth(), label = { Text("본문") }, minLines = 6, maxLines = 16)
         SectionLabel("재생 방식")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(smartFollow, { smartFollow = it }, enabled = !state.busy && state.active == null)
@@ -168,8 +207,10 @@ internal fun TeleprompterScreen(model: AppModel) {
             Text("스크롤 속도 $speed")
             Slider(speed.toFloat(), { speed = it.toInt() }, valueRange = 1f..10f, steps = 8)
         }
-        ToolOutlinedButton(onClick = { model.attempt { selected = model.service().teleprompter.save(title.trim(), text, selected ?: java.util.UUID.randomUUID().toString()); model.notice = "원고가 휴대폰에 저장됨" } }, enabled = title.isNotBlank() && text.isNotBlank() && !state.busy) { Text("원고 저장") }
-        ToolButton(onClick = { model.attempt { model.service().startTeleprompter(title.trim(), text, speed, selected, smartFollow) {} } },
+        ToolOutlinedButton(onClick = { model.attempt { draft.saved(model.service().teleprompter.save(title.trim(), text, draft.documentId())); model.notice = "원고가 휴대폰에 저장됨" } }, enabled = title.isNotBlank() && text.isNotBlank() && !state.busy) { Text("원고 저장") }
+        ToolButton(onClick = { model.attempt { model.service().startTeleprompter(title.trim(), text, speed, draft.documentId(), smartFollow) { result ->
+            result.onFailure { model.notice = it.message ?: "프롬프터 시작 실패" }
+        } } },
             enabled = title.isNotBlank() && text.isNotBlank() && !state.busy && !state.smartFollow && (!smartFollow || state.active == null) && linked, modifier = Modifier.fillMaxWidth()) { Text(if (smartFollow) "저장 후 음성 따라 읽기" else "저장 후 안경에서 재생") }
         if (!linked) Note("안경 통신 연결 후 재생할 수 있습니다. 원고 저장은 별개입니다.")
     }
