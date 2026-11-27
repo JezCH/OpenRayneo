@@ -200,7 +200,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     Phase.BUSY -> MaterialTheme.colorScheme.secondary
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
-@Composable internal fun SystemStatusStrip(model: AppModel, phoneInput: String?, open: () -> Unit) {
+@Composable internal fun SystemStatusStrip(model: AppModel, phoneInput: String?, compact: Boolean = false, open: () -> Unit) {
     val s = model.state
     val rec = recording(s)
     val capture = when {
@@ -227,7 +227,13 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val captureColor = if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase)
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (compact) {
+                    // The keyboard consumes the viewport, but recording/input and
+                    // approval indicators must remain visible and accessible.
+                    Text("기록·입력 · $capture", style = MaterialTheme.typography.labelMedium, color = captureColor)
+                    if (link.phase == Phase.ERROR || link.phase == Phase.BLOCKED || link.phase == Phase.UNKNOWN)
+                        Text("안경 · ${link.label}", style = MaterialTheme.typography.labelSmall, color = statusColor(link.phase))
+                } else BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth < 240.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             StatusStripItem("안경", link.label, statusColor(link.phase), Modifier.fillMaxWidth())

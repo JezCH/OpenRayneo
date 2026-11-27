@@ -118,11 +118,6 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                             }
                     },
                     actions = {
-                        if (keyboardVisible && route != "system-status") {
-                            IconButton(onClick = { openRoute("system-status") }) {
-                                Icon(Icons.Outlined.Info, "시스템 현황 열기")
-                            }
-                        }
                         if (route.isEmpty()) {
                             IconButton(onClick = { openRoute("settings") }) {
                                 Icon(Icons.Outlined.Settings, "설정")
@@ -134,9 +129,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                             containerColor = MaterialTheme.colorScheme.background
                         ),
                 )
-                // The IME already consumes much of the viewport. Keep the status
-                // destination available via the top bar rather than crowding the editor.
-                if (route != "system-status" && !keyboardVisible) SystemStatusStrip(model, phoneInput) { openRoute("system-status") }
+                if (route != "system-status") SystemStatusStrip(model, phoneInput, compact = keyboardVisible) { openRoute("system-status") }
                 }
         },
         bottomBar = {
