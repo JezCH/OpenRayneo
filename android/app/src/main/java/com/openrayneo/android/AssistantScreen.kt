@@ -38,7 +38,8 @@ import org.json.JSONObject
 @Composable
 internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
-    var executeTask by remember { mutableStateOf(false) }
+    LaunchedEffect(model.aiLegacy) { if (!model.aiLegacy) mobile = true }
+    var executeTask by remember(model.aiLegacy) { mutableStateOf(false) }
     var memoryQuestion by remember { mutableStateOf(false) }
     var autoMemory by remember { mutableStateOf(false) }
     var continuityDialog by remember { mutableStateOf(false) }
@@ -55,10 +56,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     val history = if (mobile) model.phoneHistory else model.computerHistory
     val configured =
         if (mobile)
-            s.agentServer.enabled
-        else listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
+            model.aiConfigured
+        else model.aiLegacy && listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
     val draft = if (mobile) model.phoneDraft else model.computerDraft
-    val inputReady = s.available && configured && (if (mobile) s.agentServer.pollRecent else s.computerConnected) && !running
+    val inputReady = s.available && configured && (if (mobile) model.aiReady else s.computerConnected) && !running
     // Search locally after a pause in typing; cancellation prevents stale recommendations.
     var suggestionCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
@@ -143,7 +144,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             }
             SegmentedButton(
                 !mobile,
-                { mobile = false },
+                { if (model.aiLegacy) mobile = false },
                 androidx.compose.foundation.shape.RoundedCornerShape(
                     topEnd = 8.dp,
                     bottomEnd = 8.dp,
@@ -161,7 +162,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                if (mobile && configured && question.isBlank() && !running) s.agentServer.receiverStatus
+                if (mobile && configured && question.isBlank() && !running) model.aiStatus
                 else status,
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,
@@ -197,21 +198,21 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Note(
-                            if (mobile) "AI 연결 설정에서 연결을 켠 뒤 DSH Go 플러그인을 연결하세요. 일반 질문과 업무 실행은 이 연결을 사용합니다."
+                            if (mobile) "설정의 모델 선택에서 사용할 AI를 선택하고 연결하세요."
                             else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
                         )
-                        ToolButton(onClick = { configure(if (mobile) "agent-api" else "computer") }) {
+                        ToolButton(onClick = { configure(if (mobile) "model" else "computer") }) {
                             Text(if (mobile) "AI 연결 설정" else "컴퓨터 연결 설정")
                         }
                     }
                 }
-            else if (mobile && !s.agentServer.pollRecent && !running)
+            else if (mobile && !model.aiReady && !running)
                 item {
                     ContentCard {
                         Text("AI 연결 대기 중", style = MaterialTheme.typography.titleMedium)
-                        Note(s.agentServer.receiverStatus)
+                        Note(model.aiStatus)
                         Note("연결 기능은 켜져 있지만 외부 AI가 아직 요청을 수신하지 않습니다. 질문 초안은 유지됩니다.")
-                        ToolButton(onClick = { configure("agent-api") }) { Text("AI 연결 확인") }
+                        ToolButton(onClick = { configure("model") }) { Text("AI 연결 확인") }
                     }
                 }
             else if (!mobile && !s.computerConnected)
@@ -340,7 +341,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 if (mobile) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
-                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running)
+                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
                     }
                     if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
                     else {
@@ -366,7 +367,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     Note(when {
                         !s.available -> "연결 서비스 준비 중"
                         !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
-                        mobile && !s.agentServer.pollRecent -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
+                        mobile && !model.aiReady -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
                         !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
                         else -> "현재 질문을 보낼 수 없습니다."
                     })
@@ -477,7 +478,7 @@ private fun AgentProbeCard(model: AppModel) {
             Text(if (expanded) "AI 연결 진단 접기" else "AI 연결 및 안경 표시 진단")
         }
         if (expanded) {
-            Note("선택한 DSH 모델 경로에 무작위 코드만 보내 응답을 확인합니다. 원문·개인화 정보·업무 자료·도구를 사용하지 않습니다. 이용량 또는 요금이 발생할 수 있습니다. 일반 Agent 업무 실행이나 제조사 AI 이용권을 검증하지 않습니다.")
+            Note("현재 선택 모델에 무작위 코드만 보내 응답을 확인합니다. 원문·개인화 정보·업무 자료·도구를 사용하지 않습니다. 이용량 또는 요금이 발생할 수 있습니다. 일반 Agent 업무 실행이나 제조사 AI 이용권을 검증하지 않습니다.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = target == AgentProbePolicy.Target.DEFAULT, onClick = { target = AgentProbePolicy.Target.DEFAULT }, label = { Text("기본 질문 모델") }, enabled = p.phase != AgentProbePolicy.Phase.WAITING)
                 FilterChip(selected = target == AgentProbePolicy.Target.AMBIENT, onClick = { target = AgentProbePolicy.Target.AMBIENT }, label = { Text("상시 힌트 모델") }, enabled = p.phase != AgentProbePolicy.Phase.WAITING)
@@ -505,7 +506,7 @@ private fun AgentProbeCard(model: AppModel) {
             if (p.phase == AgentProbePolicy.Phase.WAITING) {
                 TextButton(onClick = { model.attempt { model.service().cancelAgentProbe() } }) { Text("진단 취소") }
             } else {
-                ToolButton(onClick = { consent = true }, enabled = s.available && s.agentServer.enabled &&
+                ToolButton(onClick = { consent = true }, enabled = s.available && model.aiConfigured &&
                     !s.phoneRunning && !s.computerRunning && !s.conversation.running && !s.translationActive &&
                     !s.teleprompter.smartFollow) { Text("AI 응답 진단 실행") }
             }
