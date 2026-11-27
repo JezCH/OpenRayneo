@@ -52,3 +52,33 @@ private fun OpticalComponentSample(appearance: String) {
 
 @Preview(name = "Optical large text / 320dp", widthDp = 320, heightDp = 800, fontScale = 2f)
 @Composable private fun OpticalLargeTextPreview() = OpticalComponentSample("dark")
+
+@Preview(name = "Optical AI state / dark", widthDp = 390, heightDp = 760)
+@Composable
+private fun OpticalAiStatesPreview() {
+    CompanionTheme("dark") {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("AI 상태 예시", style = MaterialTheme.typography.headlineSmall)
+                OpticalAiPhase.entries.forEach { phase ->
+                    OpticalPanel { OpticalAiStatus(phase, "샘플 · 실제 서비스 상태가 아님") }
+                }
+            }
+        }
+    }
+}
+
+@Preview(name = "Optical AI state / large text", widthDp = 320, heightDp = 800, fontScale = 2f)
+@Composable
+private fun OpticalAiStatesLargePreview() {
+    CompanionTheme("light") {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OpticalAiPhase.entries.forEach { phase ->
+                    OpticalPanel { OpticalAiStatus(phase, "상태 설명 예시") }
+                }
+            }
+        }
+    }
+}

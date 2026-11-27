@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import org.json.JSONArray
@@ -60,6 +61,13 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         else model.aiLegacy && listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
     val draft = if (mobile) model.phoneDraft else model.computerDraft
     val inputReady = s.available && configured && (if (mobile) model.aiReady else s.computerConnected) && !running
+    val pendingHere = s.agentReviews.size + if (mobile) 0 else s.approvals.size
+    val phase = opticalAiPhase(s.available, pendingHere > 0, running, inputReady, answer.isNotBlank())
+    val statusDetail = if (mobile && configured && question.isBlank() && !running) model.aiStatus else status
+    // Non-legacy AI has no selectable PC execution path. Preserve the selector
+    // whenever an existing PC task, conversation or approval needs access.
+    val showSourceSelector = model.aiLegacy || !mobile || s.computerRunning || s.approvals.isNotEmpty() ||
+        model.computerHistory.isNotEmpty() || s.computerQuestion.isNotBlank()
     // Search locally after a pause in typing; cancellation prevents stale recommendations.
     var suggestionCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
@@ -80,15 +88,19 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     val computerList = rememberLazyListState()
     val list = if (mobile) phoneList else computerList
     var followLatest by remember(source) { mutableStateOf(true) }
+    val scrollScope = rememberCoroutineScope()
     LaunchedEffect(list, source) {
         snapshotFlow { list.isScrollInProgress to list.canScrollForward }
             .distinctUntilChanged()
             .collect { (scrolling, forward) -> if (scrolling) followLatest = !forward }
     }
-    LaunchedEffect(source, answer, question, s.approvals.size, s.agentReviews.size) {
+    // Approval cards are the final items before the end spacer. Keep them in
+    // view instead of following the answer past an actionable approval.
+    LaunchedEffect(source, answer, question, s.approvals.map { it.id }, s.agentReviews.map { it.id }) {
         withFrameNanos {}
-        if (followLatest && list.layoutInfo.totalItemsCount > 0)
-            list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
+        val count = list.layoutInfo.totalItemsCount
+        if (followLatest && count > 0)
+            list.scrollToItem((count - 1 - pendingHere).coerceAtLeast(0))
     }
     if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft, autoMemory) { memoryQuestion = false; autoMemory = false }
     if (continuityDialog) AlertDialog(
@@ -129,7 +141,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         dismissButton = { TextButton(onClick = { confirmNewChat = false }) { Text("취소") } }
     )
     Column(Modifier.fillMaxSize().imePadding()) {
-        SingleChoiceSegmentedButtonRow(
+        if (showSourceSelector) SingleChoiceSegmentedButtonRow(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
             SegmentedButton(
@@ -161,13 +173,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                if (mobile && configured && question.isBlank() && !running) model.aiStatus
-                else status,
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            OpticalAiStatus(phase, statusDetail, Modifier.weight(1f))
             IconButton(
                 onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
@@ -175,6 +181,12 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 Icon(Icons.Outlined.AddComment, "새 대화")
             }
         }
+        if (pendingHere > 0) TextButton(onClick = {
+            scrollScope.launch {
+                val count = list.layoutInfo.totalItemsCount
+                if (count > 0) list.scrollToItem((count - 1 - pendingHere).coerceAtLeast(0))
+            }
+        }, modifier = Modifier.fillMaxWidth()) { Text("확인이 필요한 요청 ${pendingHere}건 보기") }
         if (mobile && s.approvals.isNotEmpty()) TextButton(onClick = { mobile = false }) { Text("PC 작업 승인 ${s.approvals.size}건 확인") }
         if (!mobile && s.agentReviews.isNotEmpty()) TextButton(onClick = { mobile = true }) { Text("AI 작업 승인 ${s.agentReviews.size}건 확인") }
         LazyColumn(
@@ -237,9 +249,6 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Note(if (mobile) "질문을 입력하거나 기억을 첨부해 대화를 시작하세요." else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
                     }
                 }
-            s.agentReviews.forEach { review ->
-                item(key = "agent-review:${review.id}") { AgentWriteReviewCard(model, review) }
-            }
             if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
                 AgentReceiptCard(model, s.agentReceipts)
             }
@@ -275,7 +284,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                             if (s.speechPlaying) TextButton(onClick = { model.attempt { model.service().speechOutput.stop() } }) { Text("음성 중지") }
                         }
                         Note(s.speechStatus + " · 기본은 이어폰 경로 확인 후 재생합니다. 무음이 필요한 장소에서는 HUD만 사용하세요.")
-                        Row(
+                        FlowRow(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
@@ -301,10 +310,6 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         }
                     }
                 }
-            if (!mobile)
-                s.approvals.forEach { request ->
-                    item(key = "approval:${request.id}") { ApprovalCard(model, request) }
-                }
             if ((s.glasses.intent as? DisplayIntent.Answer)?.ref?.source == source)
                 item {
                     ContentCard {
@@ -322,6 +327,13 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         }
                     }
                 }
+            s.agentReviews.forEach { review ->
+                item(key = "agent-review:${review.id}") { AgentWriteReviewCard(model, review) }
+            }
+            if (!mobile)
+                s.approvals.forEach { request ->
+                    item(key = "approval:${request.id}") { ApprovalCard(model, request) }
+                }
             item(key = "conversation-end") { Spacer(Modifier.height(1.dp)) }
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
@@ -330,7 +342,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (mobile) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (model.aiLegacy) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
                         FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
                     }
