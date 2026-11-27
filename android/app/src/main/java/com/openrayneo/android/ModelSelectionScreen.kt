@@ -33,14 +33,19 @@ internal fun ModelSelectionScreen(model: AppModel) {
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("모델 선택", style = MaterialTheme.typography.headlineMedium)
-        Note("현재 모델: " + AiModelSelection.label(config))
-        Note("안경·휴대폰 질문, AI 힌트, 기록 요약, 온라인 번역 및 후속 조치 분석에 같은 선택을 적용합니다. 내장 음성 인식·오프라인 번역은 그대로 유지합니다. 다른 모델로 자동 대체하지 않습니다.")
-        if (!model.aiSwitchAllowed) Note("진행 중인 기록·번역·AI 작업을 마치면 모델을 변경할 수 있습니다.")
+        ContentCard {
+            Text("현재 선택한 모델", style = MaterialTheme.typography.labelLarge)
+            Text(AiModelSelection.label(config), style = MaterialTheme.typography.headlineSmall)
+            Text(selectedAiStatus(model).label, style = MaterialTheme.typography.titleSmall)
+            Note("안경·휴대폰 질문, AI 힌트, 기록 요약, 온라인 번역 및 후속 조치 분석에 같은 선택을 적용합니다. 내장 음성 인식·오프라인 번역은 그대로 유지합니다. 다른 모델로 자동 대체하지 않습니다.")
+            if (!model.aiSwitchAllowed) Note("진행 중인 기록·번역·AI 작업을 마치면 모델을 변경할 수 있습니다.")
+        }
+        SectionLabel("구독 및 API 연결")
         val info = model.subscriptionInfo
         val plan = profiles.firstOrNull { it.id == AiModelSelection.CHATGPT_PLAN }
         ContentCard {
             Text("ChatGPT 구독 (별도 API Key 없음)", style = MaterialTheme.typography.titleMedium)
+            if (selected == AiModelSelection.CHATGPT_PLAN) StatusPill("현재 선택한 연결 방식")
             Note("공식 ChatGPT 구독 추론 프리뷰입니다. 일반 채팅방·기억과 별개이며 공유 사용량 한도가 적용될 수 있습니다. 자동 유료 API 전환은 하지 않습니다.")
             if (model.subscriptionBusy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -68,6 +73,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
         val gpt = profiles.firstOrNull { it.id == AiModelSelection.GPT }
         ContentCard {
             Text("GPT API (별도 요금)", style = MaterialTheme.typography.titleMedium)
+            if (selected == AiModelSelection.GPT) StatusPill("현재 선택한 연결 방식")
             Note(gpt?.let { it.model + if (selected == it.id) " · 선택됨" else " · 저장됨" }
                 ?: "첫 연결에 사용자 API 인증 필요")
             Note("OpenAI API 연결입니다. ChatGPT 앱 로그인이나 구독이 자동으로 연결되지 않으며 API 이용료가 발생할 수 있습니다.")
@@ -75,8 +81,10 @@ internal fun ModelSelectionScreen(model: AppModel) {
                 enabled = model.aiSwitchAllowed && selected != AiModelSelection.GPT) { Text(if (selected == AiModelSelection.GPT) "선택됨" else "GPT 선택") }
             if (gpt != null) TextButton(onClick = { edit(gpt.id) }, enabled = model.aiSwitchAllowed) { Text("GPT 연결 설정") }
         }
+        SectionLabel("제조사 및 기타 모델")
         ContentCard {
             Text("RayNeo AI", style = MaterialTheme.typography.titleMedium)
+            StatusPill("선택 불가 · 독립 연결 검증 필요")
             Note("제조사 순정 AI · 공식 서비스 인증 및 독립 앱 연결 검증 필요. 준비 전에는 선택할 수 없으며 다른 모델로 대체하지 않습니다.")
         }
         profiles.filter { it.id != AiModelSelection.GPT && it.id != AiModelSelection.CHATGPT_PLAN }.forEach { profile ->
@@ -90,8 +98,10 @@ internal fun ModelSelectionScreen(model: AppModel) {
             }
         }
         ToolOutlinedButton(onClick = { edit("custom-" + java.util.UUID.randomUUID()) }, enabled = model.aiSwitchAllowed && profiles.size < 32) { Text("다른 AI 모델 추가") }
+        SectionLabel("기존 연결 호환")
         ContentCard {
             Text("기존 연결 방식", style = MaterialTheme.typography.titleMedium)
+            if (selected == AiModelSelection.LEGACY) StatusPill("현재 선택한 연결 방식")
             Note("기존 DSH Go·요약 설정 호환 모드입니다. 통합 모델 선택이 아니며 기존 사용자의 설정 보존을 위한 옵션입니다.")
             ToolOutlinedButton(onClick = { legacy = true }, enabled = model.aiSwitchAllowed && selected != AiModelSelection.LEGACY) { Text(if (selected == AiModelSelection.LEGACY) "선택됨" else "기존 방식 선택") }
         }
