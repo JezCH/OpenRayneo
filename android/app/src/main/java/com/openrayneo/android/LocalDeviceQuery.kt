@@ -8,6 +8,9 @@ internal object LocalDeviceQuery {
     private const val numeral = KoreanCommandNumbers.TOKEN
     private val subjects = listOf("안경배터리", "안경배터리잔량", "안경의배터리", "레이네오배터리", "레이네오배터리잔량")
     private val endings = listOf("확인", "확인해줘", "알려줘", "얼마야", "얼마남았어", "몇퍼센트야", "몇퍼센트남았어", "몇프로야", "몇프로남았어", "몇%야", "몇%남았어")
+    // Read-only, explicitly invoked wake only. Accept common Korean ASR spelling,
+    // particles, omitted subject, and ordinary polite forms, not compound tasks.
+    private val batteryRead = Regex("^(?:(?:안경|레이네오)(?:의)?(?:배터리|베터리|밧데리)|(?:배터리|베터리|밧데리))(?:잔량)?(?:가|는|를|이|은|을)?(?:확인|확인해줘|확인해주세요|알려줘|알려주세요|얼마야|얼마예요|얼마에요|얼마인가요|얼마남았어|얼마나남았어|얼마남았나요|얼마나남았나요|몇(?:퍼센트|프로|%)(?:야|예요|에요|남았어|남았나요)?|상태|잔량)?$")
     private val batteryQueries = subjects.flatMap { subject -> endings.map { subject + it } }.toSet()
     private val brightness = "(?:안경(?:의|화면)?|레이네오(?:의|화면)?)밝기(?:를|가|는)?"
     private val read = Regex("^$brightness(?:확인|확인해줘|알려줘|얼마야|몇단계야)$")
@@ -39,7 +42,7 @@ internal object LocalDeviceQuery {
     /** Only for a separately authorized, bounded software-wake question. */
     fun parseExplicit(text: String): Command? {
         val normalized = KoreanLanguage.normalize(text).trim().trimEnd('?', '？', '.', '!', '。', '！').filterNot { it.isWhitespace() }
-        if (normalized in batteryQueries) return Command(Kind.BATTERY)
+        if (normalized in batteryQueries || batteryRead.matches(normalized)) return Command(Kind.BATTERY)
         if (read.matches(normalized)) return Command(Kind.BRIGHTNESS_READ)
         if (up.matches(normalized)) return Command(Kind.BRIGHTNESS_UP)
         if (down.matches(normalized)) return Command(Kind.BRIGHTNESS_DOWN)
