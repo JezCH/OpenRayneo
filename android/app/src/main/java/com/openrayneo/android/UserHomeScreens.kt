@@ -34,6 +34,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
         s.mediaCaption.busy -> "미디어 자막 · " + s.mediaCaption.detail
+        s.captionActive && s.glasses.session?.nativePaused == true -> "주변 자막 일시정지"
+        s.translationActive && s.glasses.session?.nativePaused == true -> "실시간 번역 일시정지"
         s.captionActive -> "실시간 자막 중"
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
@@ -48,14 +50,10 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            ContentCard {
-                Text("현재 활동", style = MaterialTheme.typography.labelLarge)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
-                    Text(activity, style = MaterialTheme.typography.headlineSmall)
-                }
+            OpticalPanel {
+                OpticalActivityHeader(activity)
                 Note("음성 인식: " + when {
                     !s.available -> "서비스 준비 중"
                     !model.speechConfigured -> "선택한 인식 모델 설정 필요"
@@ -100,7 +98,43 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (c.error != null) Text(c.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+        }
+        if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {
+            FeatureLink("확인이 필요한 AI 작업 ${s.approvals.size + s.agentReviews.size}건", "내용 확인 후 승인 또는 거절", Icons.Outlined.AutoAwesome) { navigate(1) }
+        }
+        item { SectionLabel("바로 사용") }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, tileModifier) { navigate(1) }
+            }, second = { tileModifier ->
+                OpticalQuickTile("회의 기록", "전사 · 요약", Icons.Outlined.GraphicEq, tileModifier) {
+                    if (!linked) connect() else if (!c.modelReady) open("voice-settings")
+                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
+                    else { resume = false; requested = ConversationMode.MEETING }
+                }
+            })
+        }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, tileModifier) {
+                    if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
+                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
+                    else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
+                }
+            }, second = { tileModifier ->
+                OpticalQuickTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
+            })
+        }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("영상 자막", "휴대폰 소리 → 한국어", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
+            }, second = { tileModifier ->
+                OpticalQuickTile("한영 통역", "안경 마이크 · 내장 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
+            })
+        }
+        item {
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("AI 연결", style = MaterialTheme.typography.labelLarge)
@@ -124,36 +158,6 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
                 }
                 if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
-            }
-        }
-        if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {
-            FeatureLink("확인이 필요한 AI 작업 ${s.approvals.size + s.agentReviews.size}건", "내용 확인 후 승인 또는 거절", Icons.Outlined.AutoAwesome) { navigate(1) }
-        }
-        item { SectionLabel("바로 사용") }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, Modifier.weight(1f)) { navigate(1) }
-                FeatureTile("회의 기록", "전사 · 요약", Icons.Outlined.GraphicEq, Modifier.weight(1f)) {
-                    if (!linked) connect() else if (!c.modelReady) open("voice-settings")
-                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
-                    else { resume = false; requested = ConversationMode.MEETING }
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, Modifier.weight(1f)) {
-                    if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
-                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
-                    else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
-                }
-                FeatureTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, Modifier.weight(1f)) { open("korean-wake") }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("영상 자막", "휴대폰 소리 → 한국어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("media-captions") }
-                FeatureTile("한영 통역", "안경 마이크 · 내장 번역", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
             }
         }
         item { FeatureLink("모든 도구", "대화 자막 · 프롬프터 · 길 안내 · 일정", Icons.Outlined.Dashboard) { navigate(3) } }
@@ -221,10 +225,12 @@ private data class ToolDestination(
 private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel(title)
-        OutlinedCard(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
+            Column {
             destinations.forEachIndexed { index, destination ->
                 if (index > 0) HorizontalDivider(
                     modifier = Modifier.padding(start = 56.dp, end = 16.dp),
@@ -238,6 +244,7 @@ private fun ToolDestinationGroup(title: String, destinations: List<ToolDestinati
                     modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 )
+            }
             }
         }
     }
@@ -406,7 +413,7 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
     )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            ContentCard {
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
