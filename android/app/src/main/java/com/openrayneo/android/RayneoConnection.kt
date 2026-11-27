@@ -55,9 +55,12 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var notificationSequence = 0
     private var bleDecoder = ProtocolCodec.StreamDecoder()
     private var authenticationHandled = false
+    private var connectionPairValue: Byte = 1
+    // An authenticated BLE capability request can arrive while SPP opens.
+    private var pendingCapability: ProtocolCodec.Frame? = null
     private var bleOnly = false
     private var blePayloadSize = 20
-    private data class BleWrite(val bytes: ByteArray, val completion: String?)
+    private data class BleWrite(val bytes: ByteArray, val completion: String?, val callback: ((Result<Unit>) -> Unit)? = null)
     private val bleWrites = ArrayDeque<BleWrite>()
     private var bleWriting = false
     private var bleBusyRetries = 0
@@ -180,13 +183,15 @@ internal class RayneoConnection(private val context: Context, private val listen
         expectedAddress = device.classicAddress
         pairingSequence = 0
         bleDecoder = ProtocolCodec.StreamDecoder()
-        // Match the verified Mac sequence: classic bond first, then BLE application auth.
-        val address = device.classicAddress
-        if (!bleOnly && address != null) {
-            ensureBond(adapter.getRemoteDevice(address)) { startBle(device) }
-        } else {
-            startBle(device)
+        // The official SDK and upstream Mac register over BLE before a new
+        // system bond. For an existing bond do not create or remove it.
+        // openRfcomm verifies/creates the permitted bond after BLE authentication.
+        if (automatic && device.classicAddress != null) {
+            check(adapter.getRemoteDevice(device.classicAddress).bondState == BluetoothDevice.BOND_BONDED) {
+                "기존 페어링이 없어 자동 연결하지 않음"
+            }
         }
+        startBle(device)
     }
 
     private fun startBle(device: Device) {
@@ -296,10 +301,12 @@ internal class RayneoConnection(private val context: Context, private val listen
                 check(expectedAddress == null || expectedAddress.equals(address, true)) { "BLE 가 선택한 클래식 블루투스 기기와 일치하지 않음" }
                 expectedAddress = address
                 val bound = value.copyOfRange(7, 13)
-                // Preserve the Mac bridge's bound-identity baseline; unbound devices use the
-                // official Android client's six-byte Android ID convention (last 12 hex digits).
-                identity = if (bound.any { it != 0.toByte() }) bound else androidIdentity()
-                log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (bound.any { it != 0.toByte() }) "안경 바인딩" else "이 앱의 Android ID"}")
+                val hasBinding = bound.any { it != 0.toByte() }
+                val systemBonded = adapter.getRemoteDevice(address).bondState == BluetoothDevice.BOND_BONDED
+                // Keep existing binding; do not replace credentials or remove a bond.
+                identity = if (hasBinding) bound else androidIdentity()
+                connectionPairValue = ProtocolCodec.pairingIntentForLink(automaticConnection, systemBonded)
+                log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (hasBinding) "안경 바인딩" else "이 앱의 Android ID"}; 시스템 페어링=$systemBonded; 연결 모드=$connectionPairValue")
                 val receive = checkNotNull(receiveCharacteristic) { "안경 수신 서비스를 찾을 수 없음" }
                 check(connection.setCharacteristicNotification(receive, true)) { "BLE 알림을 켤 수 없음" }
                 val descriptor = checkNotNull(receive.getDescriptor(CCCD)) { "누락: CCCD" }
@@ -319,10 +326,9 @@ internal class RayneoConnection(private val context: Context, private val listen
                     16 to byteArrayOf(1), 17 to identity,
                     18 to (adapter.name ?: "OpenRayneo Android").toByteArray(),
                     19 to byteArrayOf(2), 22 to Build.MANUFACTURER.toByteArray(),
-                    // Automatic recovery is restricted to a previously authenticated,
-                    // still-bonded target by ConnectionSupervisor. Use the documented
-                    // reconnect intent, not a new application registration.
-                    23 to Build.MODEL.toByteArray(), 27 to byteArrayOf(ProtocolCodec.pairingIntent(automaticConnection))
+                    // Existing manual and automatic reconnections use the same
+                    // documented reconnect intent; new registration is separate.
+                    23 to Build.MODEL.toByteArray(), 27 to byteArrayOf(connectionPairValue)
                 ))
             }
         }
@@ -335,7 +341,9 @@ internal class RayneoConnection(private val context: Context, private val listen
                 check(status == BluetoothGatt.GATT_SUCCESS) { "BLE 쓰기 콜백 실패: status=$status" }
                 bleWriting = false
                 bleBusyRetries = 0
-                bleWrites.removeFirstOrNull()?.completion?.let(::log)
+                val completed = bleWrites.removeFirstOrNull()
+                completed?.completion?.let(::log)
+                completed?.callback?.invoke(Result.success(Unit))
                 writeNextBleChunk()
             }
         }
@@ -351,7 +359,12 @@ internal class RayneoConnection(private val context: Context, private val listen
                             enqueueBleFrame(ProtocolCodec.acknowledgement(frame), null)
                         }
                         if (frame.protocol == 0x10) processPairing(frame)
-                        else listener.onFrame(frame, "BLE")
+                        else if (frame.protocol == 0x06 && !ready && authenticationHandled && !bleOnly &&
+                            ProtocolCodec.isCapabilityRequest(frame)) {
+                            // Retain just the latest bounded request for this generation.
+                            pendingCapability = frame
+                            log("BLE 인증 후 기능 협상 요청 수신 · SPP 연결 후 응답")
+                        } else listener.onFrame(frame, "BLE")
                     }
                 }
             }
@@ -387,7 +400,9 @@ internal class RayneoConnection(private val context: Context, private val listen
                     } else openRfcomm()
                 }
             }
-            22, 23 -> log("안경 상태=${frame.payload.getOrNull(3)?.toInt()?.and(255)}")
+            22 -> log("안경 연결 상태 cmd22=${ProtocolCodec.pairingStatus(frame.payload) ?: "미확인"}")
+            23 -> log("안경 등록 상태 cmd23=${ProtocolCodec.pairingStatus(frame.payload) ?: "미확인"}")
+            30 -> log("안경 SPP 연결 요청 cmd30 수신")
         }
     }
 
@@ -396,11 +411,12 @@ internal class RayneoConnection(private val context: Context, private val listen
         enqueueBleFrame(bytes, "BLE 명령 전송 $command (${bytes.size}바이트)")
     }
 
-    private fun enqueueBleFrame(bytes: ByteArray, completion: String?) {
+    private fun enqueueBleFrame(bytes: ByteArray, completion: String?, callback: ((Result<Unit>) -> Unit)? = null) {
         var offset = 0
         while (offset < bytes.size) {
             val end = minOf(offset + blePayloadSize, bytes.size)
-            bleWrites.addLast(BleWrite(bytes.copyOfRange(offset, end), if (end == bytes.size) completion else null))
+            bleWrites.addLast(BleWrite(bytes.copyOfRange(offset, end), if (end == bytes.size) completion else null,
+                if (end == bytes.size) callback else null))
             offset = end
         }
         writeNextBleChunk()
@@ -463,8 +479,11 @@ internal class RayneoConnection(private val context: Context, private val listen
                     if (session != generation || socket !== pending) return@post
                     main.removeCallbacks(timeout)
                     ready = true
-                    state("연결됨: BLE 인증과 RFCOMM 모두 정상", ready = true)
                     startReader(pending, session)
+                    state("연결됨: BLE 인증과 RFCOMM 모두 정상", ready = true)
+                    val capability = pendingCapability
+                    pendingCapability = null
+                    if (session == generation && capability != null) listener.onFrame(capability, "BLE")
                 }
             } catch (error: Exception) {
                 main.post { if (session == generation) fail("SPP  연결 실패: ${error.message}") }
@@ -543,6 +562,19 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
     }
 
+    /** Explicit control-path test; do not move large audio or other business writes
+     * to BLE implicitly. GATT write callback is not a device business response. */
+    fun sendBleControl(frame: ByteArray, completion: (Result<Unit>) -> Unit) {
+        check(ready && authenticationHandled && !bleOnly && gatt != null) { "완전한 연결의 인증된 BLE가 필요합니다" }
+        check(ProtocolCodec.isBleLauncherControl(frame, blePayloadSize)) { "BLE 진단 허용 명령 또는 단일 프레임 크기를 벗어났습니다" }
+        check(bleWrites.size < 32) { "BLE 전송 대기열이 혼잡합니다" }
+        try {
+            enqueueBleFrame(frame, "BLE 음성 제어 전송 완료 · 기기 회신 별도", completion)
+        } catch (error: Exception) {
+            fail("BLE 제어 전송 실패: ${error.message}")
+        }
+    }
+
     fun sendFrame(frame: ByteArray, completion: (Result<Unit>) -> Unit) {
         check(ready && !bleOnly) { "이 기능은 완전한 RFCOMM 연결이 필요합니다. BLE-only 모드를 끄세요" }
         val session = generation
@@ -581,10 +613,15 @@ internal class RayneoConnection(private val context: Context, private val listen
         stopScan()
         ready = false
         authenticationHandled = false
+        connectionPairValue = 1
+        pendingCapability = null
         bleRetry?.let(main::removeCallbacks); bleRetry = null
         bleWriteTimeout?.let(main::removeCallbacks); bleWriteTimeout = null
         bleBusyRetries = 0
+        val cancelled = bleWrites.mapNotNull { it.callback }
         bleWrites.clear()
+        // Complete cancelled operations after teardown, not reentrantly in reset.
+        cancelled.forEach { cb -> main.post { cb(Result.failure(IllegalStateException("BLE 연결이 변경됨"))) } }
         bleWriting = false
         blePayloadSize = 20
         val oldGatt = gatt

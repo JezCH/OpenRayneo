@@ -35,6 +35,44 @@ internal object ProtocolCodec {
     fun pairingIntent(previouslyAuthenticatedRecovery: Boolean): Byte =
         if (previouslyAuthenticatedRecovery) 2 else 1
 
+    /** Existing system pairing selects reconnect even on manual connect.
+     * A zero/absent vendor identity is not proof of missing registration. Do not
+     * regress the previously authenticated guest reconnect or silently re-register. */
+    fun pairingIntentForLink(automatic: Boolean, systemBonded: Boolean): Byte {
+        check(!automatic || systemBonded) { "기존 시스템 페어링이 없어 자동 연결 중단" }
+        return pairingIntent(systemBonded)
+    }
+
+    fun pairingStatus(payload: ByteArray): Int? =
+        if (payload.size == 4 && (payload[0].toInt() and 255) in setOf(22, 23) && u16(payload, 1) == 1)
+            payload[3].toInt() and 255 else null
+
+    fun isCapabilityRequest(frame: Frame): Boolean =
+        frame.protocol == 6 && !frame.acknowledgement && frame.payload.size in 1..8192 &&
+            runCatching { org.json.JSONObject(frame.payload.toString(Charsets.UTF_8)).opt("type") == 1 }.getOrDefault(false)
+
+    /** Only explicit launcher settings/readback and enabling commands, one ATT payload.
+     * AIX IO/Turbo IO demonstrate BLE launcher traffic; no guessed capability or account writes. */
+    fun isBleLauncherControl(bytes: ByteArray, maxPayload: Int): Boolean {
+        if (bytes.size !in 1..maxPayload) return false
+        return runCatching {
+            val frame = StreamDecoder().append(bytes).single()
+            if (frame.protocol != 15 || frame.acknowledgement) return@runCatching false
+            val message = message(frame.payload)
+            val body = org.json.JSONObject(message.json ?: return@runCatching false)
+            val payload = body.optJSONObject("payload") ?: return@runCatching false
+            val cmd = body.optString("cmd")
+            allowedBleLauncher(message.type, cmd, payload.opt("mode"), payload.opt("value"), payload.opt("data"))
+        }.getOrDefault(false)
+    }
+
+    fun allowedBleLauncher(type: Int, command: String, mode: Any?, value: Any?, data: Any?): Boolean =
+        when (type) {
+            4 -> command == "request_general_settings" && mode == 0 && value == 0 && data == ""
+            16 -> command in setOf("set_ai_state", "set_ai_voice_wakeup") && mode == 1 && value == 0 && data == ""
+            else -> false
+        }
+
     /** Documented raw host visibility command 31; not a TLV or business ACK. */
     fun hostVisibility(sequence: Int, visible: Boolean): ByteArray =
         frame(0x10, sequence, byteArrayOf(0x1f, 0, 1, if (visible) 2 else 1))

@@ -33,6 +33,7 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     var confirm by remember { mutableStateOf(false) }
     var confirmNative by remember { mutableStateOf(false) }
     var confirmStandalone by remember { mutableStateOf(false) }
+    var standaloneBle by remember { mutableStateOf(false) }
     var confirmAmbient by remember { mutableStateOf(false) }
     var startContinuous by remember { mutableStateOf<ConversationSource?>(null) }
     var resumeAfterLink by remember { mutableStateOf(false) }
@@ -60,10 +61,16 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
             Note("앱 자동 응답: " + flag(model.config.optBoolean("nativeAutoAnswer")))
             Note("최근 기본 호출: " + s.nativeWakeStatus)
             Note("기본 호출은 실제 펌웨어 이벤트가 필요합니다. 공식 앱을 종료하고 안경 AI 상태를 읽은 뒤 테스트하세요. 이벤트가 없으면 아래 독립 한국어 호출을 사용해 마이크·HUD를 별도로 확인하세요.")
-            ToolButton(onClick = { confirmStandalone = true },
+            OfficialAppConnectionControls()
+            ToolButton(onClick = { standaloneBle = false; confirmStandalone = true },
                 enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) {
-                Text("독립 기본 호출 준비 · 안경 설정 적용")
+                Text("독립 기본 호출 준비 · SPP")
             }
+            ToolOutlinedButton(onClick = { standaloneBle = true; confirmStandalone = true },
+                enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) {
+                Text("BLE 음성 깨우기 경로 시험")
+            }
+            Note("BLE 시험은 안경 설정을 새로 읽고 깨우기 ON을 재전송합니다. 기존 음성 처리 경로와 계정·페어링은 바꾸지 않습니다.")
             Note(s.deviceSettings.notice)
             ToolOutlinedButton(onClick = { model.attempt { model.service().deviceSettings.refresh(initialize = true) } },
                 enabled = linked && !s.deviceSettings.busy && model.recommendedEditable) { Text("안경 초기 상태 다시 동기화") }
@@ -164,12 +171,12 @@ internal fun KoreanWakeScreen(model: AppModel, voiceSettings: () -> Unit, device
     }
     if (confirmStandalone) AlertDialog(
         onDismissRequest = { confirmStandalone = false },
-        title = { Text("안경 자체 AI와 깨우기 활성화") },
-        text = { Text("현재 연결된 안경에서 AI·음성 깨우기 스위치를 읽고 꺼진 항목만 활성화합니다. 마이크 개인정보 설정, 계정, 페어링 및 펌웨어는 변경하지 않습니다. 실제 호출 및 AI 응답은 별도 검증이 필요합니다.") },
+        title = { Text(if (standaloneBle) "BLE 음성 깨우기 경로 시험" else "안경 자체 AI와 깨우기 활성화") },
+        text = { Text("현재 연결된 안경에서 AI·음성 깨우기 스위치를 읽고 꺼진 항목을 활성화합니다. BLE 시험은 이미 켜진 깨우기도 ON을 다시 전송합니다. 마이크 개인정보 설정, 계정, 페어링 및 펌웨어는 변경하지 않습니다. 실제 호출 및 AI 응답은 별도 검증이 필요합니다.") },
         confirmButton = { TextButton(onClick = {
             confirmStandalone = false
-            model.attempt { model.service().deviceSettings.prepareNativeAssistant() }
-        }, enabled = linked && s.deviceSettings.loaded && !s.deviceSettings.busy && model.recommendedEditable) { Text("설정 적용") } },
+            model.attempt { model.service().deviceSettings.prepareNativeAssistant(overBle = standaloneBle) }
+        }, enabled = linked && (standaloneBle || s.deviceSettings.loaded) && !s.deviceSettings.busy && model.recommendedEditable) { Text("설정 적용") } },
         dismissButton = { TextButton(onClick = { confirmStandalone = false }) { Text("취소") } })
     if (confirmNative || confirmAmbient) AlertDialog(
         onDismissRequest = { confirmNative = false; confirmAmbient = false },
