@@ -53,7 +53,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val audio = s.audioLevels.coordinatorState()
     val rec = recording(s)
     val live = c.running && !c.reprocessing && !c.stopping
-    val ai = s.agentServer.enabled && s.agentServer.pollRecent
+    val ai = model.aiReady
     val mic = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") else null
     val firmware = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("voiceWakeup") else null
     val firmwareAI = if (linked && s.deviceSettings.loaded) s.deviceSettings.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("enabled") else null
@@ -120,7 +120,7 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("음성·기록", "기록·화자 엔진", if(c.modelReady) status(Phase.READY,"초기화 완료") else if(c.error != null) status(Phase.ERROR,"초기화 실패") else status(Phase.WAITING,"초기화 대기"), "실제 화자 식별 품질은 별도", "voice-profiles")
         addRow("음성·기록", "기록 요약", if(c.summarizing) status(Phase.ACTIVE,"요약 중") else off, "저장된 기록 처리", "records")
         addRow("음성·기록", "음성 출력", active(s.speechPlaying), "휴대폰 오디오 경로", "voice-settings")
-        addRow("AI·기억", "AI 연결", receiver(s), if(s.agentServer.enabled && !ai) "외부 Agent 요청 수신 대기 · 실행 환경 확인" else "최근 요청 수신 기준 · 모델 응답 별도", "agent-api", s.agentServer.enabled, s.agentServer.enabled && !ai)
+        addRow("AI·기억", "AI 연결", if(model.aiLegacy) receiver(s) else if(model.aiConfigured) status(Phase.READY,"설정됨") else status(Phase.BLOCKED,"설정 필요"), model.aiStatus, "model", model.aiConfigured, !ai)
         addRow("AI·기억", "AI 질문·업무", active(s.phoneRunning || s.voiceAiPending), if(s.voiceAiPending) "안경 호출 질문 응답 대기" else "휴대폰 AI 처리", "ai")
         addRow("AI·기억", "안경 AI 자체 활성화", when (firmwareAI) {
             true -> status(Phase.READY,"기기 설정 켜짐"); false -> off; null -> unknown
