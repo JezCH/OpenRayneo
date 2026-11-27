@@ -26,6 +26,7 @@ internal data class PageSession(
     val writtenContent: PageContent? = null,
     val receivesGlassesAudio: Boolean = true,
     val nativeSubtitle: NativeSubtitleStart? = null,
+    val nativeHint: NativeHintStart? = null,
 )
 internal data class TranslationView(val source: String = "", val target: String = "", val final: Boolean = true)
 internal data class NavigationState(val enabled: Boolean = false, val key: String? = null, val frame: String? = null)
@@ -63,8 +64,8 @@ internal data class GlassesState(
         session == null -> "연결됨, 안경 표시 유휴"
         session.phase == PagePhase.STARTING -> "안경의 시작 확인 대기"
         session.phase == PagePhase.LAYOUT -> "내비게이션 레이아웃 확인 중"
-        session.nativeSubtitle != null && audio.phase == AudioPhase.WAITING_PACKET -> "안경 자막 응답 전송 · 음성 수신 대기"
-        session.phase == PagePhase.SETTLING -> if (session.nativeSubtitle != null) "안경 자막 응답 전송 · 실제 표시 미확인" else "페이지 확인됨, 내용 전송 중"
+        (session.nativeSubtitle != null || session.nativeHint != null) && audio.phase == AudioPhase.WAITING_PACKET -> "안경 시작 응답 전송 · 음성 수신 대기"
+        session.phase == PagePhase.SETTLING -> if (session.nativeSubtitle != null || session.nativeHint != null) "안경 시작 응답 전송 · 실제 표시 미확인" else "페이지 확인됨, 내용 전송 중"
         session.writtenContent != session.content -> "안경 내용 업데이트 중"
         session.mode == PageMode.NAVIGATION -> "내비게이션 세션 준비됨"
         intent == DisplayIntent.BlankPrompt -> "화면을 지웠고 음성 수신은 유지됨"
@@ -94,6 +95,7 @@ internal sealed interface GlassesEvent {
     data object OpenStandby : GlassesEvent
     data object StartTranslation : GlassesEvent
     data class StartNativeSubtitle(val request: NativeSubtitleStart) : GlassesEvent
+    data class StartNativeHint(val request: NativeHintStart) : GlassesEvent
     data object StartCaption : GlassesEvent
     data object StartMediaCaption : GlassesEvent
     data class TranslationText(val view: TranslationView) : GlassesEvent

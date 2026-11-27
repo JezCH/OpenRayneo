@@ -46,3 +46,35 @@ internal data class NativeSubtitleStart(
         }
     }
 }
+
+
+/** The 0x17 type-1/2 contract is documented by upstream; the exact stock
+ * device-originated packet on 1.0.7.11 remains a hardware acceptance test.
+ * Accept only the known conversation mode and directions. */
+internal data class NativeHintStart(val sid: String, val source: String, val target: String, val direction: String) {
+    fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
+        JSONObject().put("mode", "conversation").put("source_language", source).put("target_language", target)
+            .put("direction", direction).put("save_audio", false))
+    companion object {
+        fun parse(frame: ProtocolCodec.Frame): NativeHintStart? {
+            if (frame.protocol != 0x17 || frame.acknowledgement || frame.payload.size !in 1..4096) return null
+            val message = ProtocolCodec.message(frame.payload)
+            if (message.type != 1 || message.audio?.isNotEmpty() == true) return null
+            val body = runCatching { JSONObject(message.json ?: return null) }.getOrNull() ?: return null
+            val sid = body.opt("sid") as? String ?: return null
+            if (!sid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return null
+            if (body.has("code") && body.opt("code") != 0) return null
+            if (body.optBoolean("force", false)) return null
+            val settings = body.optJSONObject("settings") ?: return null
+            if (settings.opt("mode") != "conversation") return null
+            val source = settings.opt("source_language") as? String ?: return null
+            val target = settings.opt("target_language") as? String ?: return null
+            val direction = settings.opt("direction") as? String ?: return null
+            val locale = Regex("[a-z]{2,3}(-[A-Za-z]{2,4})?")
+            if (!source.matches(locale) && source != "auto") return null
+            if (!target.matches(locale) && target != "auto") return null
+            if (direction !in setOf("ahead", "around")) return null
+            return NativeHintStart(sid, source, target, direction)
+        }
+    }
+}

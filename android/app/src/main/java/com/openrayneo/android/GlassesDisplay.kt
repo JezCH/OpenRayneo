@@ -38,18 +38,18 @@ internal class GlassesDisplay(
         reset()
         validate(next.mode, next.content)
         session = next
-        val id = next.nativeSubtitle?.sid ?: UUID.randomUUID().toString().replace("-", "")
+        val id = next.nativeSubtitle?.sid ?: next.nativeHint?.sid ?: UUID.randomUUID().toString().replace("-", "")
         sid = id; pending = next.content
-        val incoming = next.nativeSubtitle
+        val incoming = next.nativeSubtitle?.reply() ?: next.nativeHint?.reply()
         if (incoming != null) {
             val ownerGeneration = generation
             schedule(timeout, 8_000)
-            send(0x13, 2, incoming.reply()) { result ->
+            send(protocol(next), 2, incoming) { result ->
                 if (generation != ownerGeneration || sid != id || failed) return@send
                 cancel(timeout)
-                if (result.isFailure) { fail("안경 자막 시작 응답 전송 실패"); return@send }
+                if (result.isFailure) { fail("안경 시작 응답 전송 실패"); return@send }
                 audioAccepted = true; accepted = true
-                report("안경 자막 시작 응답 전송 · 실제 음성/표시 확인 대기")
+                report("안경 시작 응답 전송 · 실제 음성/표시 확인 대기")
                 signal(next.id, PageSignal.AudioAwaitingPeer(2))
                 if (generation != ownerGeneration) return@send
                 signal(next.id, PageSignal.Settling)
@@ -159,7 +159,8 @@ internal class GlassesDisplay(
         val id = sid ?: return
         val active = session ?: return
         pending = null
-        if (content == lastWritten || (active.nativeSubtitle != null && content.text.isBlank())) return
+        if (content == lastWritten || (active.nativeSubtitle != null && content.text.isBlank()) ||
+            (active.nativeHint != null && content.text.isBlank() && content.answer.isNullOrBlank())) return
         writing = true
         val text = (if (active.mode == PageMode.NAVIGATION && navigationFrameSent) "\u3000" else "") + content.text
         val payload = if (active.mode == PageMode.NAVIGATION) NavigationFrame.result(id, text)
