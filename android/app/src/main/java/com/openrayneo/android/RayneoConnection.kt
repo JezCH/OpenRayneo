@@ -58,6 +58,7 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var connectionPairValue: Byte = 1
     // Keep a bounded request until this connection's authentication succeeds.
     private var pendingCapability: ProtocolCodec.Frame? = null
+    private var pendingCapabilityAt = 0L
     private var earlyCapabilitySequence = 0x6a00
     private var earlyCapabilityStatus = "미수신"
     private var initialLauncherStatus = "미조회"
@@ -67,7 +68,7 @@ internal class RayneoConnection(private val context: Context, private val listen
     val linkEvidence: String get() =
         "BLE 인증=${if (authenticationHandled) "통과" else "미확인"} · SPP 소켓=${if (ready && !bleOnly) "연결" else "미확인"}\n" +
         "기기 연결 상태(cmd22)=$peerConnectionStatus · 등록 상태(cmd23)=$peerRegistrationStatus\n" +
-        "초기 BLE 기능 협상=$earlyCapabilityStatus · BLE 상태 조회=$initialLauncherStatus · 펌웨어 서비스 준비는 별도 검증"
+        "BLE 기능 협상=$earlyCapabilityStatus · 초기 BLE 상태 조회=$initialLauncherStatus · 펌웨어 서비스 준비는 별도 검증"
     private var bleOnly = false
     private var blePayloadSize = 20
     private data class BleWrite(val bytes: ByteArray, val completion: String?, val callback: ((Result<Unit>) -> Unit)? = null)
@@ -354,7 +355,10 @@ internal class RayneoConnection(private val context: Context, private val listen
                 val completed = bleWrites.removeFirstOrNull()
                 completed?.completion?.let(::log)
                 completed?.callback?.invoke(Result.success(Unit))
-                writeNextBleChunk()
+                // A bounded pending capability query must not wait for RFCOMM when
+                // the authenticated BLE queue has become available again.
+                if (connection === gatt) replyBleCapability()
+                if (connection === gatt) writeNextBleChunk()
             }
         }
 
@@ -370,12 +374,13 @@ internal class RayneoConnection(private val context: Context, private val listen
                             enqueueBleFrame(ProtocolCodec.acknowledgement(frame), null)
                         }
                         if (frame.protocol == 0x10) processPairing(frame)
-                        else if (frame.protocol == 0x06 && !ready && !bleOnly &&
+                        else if (frame.protocol == 0x06 && !bleOnly &&
                             ProtocolCodec.isCapabilityRequest(frame)) {
                             pendingCapability = frame
-                            earlyCapabilityStatus = "요청 수신 · 인증 확인 대기"
-                            log("초기 BLE 기능 협상 요청 수신")
-                            if (authenticationHandled) replyEarlyCapability()
+                            pendingCapabilityAt = android.os.SystemClock.elapsedRealtime()
+                            earlyCapabilityStatus = if (authenticationHandled) "BLE 요청 수신" else "요청 수신 · 인증 확인 대기"
+                            log("BLE 기능 협상 요청 수신")
+                            if (authenticationHandled) replyBleCapability()
                         } else if (authenticationHandled) {
                             if (frame.protocol == 0x0f && initialLauncherWait != null) observeInitialLauncher(frame)
                             if (connection === gatt) listener.onFrame(frame, "BLE")
@@ -386,28 +391,39 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
     }
 
-    /** Firmware capability queries have a short timeout (5 s in 1.0.6.11).
-     * Reply to an actual request on its authenticated BLE transport rather than
-     * waiting for RFCOMM. This is a transport-route experiment using the known
-     * upstream empty response, not a feature declaration or proof of acceptance. */
-    private fun replyEarlyCapability() {
+    /** Reply to an actual request on its authenticated BLE ingress, including
+     * after SPP is connected. Keep at most one pending query, retry on queue
+     * drain and retain the existing SPP fallback when BLE cannot enqueue.
+     * This is the known upstream empty response, not a feature claim. */
+    private fun replyBleCapability() {
         if (!authenticationHandled || bleOnly || gatt == null || pendingCapability == null) return
-        if (bleWrites.size >= 32) {
-            earlyCapabilityStatus = "BLE 혼잡 · SPP 응답 대기"
+        if (android.os.SystemClock.elapsedRealtime() - pendingCapabilityAt >= 5_000L) {
+            pendingCapability = null
+            earlyCapabilityStatus = "BLE 요청 5초 경과 · 새 요청 대기"
+            log("BLE 기능 협상: $earlyCapabilityStatus")
             return
         }
-        val bytes = ProtocolCodec.emptyCapabilityReply(earlyCapabilitySequence++ and 65535)
-        if (bytes.size > blePayloadSize) {
-            earlyCapabilityStatus = "BLE 크기 제한 · SPP 응답 대기"
+        val bytes = ProtocolCodec.emptyCapabilityReply(earlyCapabilitySequence and 65535)
+        if (bleWrites.size >= 32 || bytes.size > blePayloadSize) {
+            earlyCapabilityStatus = if (bleWrites.size >= 32) "BLE 혼잡 · 대기열 배출 대기" else "BLE 크기 제한"
+            // Preserve the prior known SPP path, only if the socket is already
+            // available. A queued write is never sent again via another route.
+            if (ready) {
+                val request = pendingCapability ?: return
+                pendingCapability = null
+                earlyCapabilityStatus = "BLE 전송 불가 · SPP 경유 응답"
+                listener.onFrame(request, "BLE")
+            }
             return
         }
+        earlyCapabilitySequence++
         val session = generation
         pendingCapability = null
         earlyCapabilityStatus = "BLE 응답 전송 중"
-        enqueueBleFrame(bytes, "초기 BLE 기능 협상 응답 전송") { result ->
+        enqueueBleFrame(bytes, "BLE 기능 협상 응답 전송") { result ->
             if (session == generation) {
-                earlyCapabilityStatus = if (result.isSuccess) "응답 전송 · 기기 적용 미확인" else "응답 전송 실패"
-                log("초기 BLE 기능 협상: $earlyCapabilityStatus")
+                earlyCapabilityStatus = if (result.isSuccess) "BLE 응답 전송 · 기기 적용 미확인" else "BLE 응답 전송 실패"
+                log("BLE 기능 협상: $earlyCapabilityStatus")
             }
         }
     }
@@ -455,7 +471,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                         ready = true
                         state("BLE  인증됨, 알림 시도 가능 (완전한 페어링은 미검증)", ready = true)
                     } else {
-                        replyEarlyCapability()
+                        replyBleCapability()
                         beginInitialLauncherRead()
                     }
                 }
@@ -588,12 +604,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                     ready = true
                     startReader(pending, session)
                     state("연결됨: BLE 인증과 RFCOMM 모두 정상", ready = true)
-                    val capability = pendingCapability
-                    pendingCapability = null
-                    if (session == generation && capability != null) {
-                        earlyCapabilityStatus = "SPP 경유 응답 대기"
-                        listener.onFrame(capability, "BLE")
-                    }
+                    if (session == generation) guarded { replyBleCapability() }
                 }
             } catch (error: Exception) {
                 main.post { if (session == generation) fail("SPP  연결 실패: ${error.message}") }
@@ -727,6 +738,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         authenticationHandled = false
         connectionPairValue = 1
         pendingCapability = null
+        pendingCapabilityAt = 0L
         initialLauncherWait?.let(main::removeCallbacks); initialLauncherWait = null
         initialLauncherStatus = "미조회"
         earlyCapabilityStatus = "미수신"
