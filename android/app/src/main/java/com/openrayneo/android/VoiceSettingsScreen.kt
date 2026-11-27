@@ -315,6 +315,7 @@ private fun StructuredVoicePrompt(model: AppModel, key: String, title: String, f
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun VoiceProfilesScreen(model: AppModel) {
     val state = model.state.conversation
@@ -324,8 +325,11 @@ internal fun VoiceProfilesScreen(model: AppModel) {
     var history by remember { mutableStateOf<VoicePerson?>(null) }
     var split by remember { mutableStateOf<VoicePerson?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("목소리 및 인물", style = MaterialTheme.typography.headlineSmall)
-        Note("선명한 목소리는 이름 없는 인물 프로필로 자동 생성되고 기록 간 연결을 시도합니다. 이름 지정, 병합, 분리 또는 과거 발화 선택으로 수정할 수 있으며 음성 특징은 휴대폰에만 저장됩니다. 본인 등록 시 혼자 서너 문장을 말하고 문장마다 잠깐 쉬어 주세요.")
+        OpticalPanel {
+            SectionLabel("내 목소리")
+            Text(self?.name ?: "본인 프로필 미등록", style = MaterialTheme.typography.headlineSmall)
+            Note(if (self?.samples?.isNotEmpty() == true) "등록된 샘플 ${self.samples.size}개" else "등록된 음성 특징 없음")
+            Note("선명한 목소리는 이름 없는 인물 프로필로 자동 생성되고 기록 간 연결을 시도합니다. 이름 지정, 병합, 분리 또는 과거 발화 선택으로 수정할 수 있으며 음성 특징은 휴대폰에만 저장됩니다. 본인 등록 시 혼자 서너 문장을 말하고 문장마다 잠깐 쉬어 주세요.")
         if (state.running && state.mode == ConversationMode.ENROLL) {
             var confirmed by remember { mutableStateOf(false) }
             Text("음성 ${state.enrollmentTotalSeconds.toInt()}초 · 일관 샘플 ${state.enrollmentSeconds.toInt()}초 · 수신 오디오 ${state.decodedSeconds.toInt()}초 ")
@@ -339,14 +343,18 @@ internal fun VoiceProfilesScreen(model: AppModel) {
             enabled = !state.running && state.modelReady && model.state.glasses.link.phase == LinkPhase.FULL) { Text(if (self?.samples?.isNotEmpty() == true) "내 목소리 다시 등록" else "내 목소리 등록") }
         Note(state.status)
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        state.people.filter { it.mergedInto == null }.forEach { person ->
+        }
+        val people = state.people.filter { it.mergedInto == null }
+        SectionLabel("인물 · ${people.size}명")
+        if (people.isEmpty()) Note("아직 등록된 인물이 없습니다.")
+        people.forEach { person ->
             OutlinedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(person.name + if (person.self) " · 나" else "", style = MaterialTheme.typography.titleMedium)
                     if (person.unnamed) Note("자동 생성 · 이름 지정 대기")
                     Note(if (person.samples.isEmpty()) "등록된 목소리 없음" else "등록됨: ${person.samples.size}개 목소리 샘플")
                     if (person.contactUri != null) Note("선택한 연락처와 연결됨")
-                    Row {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { rename = person }) { Text("이름 지정") }
                         TextButton(onClick = { merge = person }, enabled = state.people.count { it.mergedInto == null } > 1) { Text("병합") }
                         TextButton(onClick = { split = person }) { Text("분리") }

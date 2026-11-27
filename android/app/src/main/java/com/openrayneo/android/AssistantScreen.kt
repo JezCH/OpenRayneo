@@ -541,7 +541,7 @@ private fun ConversationTurn(question: String, answer: String) {
         if (answer.isNotBlank())
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "OpenRayneo",
+                    "AI 답변",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -589,16 +589,17 @@ private fun AgentReceiptCard(model: AppModel, receipts: List<LocalAgentServer.Re
 
 @Composable
 private fun AgentWriteReviewCard(model: AppModel, review: LocalAgentServer.Review) {
-    ContentCard {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer) {
+      Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("외부 Agent 작업 승인", style = MaterialTheme.typography.titleLarge)
         Note("요청 내용을 확인하세요. 휴대폰에서 승인해야 실행합니다. 거절하거나 40초 이내 승인하지 않으면 실행하지 않습니다.")
         Text(review.name, fontWeight = FontWeight.Medium)
         SelectionContainer { Text(review.arguments, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
         Note("승인 기한: " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date(review.expiresAt)))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ToolButton(onClick = { model.attempt { model.service().agentServer.review(review.id, true) } }) { Text("이 작업만 승인") }
-            ToolOutlinedButton(onClick = { model.attempt { model.service().agentServer.review(review.id, false) } }) { Text("거절") }
-        }
+        ToolButton(onClick = { model.attempt { model.service().agentServer.review(review.id, true) } }, modifier = Modifier.fillMaxWidth()) { Text("이 작업만 승인") }
+        ToolOutlinedButton(onClick = { model.attempt { model.service().agentServer.review(review.id, false) } }, modifier = Modifier.fillMaxWidth()) { Text("거절") }
+      }
     }
 }
 

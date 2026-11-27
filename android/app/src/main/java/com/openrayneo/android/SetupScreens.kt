@@ -64,7 +64,7 @@ internal fun OnboardingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "시작하기: · ${step + 1} / 5",
+                "설정 ${step + 1} / 5",
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -72,23 +72,22 @@ internal fun OnboardingScreen(
             Note(subtitles[step])
             when (step) {
                 0 -> {
-                    GlassesArtwork(
-                        Modifier.fillMaxWidth().height(90.dp),
-                        MaterialTheme.colorScheme.primary,
-                    )
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        OpticalSignature(Modifier.size(120.dp))
+                    }
                     SetupRow(Icons.Outlined.GraphicEq, "일상과 회의 기록", "안경 음성을 인식하고 필요한 정보를 찾아보기")
                     SetupRow(Icons.Outlined.AutoAwesome, "언제든 AI에게 질문", "연결한 AI 서비스 또는 컴퓨터에 작업 요청")
                     SetupRow(Icons.Outlined.Tune, "직접 제어", "표시와 음성 수신은 언제든 일시정지 가능")
                     RecommendedSettingsCard(model)
                 }
                 1 -> {
-                    ContentCard {
+                    OpticalPanel {
                         GlassesArtwork(
                             Modifier.fillMaxWidth().height(110.dp),
                             MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            if (model.state.glasses.link.phase == LinkPhase.FULL) "안경 연결됨"
+                            if (model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting) "통신 연결됨"
                             else "연결 전 준비",
                             style = MaterialTheme.typography.titleLarge,
                         )
@@ -103,7 +102,7 @@ internal fun OnboardingScreen(
                     Note("'근처 기기' 권한은 연결할 때만 요청합니다. 연결하지 않아도 어시스턴트를 먼저 설정할 수 있습니다.")
                 }
                 2 -> {
-                    ContentCard {
+                    OpticalPanel {
                         Text(if (model.state.conversation.modelReady) "음성 인식 준비됨" else "음성 인식 설정 필요", style = MaterialTheme.typography.titleMedium)
                         Note("한국어·다국어 음성 모델이 내장되어 별도 다운로드가 필요하지 않습니다. 처음 사용할 때 앱이 준비합니다.")
                         if (!model.state.conversation.modelReady)
@@ -131,7 +130,7 @@ internal fun OnboardingScreen(
                     Note("로컬 Agent의 의미 전략과 모델은 DSH Go에서 설정합니다. 기록 요약 모델은 '음성 및 요약' 설정에서 따로 설정할 수 있습니다. 휴대폰 음성 입력은 앱 내장 음성 인식 모델을 사용합니다.")
                 }
                 4 -> {
-                    ContentCard {
+                    OpticalPanel {
                         CompletionRow(
                             "안경 연결",
                             model.state.glasses.link.phase == LinkPhase.FULL,

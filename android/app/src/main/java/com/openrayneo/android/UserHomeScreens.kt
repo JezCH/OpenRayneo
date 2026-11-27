@@ -313,12 +313,16 @@ internal fun TranslationToolScreen(model: AppModel) {
             model.notice = "내장 통역 준비 완료 · 화면에서 다시 시작하세요."
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text(if (s.translationActive) "현재 통역 세션" else "한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.translationStatus)
-            if (s.translationActive) Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            if (s.translationActive) {
+                Note("음성 수신: " + s.glasses.audio.detail)
+                Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            }
             if (!s.translationActive) {
+                SectionLabel("번역 방식")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(bundled, { mode = "bundled" }, enabled = !mt.preparing); Text("앱 내장 한영 통역")
                 }
@@ -474,11 +478,10 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
         s.teleprompter.active != null || s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text(if (s.captionActive) "현재 주변 자막 세션" else "안경 마이크 자막 시작", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.captionStatus)
-            Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
             if (s.captionActive) {
                 ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("주변 자막 종료") }
                 Note("음성 수신: " + s.glasses.audio.detail)
@@ -493,6 +496,7 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
                 if (busy) Note("다른 기록·안경 화면·AI 작업을 먼저 종료하세요.")
                 ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy, modifier = Modifier.fillMaxWidth()) { Text("자막 시작") }
             }
+            Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
         } }
         item { GlassesOutputPreview(s.glasses) }
         item { ContentCard {

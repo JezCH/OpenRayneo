@@ -4,7 +4,10 @@ package com.openrayneo.android
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -21,11 +24,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 internal fun AgentServerScreen(model: AppModel, requestBluetoothPermission: () -> Unit) {
     val context = LocalContext.current
     val state = model.state.agentServer
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("DSH Go 및 외부 Agent", style = MaterialTheme.typography.headlineSmall)
+    var confirmAgentToken by remember { mutableStateOf(false) }
+    var confirmSyncToken by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        OpticalPanel {
+            SectionLabel("외부 AI 연결")
+            Text(if (state.enabled) "Agent 사용 허용" else "Agent 사용 안 함", style = MaterialTheme.typography.headlineSmall)
+            Note(state.receiverStatus)
+            Note(state.notice)
+        }
+        SectionLabel("로컬 Agent 설정")
         Note("어시스턴트 채팅과 음성 입력은 모두 로컬 Agent가 처리합니다. DSH Go 플러그인이 답변, 짧은 힌트, 작업 전략을 담당하고, 도구 승인과 휴대폰 조작은 DSH Go에서 처리하며, 최종 답변은 OpenRayneo와 안경으로 돌아옵니다.")
         Note("휴대폰이 안경의 블루투스 연결을 유지하고, 외부 Agent는 이 엔드포인트를 통해 기기 도구를 호출합니다. 기본값은 꺼짐이며, 켜면 토큰을 가진 로컬 프로그램이 기록을 읽고 안경 콘텐츠를 수정할 수 있습니다.")
-        Note(state.notice)
         var port by remember(model.config.optString("localAgentPort")) { mutableStateOf(model.config.optString("localAgentPort", "8766")) }
         if (!state.enabled) {
             OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("로컬 포트") },
@@ -43,7 +53,7 @@ internal fun AgentServerScreen(model: AppModel, requestBluetoothPermission: () -
                 context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OpenRayneo Agent", "http://127.0.0.1:${state.port}\nAuthorization: Bearer $token"))
                 model.notice = "주소와 토큰이 복사됨"
             } }) { Text("주소와 액세스 토큰 복사") }
-            TextButton(onClick = { model.attempt { model.service().agentServer.rotate() } }) { Text("토큰 재설정 (이전 토큰 무효화)") }
+            TextButton(onClick = { confirmAgentToken = true }) { Text("토큰 재설정 (이전 토큰 무효화)") }
             Note("DSH Go: openrayneo-dsh 플러그인을 설치하고, 여기서 주소와 액세스 토큰을 복사한 뒤 DSH 채팅 화면에서 '안경 연결'을 누르고 클립보드 읽기를 허용해 자격 증명을 저장하세요. 포트를 바꿨다면 플러그인의 Service URL도 먼저 수정하세요. 두 앱 모두 백그라운드 실행 권한을 유지하세요.")
             Note("컴퓨터에서 USB로 접근: adb forward tcp:8766 tcp:${state.port}. 이후 컴퓨터의 127.0.0.1:8766으로 요청하세요. 서비스는 휴대폰 로컬 주소에서만 수신하며 LAN에 직접 노출되지 않습니다.")
             Note("로컬 Agent는 기록 조회, 안경 도구 호출, 작업 수령 및 답변 회신을 할 수 있습니다. 기록 동기화는 아래의 별도 엔드포인트를 사용합니다.")
@@ -67,13 +77,34 @@ internal fun AgentServerScreen(model: AppModel, requestBluetoothPermission: () -
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OpenRayneo 기록 동기화", "$address\nAuthorization: Bearer ${sync.tokenForUser()}"))
                     model.notice = "동기화 주소와 전용 토큰이 복사됨"
                 }) { Text("동기화 주소와 전용 토큰 복사") }
-                TextButton(onClick = { model.attempt { sync.rotate() } }) { Text("동기화 토큰 재설정") }
+                TextButton(onClick = { confirmSyncToken = true }) { Text("동기화 토큰 재설정") }
                 Note("Mac의 기록 동기화 설정에 주소와 토큰을 입력하세요. USB 연결 시 adb forward tcp:8767 tcp:${syncState.port} 실행 후 Mac에 입력: http://127.0.0.1:8767.")
             }
         } else Note("기기 서비스가 준비되면 기록 동기화를 켤 수 있습니다.")
     }
+    if (confirmAgentToken) AlertDialog(
+        onDismissRequest = { confirmAgentToken = false },
+        title = { Text("Agent 토큰을 재설정할까요?") },
+        text = { Text("이전 토큰은 무효화됩니다. 연결된 외부 Agent에는 새 토큰을 입력해야 합니다.") },
+        confirmButton = { TextButton(enabled = model.state.available && state.enabled, onClick = {
+            confirmAgentToken = false
+            model.attempt { model.service().agentServer.rotate() }
+        }) { Text("재설정") } },
+        dismissButton = { TextButton(onClick = { confirmAgentToken = false }) { Text("취소") } },
+    )
+    if (confirmSyncToken) AlertDialog(
+        onDismissRequest = { confirmSyncToken = false },
+        title = { Text("기록 동기화 토큰을 재설정할까요?") },
+        text = { Text("이전 토큰은 사용할 수 없게 됩니다. 컴퓨터의 동기화 설정에 새 토큰을 입력하세요.") },
+        confirmButton = { TextButton(enabled = model.state.available && model.state.recordSync.enabled, onClick = {
+            confirmSyncToken = false
+            model.attempt { model.service().recordSync.rotate() }
+        }) { Text("재설정") } },
+        dismissButton = { TextButton(onClick = { confirmSyncToken = false }) { Text("취소") } },
+    )
 }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun TeleprompterScreen(model: AppModel) {
     val state = model.state.teleprompter
@@ -85,12 +116,17 @@ internal fun TeleprompterScreen(model: AppModel) {
     var search by rememberSaveable { mutableStateOf("") }
     val linked = model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
     val documents = state.documents.filter { it.getString("title").contains(search, ignoreCase = true) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        ContentCard {
+    val editor = remember { BringIntoViewRequester() }
+    var editRequest by remember { mutableIntStateOf(0) }
+    LaunchedEffect(editRequest) {
+        if (editRequest > 0) { withFrameNanos {}; editor.bringIntoView() }
+    }
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        OpticalPanel {
         Text("현재 프롬프터 상태", style = MaterialTheme.typography.titleLarge)
         Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.labelLarge)
         Note(state.notice)
-        if (state.active != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (state.active != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { model.attempt { model.service().teleprompter.control(if (state.paused) "resume" else "pause") {} } }, enabled = !state.busy) { Text(if (state.paused) "계속" else "일시정지") }
             TextButton(onClick = { model.attempt { model.service().teleprompter.control("stop") {} } }, enabled = !state.busy) { Text("프롬프터 중지") }
         }
@@ -104,22 +140,22 @@ internal fun TeleprompterScreen(model: AppModel) {
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         SectionLabel("저장된 원고")
+        ToolOutlinedButton(onClick = { selected = null; title = ""; text = ""; editRequest++ }, modifier = Modifier.fillMaxWidth()) { Text("새 원고 작성") }
         OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목 검색") }, singleLine = true)
         Note("${documents.size}개 원고 · 휴대폰에 저장")
         if (documents.isEmpty()) Note(if (search.isBlank()) "저장된 원고가 없습니다. 새 원고를 작성하세요." else "일치하는 원고가 없습니다.")
         if (documents.isNotEmpty()) ContentCard {
             documents.forEachIndexed { index, document ->
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                TextButton(onClick = { selected = document.getString("did"); title = document.getString("title"); text = document.getString("text") },
+                TextButton(onClick = { selected = document.getString("did"); title = document.getString("title"); text = document.getString("text"); editRequest++ },
                     modifier = Modifier.fillMaxWidth()) {
                     Text(document.getString("title") + if (selected == document.getString("did")) " · 선택됨" else "")
                 }
             }
         }
         SectionLabel(if (selected == null) "새 원고 작성" else "선택한 원고 편집")
-        TextButton(onClick = { selected = null; title = ""; text = "" }) { Text("새 원고") }
         Note("원고는 휴대폰에 저장되며 공식 클라우드를 사용하지 않습니다. 전송 시 현재 표시와 음성 수신을 중지한 뒤 안경으로 전송합니다.")
-        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목") })
+        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("원고 제목") })
         OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("본문") }, minLines = 6, maxLines = 16)
         SectionLabel("재생 방식")
         Row(verticalAlignment = Alignment.CenterVertically) {
