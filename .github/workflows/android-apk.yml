@@ -324,3 +324,15 @@ jobs:
           done < <(jq -r '(.deltas // [])[] | [.patchAssetName,.patchSize,.patchSha256] | @tsv' update-manifest.json)
           gh release upload "$tag" OpenRayneo-validation.apk update-manifest.json openrayneo-certs.txt openrayneo-badging.txt openrayneo-dsh-*.tgz mozilla-native-8eada038-r2.sources.tar.gz "${patches[@]}"
           gh release edit "$tag" --draft=false
+          # Publish a quota-independent discovery index only AFTER the release is public.
+          # The Android client still verifies manifest, APK hash and installed signer.
+          index_branch=wearable/update-index
+          index_path=validation-release.json
+          gh api "repos/$GH_REPO/releases/tags/$tag" > "$RUNNER_TEMP/published-validation.json"
+          jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false and .prerelease == true and ([.assets[] | select(.state == "uploaded" and .name == "OpenRayneo-validation.apk")] | length == 1) and ([.assets[] | select(.state == "uploaded" and .name == "update-manifest.json")] | length == 1)' "$RUNNER_TEMP/published-validation.json" > /dev/null
+          jq '{tag_name,draft,prerelease,body: ((.body // "")[:4000]),assets: [.assets[] | select(.state == "uploaded") | {name,state,size,digest,browser_download_url}]}' "$RUNNER_TEMP/published-validation.json" > "$RUNNER_TEMP/validation-release.json"
+          index_sha=$(gh api "repos/$GH_REPO/contents/$index_path?ref=$index_branch" --jq .sha)
+          gh api --method PUT "repos/$GH_REPO/contents/$index_path" \
+            -f branch="$index_branch" -f sha="$index_sha" -f message="Index published $tag" \
+            -f content="$(base64 -w0 "$RUNNER_TEMP/validation-release.json")" --jq .commit.sha
+
