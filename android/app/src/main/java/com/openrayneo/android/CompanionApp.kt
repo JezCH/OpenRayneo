@@ -329,20 +329,15 @@ private fun GlassesScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            ContentCard {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
-                        Note(if (linked) "BLE·SPP 연결 · " + model.state.deviceSettings.readback.label else state.link.detail)
-                    }
+            OpticalPanel {
+                Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
+                Note(if (linked) "BLE·SPP 연결 · " + model.state.deviceSettings.readback.label else state.link.detail)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ToolOutlinedButton(
                         onClick =
                             if (linked || state.link.phase == LinkPhase.BLE_ONLY) diagnostics
-                            else connect
+                            else connect,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
                             if (linked || state.link.phase == LinkPhase.BLE_ONLY) "관리"
@@ -364,43 +359,10 @@ private fun GlassesScreen(
             }
         }
         item {
-            ContentCard {
-                Text("공식 앱 / OpenRayneo 전환", style = MaterialTheme.typography.titleMedium)
-                Note("계정 바인딩, 블루투스 페어링, 앱 기록을 삭제하지 마세요. 한 번에 한 앱만 안경에 연결합니다.")
-                ToolOutlinedButton(
-                    onClick = {
-                        handoff = true
-                        if (state.link.phase != LinkPhase.DISCONNECTED || state.disconnecting)
-                            model.attempt { model.service().disconnect() }
-                    },
-                    enabled = !state.disconnecting && state.link.phase != LinkPhase.CLOSING,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("공식 앱으로 전환 준비") }
-                if (handoff) {
-                    if (state.link.phase == LinkPhase.DISCONNECTED && !state.disconnecting) {
-                        Note("OpenRayneo 연결이 종료되었습니다. 공식 앱의 근처 기기 권한을 허용한 뒤 공식 앱을 직접 열어 연결하세요.")
-                        ToolOutlinedButton(onClick = {
-                            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS))
-                        }) { Text("휴대폰 앱 설정 열기") }
-                    } else Note("연결 종료를 확인한 후 공식 앱을 여세요.")
-                }
-                ToolOutlinedButton(
-                    onClick = {
-                        handoff = false
-                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS))
-                    },
-                    enabled = state.link.phase == LinkPhase.DISCONNECTED && !state.disconnecting,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("OpenRayneo로 돌아오기 준비") }
-                Note("돌아올 때는 공식 앱(기존 검증 앱 포함)의 시스템 앱 정보에서 강제 종료하고, 필요하면 근처 기기 권한을 일시적으로 끄세요. 이후 이 앱으로 돌아와 연결 버튼을 누르세요. 공식 앱 내부의 기기 삭제·바인딩 해제는 하지 마세요.")
-            }
-        }
-        item { SectionLabel("안경 화면") }
-        item { GlassesOutputPreview(state) }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OpticalPanel {
+                SectionLabel("현재 화면 및 음성 제어")
+                Note(state.displayDescription)
                 if (linked) {
-                    Note(state.displayDescription)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ToolOutlinedButton(onClick = { configure("navigation") }) { Text("길 안내") }
                         ToolOutlinedButton(onClick = { navigate(0) }) { Text("홈으로") }
@@ -441,8 +403,10 @@ private fun GlassesScreen(
                 }
             }
         }
+        item { SectionLabel("안경 화면") }
+        item { GlassesOutputPreview(state) }
         item {
-            ContentCard {
+            OpticalPanel {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -471,6 +435,39 @@ private fun GlassesScreen(
                     }
                 }
                 Note("음량은 휴대폰에서만 계산하며 오디오를 저장하거나 업로드하지 않습니다.")
+            }
+        }
+
+        item {
+            ContentCard {
+                Text("공식 앱 / OpenRayneo 전환", style = MaterialTheme.typography.titleMedium)
+                Note("계정 바인딩, 블루투스 페어링, 앱 기록을 삭제하지 마세요. 한 번에 한 앱만 안경에 연결합니다.")
+                ToolOutlinedButton(
+                    onClick = {
+                        handoff = true
+                        if (state.link.phase != LinkPhase.DISCONNECTED || state.disconnecting)
+                            model.attempt { model.service().disconnect() }
+                    },
+                    enabled = !state.disconnecting && state.link.phase != LinkPhase.CLOSING,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("공식 앱으로 전환 준비") }
+                if (handoff) {
+                    if (state.link.phase == LinkPhase.DISCONNECTED && !state.disconnecting) {
+                        Note("OpenRayneo 연결이 종료되었습니다. 공식 앱의 근처 기기 권한을 허용한 뒤 공식 앱을 직접 열어 연결하세요.")
+                        ToolOutlinedButton(onClick = {
+                            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS))
+                        }) { Text("휴대폰 앱 설정 열기") }
+                    } else Note("연결 종료를 확인한 후 공식 앱을 여세요.")
+                }
+                ToolOutlinedButton(
+                    onClick = {
+                        handoff = false
+                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS))
+                    },
+                    enabled = state.link.phase == LinkPhase.DISCONNECTED && !state.disconnecting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("OpenRayneo로 돌아오기 준비") }
+                Note("돌아올 때는 공식 앱(기존 검증 앱 포함)의 시스템 앱 정보에서 강제 종료하고, 필요하면 근처 기기 권한을 일시적으로 끄세요. 이후 이 앱으로 돌아와 연결 버튼을 누르세요. 공식 앱 내부의 기기 삭제·바인딩 해제는 하지 마세요.")
             }
         }
 

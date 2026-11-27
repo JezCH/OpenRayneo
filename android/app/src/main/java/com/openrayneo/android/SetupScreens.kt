@@ -476,12 +476,13 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
     val context = LocalContext.current
     val s = model.state
     var bleOnly by rememberSaveable { mutableStateOf(false) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
     val ready = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        ContentCard {
+        OpticalPanel {
             Text("현재 연결 상태", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.titleMedium)
             Note(if (s.available) "통신: " + s.glasses.link.detail else "서비스 상태 미확인")
@@ -593,6 +594,9 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 Text("로그 복사")
             }
         }
-        ContentCard { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
+        TextButton(onClick = { showLogs = !showLogs }) {
+            Text(if (showLogs) "연결 로그 접기" else "연결 로그 보기 · ${s.logs.size}개")
+        }
+        if (showLogs) OpticalPanel { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
     }
 }

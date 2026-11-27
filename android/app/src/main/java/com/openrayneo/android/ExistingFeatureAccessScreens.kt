@@ -23,6 +23,7 @@ internal fun PersonalizationScreen() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LocalClockScreen(model: AppModel) {
     val s = model.state
@@ -52,7 +53,7 @@ internal fun LocalClockScreen(model: AppModel) {
         Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
         Note("기존 음성 명령과 같은 휴대폰 타이머·스톱워치를 사용합니다. 별도 AI 요청이나 녹음은 없습니다.")
         if (!connected) Note("안경을 완전히 연결한 뒤 사용할 수 있습니다.")
-        ContentCard {
+        OpticalPanel {
             Text("타이머", style = MaterialTheme.typography.titleMedium)
             Text(readout?.first ?: "상태 확인 대기", style = MaterialTheme.typography.headlineSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -63,10 +64,10 @@ internal fun LocalClockScreen(model: AppModel) {
             ToolButton(onClick = { command(LocalClockPolicy.Kind.TIMER_START, duration) }, enabled = connected && duration != null, modifier = Modifier.fillMaxWidth()) { Text("타이머 시작") }
             ToolOutlinedButton(onClick = { command(LocalClockPolicy.Kind.TIMER_CANCEL) }, enabled = connected, modifier = Modifier.fillMaxWidth()) { Text("타이머 취소") }
         }
-        ContentCard {
+        OpticalPanel {
             Text("스톱워치", style = MaterialTheme.typography.titleMedium)
             Text(readout?.second ?: "상태 확인 대기", style = MaterialTheme.typography.headlineSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TextButton(onClick = { command(LocalClockPolicy.Kind.WATCH_START) }, enabled = connected) { Text("시작") }
                 TextButton(onClick = { command(LocalClockPolicy.Kind.WATCH_STOP) }, enabled = connected) { Text("정지") }
                 TextButton(onClick = { command(LocalClockPolicy.Kind.WATCH_RESET) }, enabled = connected) { Text("초기화") }

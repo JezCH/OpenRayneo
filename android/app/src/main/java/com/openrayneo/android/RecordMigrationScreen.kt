@@ -24,8 +24,8 @@ internal fun RecordMigrationScreen(model: AppModel) {
     val ready = validPort != null && credential.length in 16..256 && credential.all { it.code in 33..126 }
     val available = model.state.available
     val targetSync = model.state.recordSync.enabled
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+    val sourcePanel: @Composable () -> Unit = {
+        OpticalPanel {
             Text("1. 원본 앱 연결", style = MaterialTheme.typography.titleLarge)
             Note("기존 앱을 삭제하거나 초기화하지 마세요. 같은 휴대폰에 서로 다른 패키지로 설치된 OpenRayneo 사이에서만 사용할 수 있습니다.")
             Note("기존 앱에서 녹음과 편집을 종료하고, 설정 → DSH Go 및 외부 Agent → 기록 동기화를 켠 후 전용 토큰을 복사하세요. 신뢰할 수 있는 네트워크에서만 진행하고 이전 후 기존 동기화를 끄세요.")
@@ -43,8 +43,10 @@ internal fun RecordMigrationScreen(model: AppModel) {
                 model.attempt { model.service().previewMigration(p, credential) }
                 token = ""
             }, enabled = available && !state.busy && ready && !targetSync, modifier = Modifier.fillMaxWidth()) { Text("이전 가능 항목 확인") }
-        } }
-        item { ContentCard {
+        }
+    }
+    val resultsPanel: @Composable () -> Unit = {
+        OpticalPanel {
             Text(if (state.busy) "이전 처리 중" else "2. 이전 범위 및 결과", style = MaterialTheme.typography.titleLarge)
             Note(state.status)
             if (state.busy) {
@@ -56,7 +58,9 @@ internal fun RecordMigrationScreen(model: AppModel) {
                 Note("원본 음성 약 ${state.audioBytes / 1_048_576} MiB · 제외/중복 ${state.skipped}개")
                 Text("저장 완료 기록 ${state.importedRecords}개 · 인물 ${state.importedPeople}명 · 실패 ${state.failed}개")
             }
-            if (state.prepared) {
+            if (state.busy) {
+                ToolOutlinedButton(onClick = { model.attempt { model.service().migration.cancel() } }, modifier = Modifier.fillMaxWidth()) { Text("이전 중지") }
+            } else if (state.prepared) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(includeAudio, { includeAudio = it })
                     Text("원본 음성도 함께 가져오기")
@@ -68,9 +72,20 @@ internal fun RecordMigrationScreen(model: AppModel) {
                 }
                 ToolButton(onClick = { confirm = true }, enabled = available && !state.busy && !autoSummary && !targetSync, modifier = Modifier.fillMaxWidth()) { Text("선택 범위 가져오기") }
                 TextButton(onClick = { model.attempt { model.service().migration.cancel() } }) { Text("이전 목록 지우기") }
-            } else if (state.busy) ToolOutlinedButton(onClick = { model.attempt { model.service().migration.cancel() } }) { Text("이전 중지") }
+            }
             Note("음성 지문(화자 학습 데이터), 개인 설정, 토픽/프로필, 연결 키, 외부 서비스 로그인은 이 이전 경로로 옮기지 않습니다. 일부 실패 시 원본은 그대로 두고 다시 시도하세요.")
-        } }
+        }
+    }
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Put current progress and confirmation before setup once a transfer is prepared.
+        val showResultFirst = state.prepared || state.busy || state.records > 0 || state.people > 0
+        if (showResultFirst) {
+            item(key = "migration-results") { resultsPanel() }
+            item(key = "migration-source") { sourcePanel() }
+        } else {
+            item(key = "migration-source") { sourcePanel() }
+            item(key = "migration-results") { resultsPanel() }
+        }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("기존 기록을 가져올까요?") },

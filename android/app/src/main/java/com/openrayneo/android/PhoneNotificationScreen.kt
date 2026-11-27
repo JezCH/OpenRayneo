@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
     val context = LocalContext.current.applicationContext
@@ -38,7 +39,7 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
         .sortedWith(compareBy<Pair<String, String>> { it.second.lowercase() }.thenBy { it.first })
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            ContentCard {
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("휴대폰 알림 전달", style = MaterialTheme.typography.titleMedium)
@@ -66,6 +67,11 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
                 else if (!model.state.notificationConnected) ToolOutlinedButton(onClick = {
                     model.attempt { NavigationNotifications.requestConnection(context) }
                 }) { Text("알림 연결 복구") }
+            }
+        }
+        item {
+            SectionLabel("개인정보 및 잠금 화면")
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("휴대폰 잠금 중 앱 이름 알림")
@@ -82,7 +88,7 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
         }
         item {
             SectionLabel("전달할 앱 선택")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(!selectedOnly, { selectedOnly = false }, label = { Text("전체") })
                 FilterChip(selectedOnly, { selectedOnly = true }, label = { Text("선택한 앱 ${allowed.size}") })
             }
@@ -95,10 +101,10 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
             Note("표시된 앱 ${choices.size}개")
         }
         items(choices, key = { it.first }) { (pkg, name) ->
-            ContentCard {
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(name, style = MaterialTheme.typography.titleMedium)
+                        Text(name, style = MaterialTheme.typography.titleSmall)
                         Note(pkg)
                     }
                     Switch(checked = pkg in allowed, onCheckedChange = { selected ->
@@ -112,7 +118,7 @@ internal fun PhoneNotificationScreen(model: AppModel, actions: UiActions) {
                         PhoneNotificationForwarding.setPreview(context, pkg, it)
                         previews = PhoneNotificationForwarding.previews(context)
                     })
-                    Text("잠금 해제 시 본문 미리보기 허용")
+                    Text("잠금 해제 시 본문 미리보기 허용", Modifier.weight(1f))
                 }
             }
         }

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.openrayneo.android
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +21,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun CompanionContentScreen(model: AppModel) {
     val state = model.state.content
@@ -33,15 +37,22 @@ internal fun CompanionContentScreen(model: AppModel) {
     val scheduleStart = remember(start) { runCatching { LocalDateTime.parse(start, formatter) }.getOrNull() }
     val scheduleEnd = remember(end) { runCatching { LocalDateTime.parse(end, formatter) }.getOrNull() }
     val validSchedule = scheduleStart != null && scheduleEnd != null && scheduleEnd.isAfter(scheduleStart)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        ContentCard {
+    val editor = remember { BringIntoViewRequester() }
+    LaunchedEffect(page, editId) {
+        if (editId != null && page in 1..2) {
+            withFrameNanos {}
+            editor.bringIntoView()
+        }
+    }
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        OpticalPanel {
             Text("안경 콘텐츠 상태", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.labelLarge)
             Note(if (connected) state.notice else "안경 연결 후 현재 콘텐츠를 확인하세요. 아래 데이터는 현재 기기 값으로 확인되지 않았습니다.")
             ToolButton(onClick = { model.attempt { model.service().content.refresh() } }, enabled = editable, modifier = Modifier.fillMaxWidth()) { Text(if (state.busy) "기기 응답 대기 중…" else "안경 콘텐츠 다시 읽기") }
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("레이아웃", "할 일", "일정", "날씨").forEachIndexed { i, name -> FilterChip(page == i, { page = i; editId = null; title = "" }, label = { Text(name) }) }
         }
         when (page) {
@@ -53,7 +64,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
                         Text(row.optString("title"), style = MaterialTheme.typography.titleMedium)
                         Note(if (row.optString("syncState") == "outcome_unknown") "변경 결과 확인 대기" else if (row.optInt("status") == 1) "완료됨" else "미완료")
-                        Row {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { title = row.getString("title"); editId = row.getLong("eventID") }) { Text("편집") }
                             TextButton(onClick = { model.attempt { model.service().content.run {
                                 model.service().content.todo("update", JSONObject().put("event_id", row.getLong("eventID")).put("completed", row.optInt("status") != 1))
@@ -64,12 +75,16 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
-                SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
-                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("할 일 제목") })
+                Box(Modifier.bringIntoViewRequester(editor)) {
+                    OpticalPanel {
+                        SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
+                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("할 일 제목") })
                 ToolButton(onClick = { model.attempt { model.service().content.run {
                     model.service().content.todo(if (editId == null) "add" else "update", JSONObject().put("title", title.trim()).apply { editId?.let { put("event_id", it) } })
                 } } }, enabled = editable && title.isNotBlank()) { Text(if (editId == null) "안경에 추가" else "할 일 저장") }
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
+                    }
+                }
             }
             2 -> {
                 SectionLabel("일정 목록 · ${state.schedules.size}개")
@@ -79,7 +94,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                         Text(row.optString("title"), style = MaterialTheme.typography.titleMedium)
                         Note(java.time.Instant.ofEpochSecond(row.getLong("startTime")).atZone(ZoneId.systemDefault()).format(formatter) + " — " +
                             java.time.Instant.ofEpochSecond(row.getLong("endTime")).atZone(ZoneId.systemDefault()).format(formatter))
-                        Row {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { title = row.getString("title"); editId = row.getLong("eventID")
                                 start = java.time.Instant.ofEpochSecond(row.getLong("startTime")).atZone(ZoneId.systemDefault()).format(formatter)
                                 end = java.time.Instant.ofEpochSecond(row.getLong("endTime")).atZone(ZoneId.systemDefault()).format(formatter)
@@ -90,8 +105,10 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
-                SectionLabel(if (editId == null) "새 일정" else "일정 편집")
-                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("일정 제목") })
+                Box(Modifier.bringIntoViewRequester(editor)) {
+                    OpticalPanel {
+                        SectionLabel(if (editId == null) "새 일정" else "일정 편집")
+                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("일정 제목") })
                 OutlinedTextField(start, { start = it }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, isError = start.isNotBlank() && scheduleStart == null)
                 OutlinedTextField(end, { end = it }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))
                 if (start.isNotBlank() || end.isNotBlank()) {
@@ -105,6 +122,8 @@ internal fun CompanionContentScreen(model: AppModel) {
                     model.service().content.run { model.service().content.schedule(if (editId == null) "add" else "update", args) }
                 } }, enabled = editable && title.isNotBlank() && validSchedule) { Text(if (editId == null) "안경에 추가" else "일정 저장") }
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
+                    }
+                }
             }
             3 -> {
                 ToolButton(onClick = { model.attempt { val content = model.service().content
@@ -131,6 +150,7 @@ internal fun CompanionContentScreen(model: AppModel) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DashboardLayoutEditor(model: AppModel) {
     val state = model.state.content
@@ -140,15 +160,19 @@ private fun DashboardLayoutEditor(model: AppModel) {
     var widgets by remember(config.toString()) { mutableStateOf(config.optJSONArray("widgets").ints()) }
     val names = mapOf(1 to "날씨", 2 to "할 일", 3 to "일정", 4 to "주식", 5 to "메일", 6 to "세계 시계")
     val enabled = !state.busy && model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    SectionLabel("홈 스타일")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("표준", "간결", "대각 분할").forEachIndexed { index, title -> FilterChip(mode == index, { mode = index }, label = { Text(title) }) }
     }
+    SectionLabel("위젯 순서")
     widgets.forEachIndexed { index, id ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(names[id] ?: "기기 위젯$id", Modifier.weight(1f))
+        OpticalPanel {
+            Text("${index + 1}. " + (names[id] ?: "기기 위젯$id"), style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(onClick = { widgets = widgets.toMutableList().apply { add(index - 1, removeAt(index)) } }, enabled = index > 0) { Text("위로") }
             TextButton(onClick = { widgets = widgets.toMutableList().apply { add(index + 1, removeAt(index)) } }, enabled = index < widgets.lastIndex) { Text("아래로") }
             TextButton(onClick = { widgets = widgets.filter { it != id } }, enabled = widgets.size > 1) { Text("제거") }
+            }
         }
     }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
