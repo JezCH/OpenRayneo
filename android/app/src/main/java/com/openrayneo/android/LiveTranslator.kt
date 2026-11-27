@@ -117,6 +117,13 @@ internal class LiveTranslator(
             ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en") }.orEmpty()
         val preferred = JSONObject(settings.toString()).put("asrLanguage", language)
         val engine = SpeechRounds.engine(preferred)
+        // The installed multilingual SenseVoice already supports these
+        // classic caption languages. Never route them to the Korean-only
+        // stream or the current Korean/English Nemotron configuration.
+        if (language in setOf("zh", "ja")) {
+            startSpeech(mediaCaptionConfig(language), captions = true, local = false)
+            return
+        }
         if (SpeechRounds.model(preferred) == null || !SpeechRounds.ready(context, preferred) || (engine == "stream" && language != "ko")) {
             preferred.put("asrEngine", when {
                 language == "ko" && LocalModels.zipformer.installed(context) -> "stream"

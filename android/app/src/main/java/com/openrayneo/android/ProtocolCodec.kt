@@ -135,7 +135,18 @@ internal object ProtocolCodec {
         return frame(protocol, sequence, byteArrayOf(8, 1, 16) + varint(type) + byteArrayOf(26) + varint(bytes.size) + bytes + (binary?.let { byteArrayOf(34) + varint(it.size) + it } ?: byteArrayOf()))
     }
 
-    data class Message(val type: Int, val json: String?, val audio: ByteArray?)
+    /** Navigation uses the full recovered six-field PbMsg envelope. Keep
+     * its inner sequence separate from the transport's 16-bit sequence. */
+    fun navigationCapabilityQuery(sequence: Int, querySequence: Int): ByteArray {
+        require(querySequence > 0)
+        val json = "{}".toByteArray(Charsets.UTF_8)
+        val payload = byteArrayOf(8, 1, 16, 0x30, 26) + varint(json.size) + json +
+            byteArrayOf(40) + varint(querySequence) + byteArrayOf(48, 1)
+        return frame(0x20, sequence, payload)
+    }
+
+    data class Message(val type: Int, val json: String?, val audio: ByteArray?,
+                       val version: Int = 0, val sequence: Long = 0, val mode: Long = 0)
 
     fun message(payload: ByteArray): Message {
         var offset = 0
@@ -150,12 +161,23 @@ internal object ProtocolCodec {
             error("Protobuf 필드가 너무 김")
         }
         var type = -1
+        var version = 0
+        var sequence = 0L
+        var mode = 0L
         var json: String? = null
         var audio: ByteArray? = null
         while (offset < payload.size) {
             val tag = variable()
             when (tag and 7) {
-                0 -> { val value = variable(); if (tag ushr 3 == 2) type = value }
+                0 -> {
+                    val value = variable()
+                    when (tag ushr 3) {
+                        1 -> version = value
+                        2 -> type = value
+                        5 -> sequence = value.toLong() and 0xffffffffL
+                        6 -> mode = value.toLong() and 0xffffffffL
+                    }
+                }
                 2 -> {
                     val size = variable()
                     require(size >= 0 && size <= payload.size - offset) { "Protobuf 내용이 불완전함" }
@@ -168,7 +190,7 @@ internal object ProtocolCodec {
                 else -> error("지원하지 않는 Protobuf 타입")
             }
         }
-        return Message(type, json, audio)
+        return Message(type, json, audio, version, sequence, mode)
     }
 
     private fun varint(value: Int): ByteArray {

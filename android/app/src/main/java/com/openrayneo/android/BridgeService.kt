@@ -35,6 +35,78 @@ internal class BridgeService : Service() {
     private var pendingNativeHint: NativeHintStart? = null
     // Current-connection evidence only. Never include SID, text, audio, or device identity.
     private val nativeMenuEvidence = linkedMapOf<Int, String>()
+    private var navProbeRevision = 0L
+    private var navProbeSequence = 1
+    private var navProbeTransportSequence = 0x6a00
+    private var pendingNavProbe: Long? = null
+    private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
+    private fun resetNativeNavigationProbe() {
+        navProbeRevision++
+        pendingNavProbe = null
+        nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
+    }
+    /** Explicit read-only device probe. Header is recovered; empty JSON is a
+     * controlled compatibility trial, not a proven full request schema. */
+    fun probeNativeNavigation() {
+        if (destroyed || !foreground || state.disconnecting || state.link.phase != LinkPhase.FULL ||
+            state.intent != DisplayIntent.Idle || state.session != null || conversations.state.running ||
+            translator.active || voiceTransport.nativeActive || prompterReserved ||
+            deviceSettings.state.initialization.recorder.occupied || pendingNavProbe != null) {
+            nativeNavCapabilityStatus = if (pendingNavProbe != null) nativeNavCapabilityStatus
+                else "순정 내비 조회 보류 · 연결/다른 기능 종료 확인"
+            notifyUI()
+            return
+        }
+        val sequence = navProbeSequence
+        navProbeSequence = if (sequence == Int.MAX_VALUE) 1 else sequence + 1
+        val revision = ++navProbeRevision
+        pendingNavProbe = sequence.toLong()
+        nativeNavCapabilityStatus = "순정 내비 기능 조회 중 · 실제 회신 대기"
+        val failed: () -> Unit = {
+            if (!destroyed && navProbeRevision == revision && pendingNavProbe == sequence.toLong()) {
+                pendingNavProbe = null
+                nativeNavCapabilityStatus = "순정 내비 조회 전송 실패"
+                notifyUI()
+            }
+        }
+        runCatching {
+            connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence)) {
+                if (it.isFailure) failed()
+            }
+        }.onFailure { failed() }
+        main.postDelayed({
+            if (!destroyed && navProbeRevision == revision && pendingNavProbe == sequence.toLong()) {
+                pendingNavProbe = null
+                nativeNavCapabilityStatus = "순정 내비 기능 조회 · 5초 내 동일 sequence 회신 미확인"
+                notifyUI()
+            }
+        }, 5_000)
+        notifyUI()
+    }
+    private fun receiveNativeNavigation(frame: ProtocolCodec.Frame, source: String) {
+        if (frame.acknowledgement || frame.payload.size !in 1..65531 ||
+            destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL) return
+        val message = ProtocolCodec.message(frame.payload)
+        if (message.version != 1) {
+            noteNativeMenu(0x20, "지원 범위 외 PbMsg version")
+            return
+        }
+        when (message.type) {
+            1 -> noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 시작 계약 미완성")
+            3 -> noteNativeMenu(0x20, "종료 요청 수신 ($source)")
+        }
+        val actual = NativeNavigationCapabilities.parse(message) ?: return
+        val expected = pendingNavProbe
+        if (expected != null && expected == message.sequence) {
+            pendingNavProbe = null
+            nativeNavCapabilityStatus = "순정 내비 동일 sequence 기능 회신 · " + actual.summary +
+                " · 실제 시작/표시 미검증"
+        } else if (expected == null) {
+            nativeNavCapabilityStatus = "순정 내비 기능 데이터 수신 · " + actual.summary +
+                " · 조회 상관관계 미확인"
+        } else return
+        notifyUI()
+    }
     private fun noteNativeMenu(protocol: Int, status: String) {
         nativeMenuEvidence[protocol] = status
         notifyUI()
@@ -46,7 +118,7 @@ internal class BridgeService : Service() {
         val mic = when (deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")) {
             true -> "허용"; false -> "꺼짐"; null -> "미확인"
         }
-        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic"
+        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus"
     }
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
@@ -349,6 +421,10 @@ internal class BridgeService : Service() {
                     handleCapability(frame)
                     return@runCatching
                 }
+                if (frame.protocol == 0x20) {
+                    receiveNativeNavigation(frame, source)
+                    return@runCatching
+                }
                 // A native assistant event before this connection is authenticated
                 // cannot become a valid current-link wake.
                 if (frame.protocol == 0x0d && state.link.phase != LinkPhase.FULL) return@runCatching
@@ -514,6 +590,7 @@ internal class BridgeService : Service() {
                 state = transition.state
                 if (previous.link.phase != LinkPhase.CONNECTING && state.link.phase == LinkPhase.CONNECTING) {
                     nativeMenuEvidence.clear()
+                    resetNativeNavigationProbe()
                     // Authenticated BLE can report settings before FULL. Never
                     // reuse a microphone flag from an aborted pre-FULL link or
                     // an earlier BLE-only diagnostic when opening a new link.
@@ -530,6 +607,7 @@ internal class BridgeService : Service() {
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     pendingNativeHint = null
                     nativeMenuEvidence.clear()
+                    resetNativeNavigationProbe()
                     hostVisibilityRevision++
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
@@ -1701,7 +1779,7 @@ internal class BridgeService : Service() {
 
     /** A native menu request is a bounded foreground feature session, never an automatic reconnect recording. */
     private fun handleNativeMenuFrame(frame: ProtocolCodec.Frame, source: String): Boolean {
-        if (frame.protocol !in setOf(0x13, 0x17, 0x20) || frame.acknowledgement) return false
+        if (frame.protocol !in setOf(0x13, 0x17) || frame.acknowledgement) return false
         val message = ProtocolCodec.message(frame.payload)
         // A native hint can be cancelled while the worker prepares ASR.
         // The documented hint-exit reason is 2; require the same pending SID.
@@ -1725,11 +1803,6 @@ internal class BridgeService : Service() {
         if (message.type != 1) return false
         noteNativeMenu(frame.protocol, "시작 요청 수신 ($source, ${state.link.phase.name})")
         if (frame.protocol == 0x17) return handleNativeHintStart(frame, source)
-        if (frame.protocol != 0x13) {
-            noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 처리 미구현")
-            onLog("안경 기본 메뉴 시작 요청: business=${frame.protocol.toString(16)} type=1 · $source · 전용 처리 미구현")
-            return false
-        }
         val request = NativeSubtitleStart.parse(frame)
         if (request == null) { noteNativeMenu(0x13, "시작 요청 수신 · 지원 범위 외 형식"); onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
         if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) {
