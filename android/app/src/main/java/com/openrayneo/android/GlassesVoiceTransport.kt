@@ -64,6 +64,13 @@ internal class GlassesVoiceTransport(
         if (previous == ConversationSource.ALWAYS_ON) send(0x0f, 20, JSONObject().put("cmd", "life_log_switch")
             .put("payload", JSONObject().put("value", 0).put("mode", 0).put("data", "")))
     }
+    /** Drop only an unclaimed local wake, preserving the actual observed event.
+     * A declined wake is not an owned recording or a confirmed firmware exit.
+     * Do not send an unsolicited stop or alter the physical connection. */
+    fun declineUnownedWake() {
+        if (source != null) return
+        nativeActive = false; wakeId = null; nativeCode = 0; answering = false
+    }
     fun disconnected() { source = null; nativeActive = false; nativeWakeObserved = false; wakeId = null; lifeTask = null; answering = false }
     fun receive(frame: ProtocolCodec.Frame) {
         if (frame.protocol == 0x0f) {
