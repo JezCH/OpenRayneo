@@ -26,8 +26,10 @@ internal data class ContentEditDraft(
     val title: String = "", val start: String = "", val end: String = "",
     val id: Long? = null, val device: String? = null,
     val originalTitle: String = "", val originalStart: String = "", val originalEnd: String = "",
+    val requestId: String? = null, val submittedDevice: String? = null,
 ) {
     val dirty: Boolean get() = title != originalTitle || start != originalStart || end != originalEnd
+    val unresolved: Boolean get() = requestId != null
 }
 internal class ContentEditorDrafts {
     var todo by mutableStateOf(ContentEditDraft())
@@ -48,10 +50,13 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
     val end = draft.end
     val editId = draft.id
     val device = if (connected) runCatching { model.service().authenticatedNavigationDevice }.getOrNull() else null
-    val editReady = editable && device != null && (editId == null || draft.device == device)
-    fun setDraft(value: ContentEditDraft) {
-        if (page == 2) drafts.schedule = value else drafts.todo = value
+    val editReady = editable && device != null && (editId == null || draft.device == device) &&
+        (draft.submittedDevice == null || draft.submittedDevice == device)
+    val inputsEnabled = !state.busy && !draft.unresolved
+    fun setDraft(value: ContentEditDraft, targetPage: Int = page) {
+        if (targetPage == 2) drafts.schedule = value else drafts.todo = value
     }
+    fun currentDraft(targetPage: Int) = if (targetPage == 2) drafts.schedule else drafts.todo
     var replaceDraft by remember { mutableStateOf<ContentEditDraft?>(null) }
     var deleteReview by remember { mutableStateOf<ContentDeleteReview?>(null) }
     LaunchedEffect(device) { deleteReview = null; replaceDraft = null }
@@ -63,7 +68,7 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
     val editor = remember { BringIntoViewRequester() }
     var editRequest by remember { mutableIntStateOf(0) }
     fun chooseDraft(next: ContentEditDraft) {
-        if (draft.dirty) replaceDraft = next
+        if (draft.dirty || draft.unresolved) replaceDraft = next
         else { setDraft(next); editRequest++ }
     }
     fun reviewDelete(row: JSONObject) {
@@ -72,8 +77,9 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
     replaceDraft?.let { next ->
         AlertDialog(onDismissRequest = { replaceDraft = null },
             title = { Text("저장하지 않은 편집 내용") },
-            text = { Text("현재 입력을 버리고 다른 항목을 편집할까요? 저장된 안경 콘텐츠는 삭제하지 않습니다.") },
-            confirmButton = { TextButton(onClick = { setDraft(next); replaceDraft = null; editRequest++ }) { Text("입력 버리기") } },
+            text = { Text(if (draft.unresolved) "이전 요청의 결과가 아직 확인되지 않았습니다. 먼저 기기 목록을 읽어 중복 여부를 확인하세요. 현재 입력을 닫아도 이미 전송한 요청은 취소되지 않습니다."
+                else "현재 입력을 버리고 다른 항목을 편집할까요? 저장된 안경 콘텐츠는 삭제하지 않습니다.") },
+            confirmButton = { TextButton(enabled = !state.busy, onClick = { setDraft(next); replaceDraft = null; editRequest++ }) { Text("편집 종료") } },
             dismissButton = { TextButton(onClick = { replaceDraft = null }) { Text("계속 편집") } })
     }
     deleteReview?.let { review ->
@@ -97,12 +103,46 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
                             review.page == 1 && content.state.todos.any { it.optLong("eventID") == review.id && it.toString() == review.row }) {
                             "기기 목록이 변경되었습니다. 다시 확인하세요"
                         }
+                        check(model.service().authenticatedNavigationDevice == review.device) { "안경 연결이 변경되었습니다" }
                         val args = JSONObject().put("event_id", review.id)
                         if (review.page == 1) content.todo("delete", args) else content.schedule("delete", args)
                     }
                 }
             }) { Text("삭제 요청") } },
             dismissButton = { TextButton(onClick = { deleteReview = null }) { Text("취소") } })
+    }
+    // Retrying a submission uses the same mutation ID and same payload.
+    // Only a verified readback clears the unresolved state automatically.
+    fun submitDraft() {
+        val targetPage = page
+        val targetDevice = device ?: return
+        if (!editReady) return
+        val submitted = draft.copy(title = title.trim(),
+            requestId = draft.requestId ?: java.util.UUID.randomUUID().toString(),
+            submittedDevice = targetDevice)
+        val args = JSONObject().put("title", submitted.title).put("request_id", submitted.requestId)
+        submitted.id?.let { args.put("event_id", it) }
+        if (targetPage == 2) {
+            args.put("start_time", LocalDateTime.parse(submitted.start, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
+                .put("end_time", LocalDateTime.parse(submitted.end, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
+        }
+        val service = model.service()
+        check(service.authenticatedNavigationDevice == targetDevice) { "안경 연결이 변경되었습니다" }
+        val content = service.content
+        setDraft(submitted, targetPage)
+        content.runWithResult({
+            val action = if (submitted.id == null) "add" else "update"
+            if (targetPage == 1) content.todo(action, args) else content.schedule(action, args)
+        }) { result ->
+            if (currentDraft(targetPage) != submitted) return@runWithResult
+            result.onSuccess { response ->
+                if (response.optBoolean("readBack") && response.has("eventID")) {
+                    setDraft(submitted.copy(id = response.getLong("eventID"), device = targetDevice,
+                        originalTitle = submitted.title, originalStart = submitted.start, originalEnd = submitted.end,
+                        requestId = null, submittedDevice = null), targetPage)
+                }
+            }
+        }
     }
     LaunchedEffect(page, editId, editRequest) {
         if (editRequest > 0 && page in 1..2) {
@@ -120,15 +160,16 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
         }
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("레이아웃", "할 일", "일정", "날씨").forEachIndexed { i, name ->
+                val pending = (i == 1 && drafts.todo.unresolved) || (i == 2 && drafts.schedule.unresolved)
                 val dirty = (i == 1 && drafts.todo.dirty) || (i == 2 && drafts.schedule.dirty)
-                FilterChip(page == i, { page = i; replaceDraft = null; deleteReview = null }, label = { Text(name + if (dirty) " · 편집 중" else "") })
+                FilterChip(page == i, { page = i; replaceDraft = null; deleteReview = null }, label = { Text(name + if (pending) " · 확인 대기" else if (dirty) " · 편집 중" else "") })
             }
         }
         when (page) {
             0 -> DashboardLayoutEditor(model)
             1 -> {
                 SectionLabel("할 일 목록 · ${state.todos.size}개")
-                ToolOutlinedButton(onClick = { chooseDraft(ContentEditDraft()) }, modifier = Modifier.fillMaxWidth()) { Text("새 할 일 작성") }
+                ToolOutlinedButton(onClick = { chooseDraft(ContentEditDraft()) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("새 할 일 작성") }
                 if (state.todos.isEmpty()) Note("표시할 할 일이 없습니다. 연결 후 콘텐츠를 읽거나 새 할 일을 추가하세요.")
                 state.todos.forEach { row ->
                     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
@@ -149,18 +190,18 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
                 OpticalPanel {
                         SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
                         if (editId != null && draft.device != device) Note("이 편집은 다른 연결의 항목입니다. 원래 안경을 연결하거나 새 항목을 작성하세요.")
-                        if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
-                        OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("할 일 제목") })
-                ToolButton(onClick = { model.attempt { model.service().content.run {
-                    check(editId == null || model.service().authenticatedNavigationDevice == draft.device) { "안경 연결이 변경되었습니다" }
-                    model.service().content.todo(if (editId == null) "add" else "update", JSONObject().put("title", title.trim()).apply { editId?.let { put("event_id", it) } })
-                } } }, enabled = editReady && title.isNotBlank()) { Text(if (editId == null) "안경에 추가" else "할 일 저장") }
-                if (editId != null || draft.dirty) TextButton(onClick = { chooseDraft(ContentEditDraft()) }) { Text("편집 종료") }
+                        if (draft.unresolved) Note("이전 요청 결과 미확인. 목록을 다시 읽어 확인하거나 같은 요청 ID로 확인을 재시도하세요. 새 항목을 만들기 전 중복 여부를 확인하세요.")
+                        else if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
+                        OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("할 일 제목") }, enabled = inputsEnabled)
+                ToolButton(onClick = { model.attempt { submitDraft() } }, enabled = editReady && title.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                    Text(if (draft.unresolved) "같은 요청 확인 재시도" else if (editId == null) "안경에 추가" else "할 일 저장")
+                }
+                if (editId != null || draft.dirty || draft.unresolved) TextButton(onClick = { chooseDraft(ContentEditDraft()) }, enabled = !state.busy) { Text("편집 종료") }
                 }
             }
             2 -> {
                 SectionLabel("일정 목록 · ${state.schedules.size}개")
-                ToolOutlinedButton(onClick = { chooseDraft(ContentEditDraft()) }, modifier = Modifier.fillMaxWidth()) { Text("새 일정 작성") }
+                ToolOutlinedButton(onClick = { chooseDraft(ContentEditDraft()) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("새 일정 작성") }
                 if (state.schedules.isEmpty()) Note("표시할 일정이 없습니다. 연결 후 콘텐츠를 읽거나 새 일정을 추가하세요.")
                 state.schedules.forEach { row ->
                     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
@@ -181,22 +222,19 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
                 OpticalPanel {
                         SectionLabel(if (editId == null) "새 일정" else "일정 편집")
                         if (editId != null && draft.device != device) Note("이 편집은 다른 연결의 항목입니다. 원래 안경을 연결하거나 새 항목을 작성하세요.")
-                        if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
-                        OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("일정 제목") })
-                OutlinedTextField(start, { setDraft(draft.copy(start = it)) }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, isError = start.isNotBlank() && scheduleStart == null)
-                OutlinedTextField(end, { setDraft(draft.copy(end = it)) }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))
+                        if (draft.unresolved) Note("이전 요청 결과 미확인. 목록을 다시 읽어 확인하거나 같은 요청 ID로 확인을 재시도하세요. 새 항목을 만들기 전 중복 여부를 확인하세요.")
+                        else if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
+                        OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("일정 제목") }, enabled = inputsEnabled)
+                OutlinedTextField(start, { setDraft(draft.copy(start = it)) }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, enabled = inputsEnabled, isError = start.isNotBlank() && scheduleStart == null)
+                OutlinedTextField(end, { setDraft(draft.copy(end = it)) }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, enabled = inputsEnabled, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))
                 if (start.isNotBlank() || end.isNotBlank()) {
                     if (scheduleStart == null || scheduleEnd == null) Note("날짜와 시간을 yyyy-MM-dd HH:mm 형식으로 정확히 입력하세요.")
                     else if (!validSchedule) Note("종료 시간은 시작 시간보다 뒤여야 합니다.")
                 }
-                ToolButton(onClick = { model.attempt {
-                    check(editId == null || model.service().authenticatedNavigationDevice == draft.device) { "안경 연결이 변경되었습니다" }
-                    val args = JSONObject().put("title", title.trim()).put("start_time", LocalDateTime.parse(start, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
-                        .put("end_time", LocalDateTime.parse(end, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
-                    editId?.let { args.put("event_id", it) }
-                    model.service().content.run { model.service().content.schedule(if (editId == null) "add" else "update", args) }
-                } }, enabled = editReady && title.isNotBlank() && validSchedule) { Text(if (editId == null) "안경에 추가" else "일정 저장") }
-                if (editId != null || draft.dirty) TextButton(onClick = { chooseDraft(ContentEditDraft()) }) { Text("편집 종료") }
+                ToolButton(onClick = { model.attempt { submitDraft() } }, enabled = editReady && title.isNotBlank() && validSchedule, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (draft.unresolved) "같은 요청 확인 재시도" else if (editId == null) "안경에 추가" else "일정 저장")
+                }
+                if (editId != null || draft.dirty || draft.unresolved) TextButton(onClick = { chooseDraft(ContentEditDraft()) }, enabled = !state.busy) { Text("편집 종료") }
                 }
             }
             3 -> {
