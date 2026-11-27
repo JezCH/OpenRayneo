@@ -9,6 +9,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -78,12 +80,20 @@ internal fun TeleprompterScreen(model: AppModel) {
     var selected by remember { mutableStateOf<String?>(null) }
     var title by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
-    var speed by remember { mutableIntStateOf(2) }
-    var smartFollow by remember { mutableStateOf(false) }
+    var speed by rememberSaveable { mutableIntStateOf(2) }
+    var smartFollow by rememberSaveable { mutableStateOf(false) }
+    var search by rememberSaveable { mutableStateOf("") }
+    val linked = model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting
+    val documents = state.documents.filter { it.getString("title").contains(search, ignoreCase = true) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("프롬프터 원고함", style = MaterialTheme.typography.headlineSmall)
-        Note("원고는 휴대폰에 저장되며 공식 클라우드를 사용하지 않습니다. 전송 시 현재 표시와 음성 수신을 중지한 뒤 안경으로 전송합니다.")
+        ContentCard {
+        Text("현재 프롬프터 상태", style = MaterialTheme.typography.titleLarge)
+        Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.labelLarge)
         Note(state.notice)
+        if (state.active != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { model.attempt { model.service().teleprompter.control(if (state.paused) "resume" else "pause") {} } }, enabled = !state.busy) { Text(if (state.paused) "계속" else "일시정지") }
+            TextButton(onClick = { model.attempt { model.service().teleprompter.control("stop") {} } }, enabled = !state.busy) { Text("프롬프터 중지") }
+        }
         if (state.smartFollow) {
             Note(state.followStatus)
             if (state.followTotal > 0) {
@@ -92,16 +102,27 @@ internal fun TeleprompterScreen(model: AppModel) {
             }
         }
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (state.active != null) Row {
-            TextButton(onClick = { model.attempt { model.service().teleprompter.control(if (state.paused) "resume" else "pause") {} } }, enabled = !state.busy) { Text(if (state.paused) "계속" else "일시정지") }
-            TextButton(onClick = { model.attempt { model.service().teleprompter.control("stop") {} } }, enabled = !state.busy) { Text("프롬프터 중지") }
         }
-        state.documents.forEach { document ->
-            TextButton(onClick = { selected = document.getString("did"); title = document.getString("title"); text = document.getString("text") }) { Text(document.getString("title")) }
+        SectionLabel("저장된 원고")
+        OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목 검색") }, singleLine = true)
+        Note("${documents.size}개 원고 · 휴대폰에 저장")
+        if (documents.isEmpty()) Note(if (search.isBlank()) "저장된 원고가 없습니다. 새 원고를 작성하세요." else "일치하는 원고가 없습니다.")
+        if (documents.isNotEmpty()) ContentCard {
+            documents.forEachIndexed { index, document ->
+                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                TextButton(onClick = { selected = document.getString("did"); title = document.getString("title"); text = document.getString("text") },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(document.getString("title") + if (selected == document.getString("did")) " · 선택됨" else "")
+                }
+            }
         }
+        SectionLabel(if (selected == null) "새 원고 작성" else "선택한 원고 편집")
+        TextButton(onClick = { selected = null; title = ""; text = "" }) { Text("새 원고") }
+        Note("원고는 휴대폰에 저장되며 공식 클라우드를 사용하지 않습니다. 전송 시 현재 표시와 음성 수신을 중지한 뒤 안경으로 전송합니다.")
         OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("원고 제목") })
         OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("본문") }, minLines = 6, maxLines = 16)
-        Row {
+        SectionLabel("재생 방식")
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(smartFollow, { smartFollow = it }, enabled = !state.busy && state.active == null)
             Text("Smart Follow · 음성 따라 읽기 (실험적)")
         }
@@ -113,7 +134,7 @@ internal fun TeleprompterScreen(model: AppModel) {
         }
         ToolOutlinedButton(onClick = { model.attempt { selected = model.service().teleprompter.save(title.trim(), text, selected ?: java.util.UUID.randomUUID().toString()); model.notice = "원고가 휴대폰에 저장됨" } }, enabled = title.isNotBlank() && text.isNotBlank() && !state.busy) { Text("원고 저장") }
         ToolButton(onClick = { model.attempt { model.service().startTeleprompter(title.trim(), text, speed, selected, smartFollow) {} } },
-            enabled = title.isNotBlank() && text.isNotBlank() && !state.busy && !state.smartFollow && (!smartFollow || state.active == null) && model.state.glasses.link.phase == LinkPhase.FULL) { Text(if (smartFollow) "저장 후 음성 따라 읽기" else "저장 후 안경에서 재생") }
-        TextButton(onClick = { selected = null; title = ""; text = "" }) { Text("새 원고") }
+            enabled = title.isNotBlank() && text.isNotBlank() && !state.busy && !state.smartFollow && (!smartFollow || state.active == null) && linked, modifier = Modifier.fillMaxWidth()) { Text(if (smartFollow) "저장 후 음성 따라 읽기" else "저장 후 안경에서 재생") }
+        if (!linked) Note("안경 통신 연결 후 재생할 수 있습니다. 원고 저장은 별개입니다.")
     }
 }

@@ -290,7 +290,7 @@ internal fun TranslationToolScreen(model: AppModel) {
     var translationModel by remember { mutableStateOf(model.config.optString("offlineTranslationModel")) }
     var localKey by remember { mutableStateOf(model.config.optString("offlineTranslationKey")) }
     val prepared = s.offlineReady && address.trim() == model.config.optString("offlineTranslationUrl") && translationModel.trim() == model.config.optString("offlineTranslationModel") && localKey.trim() == model.config.optString("offlineTranslationKey")
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val problem = if (s.translationActive) null else if (!s.available) "연결 서비스 준비 중" else
         if (local && !prepared) "저장된 로컬 번역 모델 연결을 먼저 확인하세요" else
             runCatching { model.service().checkTranslation(local, bundled, requirePrepared = false) }.exceptionOrNull()?.let { it.message ?: "번역 준비 상태 확인 실패" }
@@ -307,8 +307,10 @@ internal fun TranslationToolScreen(model: AppModel) {
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
+            Text(if (s.translationActive) "현재 통역 세션" else "한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.translationStatus)
+            if (s.translationActive) Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
             if (!s.translationActive) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(bundled, { mode = "bundled" }, enabled = !mt.preparing); Text("앱 내장 한영 통역")
@@ -347,10 +349,10 @@ internal fun TranslationToolScreen(model: AppModel) {
             if (s.wakeActive || s.wakePending) Note("한국어 호출을 먼저 종료하세요.")
             else if (s.mediaCaption.busy) Note("미디어 자막을 먼저 종료하세요.")
             else if (s.captionActive) Note("실시간 자막을 먼저 종료하세요.")
-            else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }) { Text("번역 종료") }
+            else if (s.translationActive) ToolButton(onClick = { model.attempt { model.service().stopTranslation() } }, modifier = Modifier.fillMaxWidth()) { Text("번역 종료") }
             else {
                 problem?.let { Note("시작할 수 없는 이유: " + it) }
-                ToolButton(onClick = { confirm = true }, enabled = problem == null && !pendingStart && !mt.preparing) { Text(if (pendingStart) "통역 준비 중…" else "번역 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = problem == null && !pendingStart && !mt.preparing, modifier = Modifier.fillMaxWidth()) { Text(if (pendingStart) "통역 준비 중…" else "번역 시작") }
             }
             if (!linked) Note("먼저 안경을 연결하세요.")
         } }
@@ -459,19 +461,22 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
     val context = model.getApplication<android.app.Application>()
     val config = model.config
     val localReady = SpeechRounds.model(config) != null && SpeechRounds.ready(context, config)
-    val linked = s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
+    val linked = s.available && s.glasses.link.phase == LinkPhase.FULL && !s.glasses.disconnecting
     val busy = s.translationActive || s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending ||
         s.glasses.intent != DisplayIntent.Idle || s.glasses.session != null || s.glasses.navigation.enabled ||
         s.teleprompter.active != null || s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ContentCard {
-            Text("주변 대화 자막", style = MaterialTheme.typography.headlineSmall)
-            Note("유튜브나 이어폰의 내부 재생음을 자막으로 보려면 아래 미디어 자막을 사용하세요.")
-            ToolOutlinedButton(onClick = mediaCaptions) { Text("유튜브·미디어 자막 열기") }
+            Text(if (s.captionActive) "현재 주변 자막 세션" else "안경 마이크 자막 시작", style = MaterialTheme.typography.headlineSmall)
+            Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.captionStatus)
             Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
-            if (s.captionActive) ToolButton(onClick = { model.attempt { model.service().stopCaption() } }) { Text("자막 종료") }
+            if (s.captionActive) {
+                ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("주변 자막 종료") }
+                Note("음성 수신: " + s.glasses.audio.detail)
+                Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            }
             else {
                 if (!linked) Note("먼저 안경을 연결하세요.")
                 if (!localReady) {
@@ -479,10 +484,15 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
                     ToolOutlinedButton(onClick = voiceSettings) { Text("음성 인식 설정") }
                 }
                 if (busy) Note("다른 기록·안경 화면·AI 작업을 먼저 종료하세요.")
-                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy) { Text("자막 시작") }
+                ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy, modifier = Modifier.fillMaxWidth()) { Text("자막 시작") }
             }
         } }
         item { GlassesOutputPreview(s.glasses) }
+        item { ContentCard {
+            Text("휴대폰 재생음 자막", style = MaterialTheme.typography.titleMedium)
+            Note("유튜브나 이어폰의 내부 재생음을 자막으로 보려면 미디어 자막을 사용하세요.")
+            ToolOutlinedButton(onClick = mediaCaptions, modifier = Modifier.fillMaxWidth()) { Text("유튜브·미디어 자막 열기") }
+        } }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("실시간 자막을 시작할까요?") },
