@@ -3,6 +3,7 @@ package com.openrayneo.android
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -76,9 +77,13 @@ internal fun RecordMigrationScreen(model: AppModel) {
             Note("음성 지문(화자 학습 데이터), 개인 설정, 토픽/프로필, 연결 키, 외부 서비스 로그인은 이 이전 경로로 옮기지 않습니다. 일부 실패 시 원본은 그대로 두고 다시 시도하세요.")
         }
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // Put current progress and confirmation before setup once a transfer is prepared.
-        val showResultFirst = state.prepared || state.busy || state.records > 0 || state.people > 0
+    val showResultFirst = state.prepared || state.busy || state.records > 0 || state.people > 0
+    val listState = rememberLazyListState()
+    LaunchedEffect(showResultFirst) {
+        // Key retention otherwise keeps the previous setup item visible after reordering.
+        listState.scrollToItem(0)
+    }
+    LazyColumn(state = listState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (showResultFirst) {
             item(key = "migration-results") { resultsPanel() }
             item(key = "migration-source") { sourcePanel() }

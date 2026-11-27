@@ -38,7 +38,8 @@ internal fun CompanionContentScreen(model: AppModel) {
     val scheduleEnd = remember(end) { runCatching { LocalDateTime.parse(end, formatter) }.getOrNull() }
     val validSchedule = scheduleStart != null && scheduleEnd != null && scheduleEnd.isAfter(scheduleStart)
     val editor = remember { BringIntoViewRequester() }
-    LaunchedEffect(page, editId) {
+    var editRequest by remember { mutableIntStateOf(0) }
+    LaunchedEffect(page, editId, editRequest) {
         if (editId != null && page in 1..2) {
             withFrameNanos {}
             editor.bringIntoView()
@@ -65,7 +66,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                         Text(row.optString("title"), style = MaterialTheme.typography.titleMedium)
                         Note(if (row.optString("syncState") == "outcome_unknown") "변경 결과 확인 대기" else if (row.optInt("status") == 1) "완료됨" else "미완료")
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = { title = row.getString("title"); editId = row.getLong("eventID") }) { Text("편집") }
+                            TextButton(onClick = { title = row.getString("title"); editId = row.getLong("eventID"); editRequest++ }) { Text("편집") }
                             TextButton(onClick = { model.attempt { model.service().content.run {
                                 model.service().content.todo("update", JSONObject().put("event_id", row.getLong("eventID")).put("completed", row.optInt("status") != 1))
                             } } }, enabled = editable) { Text(if (row.optInt("status") == 1) "완료 취소" else "완료") }
@@ -75,15 +76,13 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
-                Box(Modifier.bringIntoViewRequester(editor)) {
-                    OpticalPanel {
+                OpticalPanel {
                         SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
-                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("할 일 제목") })
+                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("할 일 제목") })
                 ToolButton(onClick = { model.attempt { model.service().content.run {
                     model.service().content.todo(if (editId == null) "add" else "update", JSONObject().put("title", title.trim()).apply { editId?.let { put("event_id", it) } })
                 } } }, enabled = editable && title.isNotBlank()) { Text(if (editId == null) "안경에 추가" else "할 일 저장") }
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
-                    }
                 }
             }
             2 -> {
@@ -98,6 +97,7 @@ internal fun CompanionContentScreen(model: AppModel) {
                             TextButton(onClick = { title = row.getString("title"); editId = row.getLong("eventID")
                                 start = java.time.Instant.ofEpochSecond(row.getLong("startTime")).atZone(ZoneId.systemDefault()).format(formatter)
                                 end = java.time.Instant.ofEpochSecond(row.getLong("endTime")).atZone(ZoneId.systemDefault()).format(formatter)
+                                editRequest++
                             }) { Text("편집") }
                             TextButton(onClick = { model.attempt { model.service().content.run {
                                 model.service().content.schedule("delete", JSONObject().put("event_id", row.getLong("eventID")))
@@ -105,10 +105,9 @@ internal fun CompanionContentScreen(model: AppModel) {
                         }
                     } }
                 }
-                Box(Modifier.bringIntoViewRequester(editor)) {
-                    OpticalPanel {
+                OpticalPanel {
                         SectionLabel(if (editId == null) "새 일정" else "일정 편집")
-                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("일정 제목") })
+                        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("일정 제목") })
                 OutlinedTextField(start, { start = it }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, isError = start.isNotBlank() && scheduleStart == null)
                 OutlinedTextField(end, { end = it }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))
                 if (start.isNotBlank() || end.isNotBlank()) {
@@ -122,7 +121,6 @@ internal fun CompanionContentScreen(model: AppModel) {
                     model.service().content.run { model.service().content.schedule(if (editId == null) "add" else "update", args) }
                 } }, enabled = editable && title.isNotBlank() && validSchedule) { Text(if (editId == null) "안경에 추가" else "일정 저장") }
                 if (editId != null) TextButton(onClick = { editId = null; title = "" }) { Text("편집 종료") }
-                    }
                 }
             }
             3 -> {
