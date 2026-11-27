@@ -111,8 +111,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     // The recording controller's modelReady is speaker processing initialization, not ASR.
     val speechConfigured: Boolean get() = SpeechRounds.ready(context, config)
-    val mobileModelConfigured: Boolean get() = MobileModelEndpoint.isConfigured(
-        config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey"))
+    val mobileModelConfigured: Boolean get() = AiModelSelection.endpoint(config) != null
 
     val aiLegacy get() = AiModelSelection.legacy(config)
     val aiConfigured get() = if (aiLegacy) state.agentServer.enabled else AiModelSelection.direct(config) != null
