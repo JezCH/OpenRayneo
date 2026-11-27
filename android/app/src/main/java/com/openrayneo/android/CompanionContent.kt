@@ -28,10 +28,18 @@ internal class CompanionContent(private val context: Context, private val reques
     private fun cachedTodos() = JSONArray(local.getString(cacheKey(), "[]")).objects()
     private fun cache(items: List<JSONObject>) { check(local.edit().putString(cacheKey(), JSONArray(items).toString()).commit()) }
     private var weatherAttemptAt = 0L
+    private var initialDeviceSyncFinished = false
     fun connected() {
+        initialDeviceSyncFinished = false
         val id = device()
         state = state.copy(automaticWeather = local.getBoolean("weatherAutomatic:$id", false),
             weather = local.getString("weatherCard:$id", null)?.let(::JSONObject)); changed()
+    }
+    /** Optional network/weather work must not occupy the serial device request
+     * worker before the critical link initialization and state queries. */
+    fun initialSyncFinished() {
+        if (address() == null) return
+        initialDeviceSyncFinished = true
         automaticWeather()
     }
     fun setAutomaticWeather(enabled: Boolean) {
@@ -39,14 +47,14 @@ internal class CompanionContent(private val context: Context, private val reques
         state = state.copy(automaticWeather = enabled); changed(); if (enabled) automaticWeather(force = true)
     }
     fun automaticWeather(force: Boolean = false) {
-        if (address() == null || !state.automaticWeather || state.busy || !force && System.currentTimeMillis() - weatherAttemptAt < 30 * 60_000) return
+        if (address() == null || !initialDeviceSyncFinished || !state.automaticWeather || state.busy || !force && System.currentTimeMillis() - weatherAttemptAt < 30 * 60_000) return
         val city = local.getString("weatherCity:" + device(), null)?.let(::JSONObject) ?: return
         weatherAttemptAt = System.currentTimeMillis()
         // A "current location" choice follows the phone: locate again on every update.
         run { weather(if (city.optBoolean("current")) currentCity() else city); pushWeather() }
     }
     fun refresh() = run { dashboard(); events(1); events(0); JSONObject().put("readBack", true) }
-    fun disconnected() { weatherAttemptAt = 0; state = CompanionContentState(); changed() }
+    fun disconnected() { initialDeviceSyncFinished = false; weatherAttemptAt = 0; state = CompanionContentState(); changed() }
     fun run(work: () -> JSONObject) {
         check(!state.busy) { "현재 안경 작업을 기다리세요" }
         state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
