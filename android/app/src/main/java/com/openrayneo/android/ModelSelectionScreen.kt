@@ -22,6 +22,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
     var key by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<AiModelSelection.Profile?>(null) }
     var legacy by remember { mutableStateOf(false) }
+    var revoke by remember { mutableStateOf(false) }
     fun edit(id: String) {
         val profile = profiles.firstOrNull { it.id == id }
         label = profile?.label ?: if (id == AiModelSelection.GPT) "GPT" else ""
@@ -36,9 +37,37 @@ internal fun ModelSelectionScreen(model: AppModel) {
         Note("현재 모델: " + AiModelSelection.label(config))
         Note("안경·휴대폰 질문, AI 힌트, 기록 요약, 온라인 번역 및 후속 조치 분석에 같은 선택을 적용합니다. 내장 음성 인식·오프라인 번역은 그대로 유지합니다. 다른 모델로 자동 대체하지 않습니다.")
         if (!model.aiSwitchAllowed) Note("진행 중인 기록·번역·AI 작업을 마치면 모델을 변경할 수 있습니다.")
+        val info = model.subscriptionInfo
+        val plan = profiles.firstOrNull { it.id == AiModelSelection.CHATGPT_PLAN }
+        ContentCard {
+            Text("ChatGPT 구독 (별도 API Key 없음)", style = MaterialTheme.typography.titleMedium)
+            Note("공식 ChatGPT 구독 추론 프리뷰입니다. 일반 채팅방·기억과 별개이며 공유 사용량 한도가 적용될 수 있습니다. 자동 유료 API 전환은 하지 않습니다.")
+            if (model.subscriptionBusy) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (model.subscriptionSigningIn) ToolOutlinedButton(onClick = { model.cancelSubscription() }) { Text("로그인 대기 취소") }
+            } else {
+                if (info.connected) {
+                    Note("인증 저장됨 · 실제 모델 응답 확인 별도")
+                    info.email?.let { Note("계정: " + it) }
+                    ToolOutlinedButton(onClick = { model.refreshSubscriptionModels() }, enabled = model.aiSwitchAllowed) { Text("계정 모델 목록 갱신") }
+                    info.models.forEach { option ->
+                        val chosen = selected == AiModelSelection.CHATGPT_PLAN && plan?.model == option.id
+                        ToolOutlinedButton(onClick = {
+                            pending = AiModelSelection.Profile(AiModelSelection.CHATGPT_PLAN, "ChatGPT 구독",
+                                AiModelSelection.GPT_URL, option.id, "")
+                        }, enabled = model.aiSwitchAllowed && !chosen) { Text(option.name + if (chosen) " · 선택됨" else "") }
+                    }
+                    if (info.models.isEmpty()) Note("사용 가능한 모델 목록이 없습니다. 계정 권한을 확인하세요.")
+                    ToolOutlinedButton(onClick = { revoke = true }, enabled = model.aiSwitchAllowed) { Text("구독 연결 해제") }
+                } else {
+                    ToolButton(onClick = { model.connectSubscription() }, enabled = model.aiSwitchAllowed) { Text("Continue with ChatGPT") }
+                    if (info.registered) Note("기존 등록 계정" + (info.email?.let { ": " + it } ?: "") + "으로 다시 로그인합니다.")
+                }
+            }
+        }
         val gpt = profiles.firstOrNull { it.id == AiModelSelection.GPT }
         ContentCard {
-            Text("GPT", style = MaterialTheme.typography.titleMedium)
+            Text("GPT API (별도 요금)", style = MaterialTheme.typography.titleMedium)
             Note(gpt?.let { it.model + if (selected == it.id) " · 선택됨" else " · 저장됨" }
                 ?: "첫 연결에 사용자 API 인증 필요")
             Note("OpenAI API 연결입니다. ChatGPT 앱 로그인이나 구독이 자동으로 연결되지 않으며 API 이용료가 발생할 수 있습니다.")
@@ -50,7 +79,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
             Text("RayNeo AI", style = MaterialTheme.typography.titleMedium)
             Note("제조사 순정 AI · 공식 서비스 인증 및 독립 앱 연결 검증 필요. 준비 전에는 선택할 수 없으며 다른 모델로 대체하지 않습니다.")
         }
-        profiles.filter { it.id != AiModelSelection.GPT }.forEach { profile ->
+        profiles.filter { it.id != AiModelSelection.GPT && it.id != AiModelSelection.CHATGPT_PLAN }.forEach { profile ->
             ContentCard {
                 Text(profile.label, style = MaterialTheme.typography.titleMedium)
                 Note(profile.model + if (selected == profile.id) " · 선택됨" else " · 저장됨")
@@ -89,10 +118,14 @@ internal fun ModelSelectionScreen(model: AppModel) {
     }
     pending?.let { profile ->
         AlertDialog(onDismissRequest = { pending = null }, title = { Text(profile.label + "로 변경") },
-            text = { Text("이후 앱에서 승인하여 사용하는 AI 기능의 질문·전사·참조 자료가 선택한 서비스에 전달될 수 있고 이용료가 발생할 수 있습니다. 기존 기록은 유지되며 자동 녹음이나 자동 AI 요청은 켜지지 않습니다.") },
+            text = { Text(if (profile.id == AiModelSelection.CHATGPT_PLAN) "이후 승인한 AI 요청은 ChatGPT 구독 사용량을 소비할 수 있습니다. 일반 채팅방·기억은 공유되지 않으며 별도 유료 API로 자동 전환하지 않습니다. 기존 기록과 자동 녹음 설정은 유지합니다." else "이후 앱에서 승인하여 사용하는 AI 기능의 질문·전사·참조 자료가 선택한 서비스에 전달될 수 있고 이용료가 발생할 수 있습니다. 기존 기록은 유지되며 자동 녹음이나 자동 AI 요청은 켜지지 않습니다.") },
             confirmButton = { TextButton(onClick = { pending = null; model.selectAiModel(profile.id, profile) }, enabled = model.aiSwitchAllowed) { Text("동의하고 선택") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("취소") } })
     }
+    if (revoke) AlertDialog(onDismissRequest = { revoke = false }, title = { Text("ChatGPT 구독 연결 해제") },
+        text = { Text("이 앱의 구독 인증을 종료합니다. ChatGPT 구독이나 기존 기록은 삭제하지 않습니다. 선택된 구독 모델은 재로그인 또는 다른 모델 선택 전까지 사용할 수 없습니다.") },
+        confirmButton = { TextButton(onClick = { revoke = false; model.disconnectSubscription() }, enabled = model.aiSwitchAllowed) { Text("연결 해제") } },
+        dismissButton = { TextButton(onClick = { revoke = false }) { Text("취소") } })
     if (legacy) AlertDialog(onDismissRequest = { legacy = false }, title = { Text("기존 연결 방식으로 변경") },
         text = { Text("저장된 기존 DSH Go 및 요약 모델 설정을 사용합니다. 두 경로가 동일한 모델이라는 보장은 없습니다.") },
         confirmButton = { TextButton(onClick = { legacy = false; model.selectAiModel(AiModelSelection.LEGACY) }, enabled = model.aiSwitchAllowed) { Text("변경") } },
