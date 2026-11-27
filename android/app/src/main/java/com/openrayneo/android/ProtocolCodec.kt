@@ -74,6 +74,7 @@ internal object ProtocolCodec {
 
     fun allowedBleLauncher(type: Int, command: String, mode: Any?, value: Any?, data: Any?): Boolean =
         when (type) {
+            1 -> command == "request_general_status" && mode == 0 && value == 0 && data == ""
             4 -> command == "request_general_settings" && mode == 0 && value == 0 && data == ""
             16 -> command in setOf("set_ai_state", "set_ai_voice_wakeup") && mode == 1 && value == 0 && data == ""
             else -> false
