@@ -521,6 +521,20 @@ internal class BridgeService : Service() {
             { id, signal -> dispatch(GlassesEvent.SessionSignal(id, signal)) },
             { id, packet -> if (audioOwner == id && state.session?.id == id) audio.accept(packet) },
             { dispatch(GlassesEvent.ExternalPage(it)) })
+        display.mayResumeNativeAudio = { id ->
+            val current = state.session
+            !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+                state.ownership == DisplayOwnership.APP && current?.id == id &&
+                current.nativePaused && current.phase != PagePhase.CLOSING &&
+                audioOwner == null && !prompterReserved && !deviceSettings.state.initialization.recorder.occupied &&
+                !voiceTransport.nativeActive && voiceTransport.source == null && !speechOutput.speaking &&
+                deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true &&
+                ((current.nativeSubtitle != null && state.intent == DisplayIntent.Translation && translator.active) ||
+                    (current.nativeHint != null && state.intent == DisplayIntent.PromptStandby &&
+                        conversations.state.running && !conversations.state.stopping &&
+                        conversations.state.source == ConversationSource.REALTIME &&
+                        focusPolicy.allows(FocusPolicy.Output.PASSIVE_HINT)))
+        }
         navigation.initialize(this)
         navigation.stop()
         navigation.observers.add(navigationObserver)
