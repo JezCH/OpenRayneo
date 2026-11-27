@@ -6,6 +6,12 @@ fun main() {
     fun verify(ok: Boolean) { check(ok) { "assertion ${n + 1}" }; n++ }
     val cases = mapOf(
         "안경 배터리 얼마야?" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
+        "베터리 얼마야" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
+        "배터리가 얼마나 남았어?" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
+        "안경 밧데리 잔량 알려주세요" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
+        "배터리" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
+        "휴대폰 배터리 얼마야" to null,
+        "배터리 얼마야 그리고 메일 보내줘" to null,
         "레이네오 배터리 잔량 몇 % 남았어" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BATTERY),
         "안경 밝기 몇 단계야?" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BRIGHTNESS_READ),
         "안경 화면 밝기를 높여줘" to LocalDeviceQuery.Command(LocalDeviceQuery.Kind.BRIGHTNESS_UP),
