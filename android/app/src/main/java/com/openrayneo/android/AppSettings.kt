@@ -28,7 +28,10 @@ internal class AppSettings(context: Context, private val namespace: String = "se
     fun read(): JSONObject = effective(readStored())
 
     fun effective(stored: JSONObject): JSONObject = JSONObject(stored.toString()).also { effective ->
-        if (namespace == "settings") FeatureDefaults.missingDefaults(effective::has).forEach { (key, value) -> effective.put(key, value) }
+        if (namespace == "settings") {
+            FeatureDefaults.missingDefaults(effective::has).forEach { (key, value) -> effective.put(key, value) }
+            AiModelSelection.apply(effective)
+        }
     }
 
     fun readStored(): JSONObject {
