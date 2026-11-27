@@ -26,6 +26,12 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         val token = ++revision
         state = state.copy(busy = true, readback = DeviceReadback.PENDING, notice = "안경 상태와 설정을 각각 읽는 중…"); changed()
         requests.perform({
+            // A native subtitle/hint may arrive as soon as SPP opens.
+            // Prioritize the current-link settings (including mic permission)
+            // before optional clock sync or a status read that can wait 6 s
+            // per transport. Observe updates the state on the main thread
+            // immediately when the actual reply arrives.
+            val settings = runCatching { readSettingsForVoice() }.getOrNull()
             // Clock sync is a documented send-only command, not an ACK or
             // evidence that firmware applied the clock. No account or pairing writes.
             val clock = if (initialize) runCatching {
@@ -37,9 +43,6 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
                     .put("payload", payload(data = data.toString())), wait = false)
             }.isSuccess else null
             val status = runCatching { readLauncherSnapshot(1, "request_general_status", "generalStatus") }.getOrNull()
-            val settings = runCatching {
-                readSettingsForVoice()
-            }.getOrNull()
             val battery = (status?.opt("battery") as? Number)?.toDouble()
             val brightness = (status?.opt("brightness") as? Number)?.toDouble()
             val meaningfulStatus = battery?.let { it in 0.0..100.0 && it == it.toInt().toDouble() } == true ||

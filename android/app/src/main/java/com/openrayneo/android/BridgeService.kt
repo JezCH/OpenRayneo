@@ -512,8 +512,20 @@ internal class BridgeService : Service() {
                 val transition = GlassesCoordinator.reduce(state, currentEvent)
                 val previous = state
                 state = transition.state
-                if (previous.link.phase != LinkPhase.CONNECTING && state.link.phase == LinkPhase.CONNECTING)
+                if (previous.link.phase != LinkPhase.CONNECTING && state.link.phase == LinkPhase.CONNECTING) {
                     nativeMenuEvidence.clear()
+                    // Authenticated BLE can report settings before FULL. Never
+                    // reuse a microphone flag from an aborted pre-FULL link or
+                    // an earlier BLE-only diagnostic when opening a new link.
+                    requests.disconnected()
+                    deviceSettings.disconnected()
+                }
+                if (previous.link.phase == LinkPhase.CONNECTING &&
+                    state.link.phase !in setOf(LinkPhase.CONNECTING, LinkPhase.FULL, LinkPhase.BLE_ONLY)) {
+                    // A failed attempt must not retain its partial readback.
+                    requests.disconnected()
+                    deviceSettings.disconnected()
+                }
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
                     pendingNativeHint = null
