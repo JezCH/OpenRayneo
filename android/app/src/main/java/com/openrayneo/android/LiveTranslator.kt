@@ -105,7 +105,14 @@ internal class LiveTranslator(
 
     /** On-glasses captions use installed ASR. Translation uses the selected model. */
     fun startNativeSubtitle(settings: JSONObject, request: NativeSubtitleStart) {
-        if (!request.captions) { start(settings); return }
+        if (!request.captions) {
+            // Use the already prepared built-in bilingual engine where possible;
+            // otherwise preserve the previously configured online model route.
+            val bundled = mediaTranslation.state.readyFor(MediaTranslationRoute.BILINGUAL) &&
+                SpeechRounds.ready(context, offlineSpeech(settings))
+            start(settings, bundled = bundled)
+            return
+        }
         val language = request.languageHint?.takeUnless { it == "auto" }
             ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en") }.orEmpty()
         val preferred = JSONObject(settings.toString()).put("asrLanguage", language)

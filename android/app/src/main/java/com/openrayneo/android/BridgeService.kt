@@ -529,8 +529,8 @@ internal class BridgeService : Service() {
                     nativeSubtitleRequests.clear()
                     nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
                     capabilityStatus = "현재 연결의 SPP 협상 요청 미수신"
-                    queryPeerCapabilities()
                     syncHostVisibility()
+                    queryPeerCapabilities()
                     content.connected()
                     runCatching { deviceSettings.refresh(initialize = true) {
                         if (reconnectCapture.pending) tryResumeAlwaysOn()
@@ -1671,10 +1671,10 @@ internal class BridgeService : Service() {
             cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
             starting = true
             translator.startNativeSubtitle(config, request)
-            nativeSubtitleRequests.add(request.sid)
-            if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
             dispatch(GlassesEvent.StartNativeSubtitle(request))
             check(state.session?.nativeSubtitle?.sid == request.sid && translator.active) { "안경 자막 세션 시작 실패" }
+            nativeSubtitleRequests.add(request.sid)
+            if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
         }.onFailure { error ->
             if (state.session?.nativeSubtitle?.sid == request.sid) {
                 translator.stop(); dispatch(GlassesEvent.PauseDisplay)

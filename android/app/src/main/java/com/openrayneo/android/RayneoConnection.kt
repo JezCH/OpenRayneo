@@ -60,12 +60,14 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var pendingCapability: ProtocolCodec.Frame? = null
     private var earlyCapabilitySequence = 0x6a00
     private var earlyCapabilityStatus = "미수신"
+    private var initialLauncherStatus = "미조회"
+    private var initialLauncherWait: Runnable? = null
     private var peerConnectionStatus = "미수신"
     private var peerRegistrationStatus = "미수신"
     val linkEvidence: String get() =
         "BLE 인증=${if (authenticationHandled) "통과" else "미확인"} · SPP 소켓=${if (ready && !bleOnly) "연결" else "미확인"}\n" +
         "기기 연결 상태(cmd22)=$peerConnectionStatus · 등록 상태(cmd23)=$peerRegistrationStatus\n" +
-        "초기 BLE 기능 협상=$earlyCapabilityStatus · 펌웨어 서비스 준비는 별도 검증"
+        "초기 BLE 기능 협상=$earlyCapabilityStatus · BLE 상태 조회=$initialLauncherStatus · 펌웨어 서비스 준비는 별도 검증"
     private var bleOnly = false
     private var blePayloadSize = 20
     private data class BleWrite(val bytes: ByteArray, val completion: String?, val callback: ((Result<Unit>) -> Unit)? = null)
@@ -374,7 +376,10 @@ internal class RayneoConnection(private val context: Context, private val listen
                             earlyCapabilityStatus = "요청 수신 · 인증 확인 대기"
                             log("초기 BLE 기능 협상 요청 수신")
                             if (authenticationHandled) replyEarlyCapability()
-                        } else if (authenticationHandled) listener.onFrame(frame, "BLE")
+                        } else if (authenticationHandled) {
+                            if (frame.protocol == 0x0f && initialLauncherWait != null) observeInitialLauncher(frame)
+                            listener.onFrame(frame, "BLE")
+                        }
                     }
                 }
             }
@@ -451,7 +456,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                         state("BLE  인증됨, 알림 시도 가능 (완전한 페어링은 미검증)", ready = true)
                     } else {
                         replyEarlyCapability()
-                        openRfcomm()
+                        beginInitialLauncherRead()
                     }
                 }
             }
@@ -509,6 +514,49 @@ internal class RayneoConnection(private val context: Context, private val listen
         val id = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         check(!id.isNullOrEmpty() && id.length >= 12) { "이 앱의 Android ID를 사용할 수 없음" }
         return id.takeLast(12).chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    /** AIX IO queries Launcher general status on authenticated BLE before using
+     * SPP. Reuse the known read-only request, with a bounded wait; absence of
+     * a reply is evidence, not permission to alter pairing or disable GPT. */
+    private fun beginInitialLauncherRead() {
+        val session = generation
+        val body = JSONObject().put("cmd", "request_general_status")
+            .put("payload", JSONObject().put("value", 0).put("mode", 0).put("data", ""))
+        val bytes = ProtocolCodec.display(0x0f, earlyCapabilitySequence++ and 65535, 1, body.toString())
+        if (!ProtocolCodec.isBleLauncherControl(bytes, blePayloadSize) || bleWrites.size >= 32) {
+            initialLauncherStatus = "BLE 조회 생략 · SPP 초기화 계속"
+            openRfcomm()
+            return
+        }
+        val deadline = Runnable {
+            if (session == generation && initialLauncherWait != null) {
+                initialLauncherStatus = "SPP 전 BLE 상태 회신 미확인"
+                finishInitialLauncherRead()
+            }
+        }
+        initialLauncherWait = deadline
+        initialLauncherStatus = "인증 후 BLE 상태 조회 중"
+        main.postDelayed(deadline, 1_500)
+        enqueueBleFrame(bytes, "초기 BLE 기기 상태 조회 전송")
+    }
+
+    private fun observeInitialLauncher(frame: ProtocolCodec.Frame) {
+        val message = runCatching { ProtocolCodec.message(frame.payload) }.getOrNull() ?: return
+        if (message.type != 1) return
+        val status = runCatching { JSONObject(message.json ?: return).optJSONObject("generalStatus") }.getOrNull() ?: return
+        if (status.length() == 0) return
+        initialLauncherStatus = "SPP 전 BLE 기기 상태 회신 수신"
+        finishInitialLauncherRead()
+    }
+
+    private fun finishInitialLauncherRead() {
+        val deadline = initialLauncherWait ?: return
+        initialLauncherWait = null
+        main.removeCallbacks(deadline)
+        log(initialLauncherStatus)
+        // Keep existing bond/normal RFCOMM setup and subsequent full readback.
+        openRfcomm()
     }
 
     private fun openRfcomm() {
@@ -673,6 +721,8 @@ internal class RayneoConnection(private val context: Context, private val listen
         authenticationHandled = false
         connectionPairValue = 1
         pendingCapability = null
+        initialLauncherWait?.let(main::removeCallbacks); initialLauncherWait = null
+        initialLauncherStatus = "미조회"
         earlyCapabilityStatus = "미수신"
         peerConnectionStatus = "미수신"
         peerRegistrationStatus = "미수신"
