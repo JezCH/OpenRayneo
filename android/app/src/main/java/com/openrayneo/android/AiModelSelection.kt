@@ -41,14 +41,10 @@ internal object AiModelSelection {
         RAYNEO -> "RayNeo AI"
         else -> profiles(config).firstOrNull { it.id == id }?.label ?: "모델 연결 필요"
     }
-    /** Existing summarizer and online translation consume these resolved fields.
-     * The stored legacy credentials are left untouched; no selected provider can
-     * accidentally inherit a different provider's key. */
-    fun apply(config: JSONObject) {
-        if (legacy(config)) return
-        val p = direct(config)
-        config.put("modelUrl", p?.url.orEmpty()).put("modelName", p?.model.orEmpty()).put("modelKey", p?.key.orEmpty())
-    }
+    /** Resolve only at the inference boundary; never mutate stored legacy settings. */
+    fun endpoint(config: JSONObject): Profile? = if (legacy(config))
+        Profile(LEGACY, "기존 요약 모델", config.optString("modelUrl"), config.optString("modelName"), config.optString("modelKey")).takeIf { it.configured }
+        else direct(config)
     fun withProfile(config: JSONObject, profile: Profile): String {
         require(profile.configured && (profile.id == GPT && profile.url == GPT_URL ||
             profile.id.matches(Regex("custom-[a-f0-9-]{36}"))))
