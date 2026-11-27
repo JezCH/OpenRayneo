@@ -19,6 +19,13 @@ internal class GlassesDisplay(
     private var sid: String? = null
     private var generation = 0
     private var audioAccepted = false
+    // Native requests already authorize this exact SID, but socket write
+    // completion and reader callbacks run on different threads. Retain only
+    // a small bounded prefix until the start reply has actually been sent.
+    private var awaitingNativeReply = false
+    private data class EarlyAudio(val packet: ByteArray, val sequence: Long, val source: String)
+    private val earlyAudio = ArrayDeque<EarlyAudio>()
+    private var earlyAudioBytes = 0
     private var accepted = false
     private var settled = false
     private var writing = false
@@ -43,14 +50,24 @@ internal class GlassesDisplay(
         val incoming = next.nativeSubtitle?.reply() ?: next.nativeHint?.reply()
         if (incoming != null) {
             val ownerGeneration = generation
+            awaitingNativeReply = true
             schedule(timeout, 8_000)
             send(protocol(next), 2, incoming) { result ->
                 if (generation != ownerGeneration || sid != id || failed) return@send
                 cancel(timeout)
+                awaitingNativeReply = false
                 if (result.isFailure) { fail("안경 시작 응답 전송 실패"); return@send }
                 audioAccepted = true; accepted = true
                 report("안경 시작 응답 전송 · 실제 음성/표시 확인 대기")
                 signal(next.id, PageSignal.AudioAwaitingPeer(2))
+                if (generation != ownerGeneration) return@send
+                // StartAudio has initialized the current decoder on the
+                // coordinator before delivering any early, matching packets.
+                while (generation == ownerGeneration && earlyAudio.isNotEmpty()) {
+                    val audio = earlyAudio.removeFirst()
+                    earlyAudioBytes -= audio.packet.size
+                    deliverAudio(next.id, audio.packet, audio.sequence, audio.source)
+                }
                 if (generation != ownerGeneration) return@send
                 signal(next.id, PageSignal.Settling)
                 if (generation == ownerGeneration) schedule(settle, 500)
@@ -95,24 +112,27 @@ internal class GlassesDisplay(
             return
         }
         if (message.type == 4 && !active.receivesGlassesAudio) return
-        if (audioAccepted && message.type == 4) {
+        if (message.type == 4) {
             message.audio?.takeIf { it.isNotEmpty() }?.let { packet ->
                 val number = json.optLong("seq", -1)
-                if (number >= 0) {
-                    if (number in recentAudioSequences) return
-                    recentAudioSequences.addLast(number)
-                    if (recentAudioSequences.size > 64) recentAudioSequences.removeFirst()
+                if (audioAccepted) deliverAudio(active.id, packet, number, source)
+                else if (awaitingNativeReply && earlyAudio.size < 16 &&
+                    packet.size <= 32_768 - earlyAudioBytes &&
+                    (number < 0 || earlyAudio.none { it.sequence == number })) {
+                    earlyAudio.addLast(EarlyAudio(packet, number, source))
+                    earlyAudioBytes += packet.size
                 }
-                if (!audioReported) {
-                    audioReported = true
-                    report("첫 안경 오디오 패킷 수신: $source, ${packet.size} 바이트")
-                }
-                onAudio(active.id, packet)
             }
             return
         }
         if (message.type == 3) {
             val reason = json.optInt("reason_code", -1)
+            // Upstream DisplayController treats reason 17 as a weak-network
+            // notification, not a page close. Do not destroy the valid SID.
+            if (reason == 17) {
+                report("안경 네트워크 약함 보고 · 현재 세션 유지")
+                return
+            }
             reset()
             signal(active.id, PageSignal.Ended("안경이 현재 페이지 종료 또는 일시정지를 요청함 (사유 $reason), 표시를 양보함"))
             return
@@ -151,6 +171,25 @@ internal class GlassesDisplay(
         signal(active.id, PageSignal.Settling)
         if (generation != receivingGeneration) return
         schedule(settle, 500)
+    }
+
+    private fun deliverAudio(id: Long, packet: ByteArray, number: Long, source: String) {
+        if (number >= 0) {
+            if (number in recentAudioSequences) return
+            recentAudioSequences.addLast(number)
+            if (recentAudioSequences.size > 64) recentAudioSequences.removeFirst()
+        }
+        if (!audioReported) {
+            audioReported = true
+            report("첫 안경 오디오 패킷 수신: $source, ${packet.size} 바이트")
+        }
+        onAudio(id, packet)
+    }
+
+    private fun discardEarlyAudio() {
+        awaitingNativeReply = false
+        earlyAudio.clear()
+        earlyAudioBytes = 0
     }
 
     private fun flush() {
@@ -194,6 +233,7 @@ internal class GlassesDisplay(
         val active = session ?: return
         if (failed) return
         failed = true; cancel(timeout); cancel(settle)
+        discardEarlyAudio()
         signal(active.id, PageSignal.Failed(message))
     }
     fun reset() {
@@ -201,6 +241,7 @@ internal class GlassesDisplay(
         cancel(timeout); cancel(settle)
         session = null; sid = null; audioAccepted = false; accepted = false; settled = false; writing = false; failed = false
         navigationFrameSent = false; pending = null; lastWritten = null
+        discardEarlyAudio()
         recentAudioSequences.clear(); audioReported = false; unmatchedAudioReported = false
     }
     private fun protocol(session: PageSession) = if (session.nativeSubtitle != null || session.mode == PageMode.NAVIGATION) 0x13 else 0x17
