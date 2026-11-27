@@ -1699,6 +1699,9 @@ internal class BridgeService : Service() {
                 val body = runCatching { JSONObject(message.json ?: return false) }.getOrNull()
                 if (body != null && body.optString("sid") == pending.sid && body.optInt("reason_code", -1) == 2) {
                     pendingNativeHint = null
+                    // Ignore a retransmitted start from the already cancelled device session.
+                    nativeHintRequests.add(pending.sid)
+                    if (nativeHintRequests.size > 64) nativeHintRequests.remove(nativeHintRequests.first())
                     if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME)
                         conversations.stop()
                     noteNativeMenu(0x17, "안경에서 준비 중 취소")
