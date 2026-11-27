@@ -1501,7 +1501,7 @@ internal class BridgeService : Service() {
             // Preserve the existing durable task and per-write approval contract.
             try {
                 val direct = !AiModelSelection.legacy(cfg)
-                val id = agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input) { result ->
+                val id = agent.harness.submit(task, KoreanLanguage.withAnswerPolicy("명시적으로 요청된 현재 업무만 처리하세요. 쓰기 작업은 기존 승인 절차를 따르세요." + limit, cfg.optString("answerLanguage")), input = input, explicitToolRequest = true) { result ->
                     if (direct) {
                         if (token != nativeChatGeneration) return@submit
                         nativeChatRequest = null

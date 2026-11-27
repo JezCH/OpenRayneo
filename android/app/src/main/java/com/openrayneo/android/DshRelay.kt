@@ -54,7 +54,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
                hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null,
-               automaticContext: (() -> JSONObject?)? = null, complete: (Result<String>) -> Unit): String {
+               automaticContext: (() -> JSONObject?)? = null, explicitToolRequest: Boolean = false, complete: (Result<String>) -> Unit): String {
         require(input?.optBoolean("backfill") != true) { "과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다" }
         // Ordinary explicit chat may need a longer reasoning window; passive hints still expire in 60s.
         val ordinaryChat = kind == "hint" && input?.optString("purpose") == "explicit_question" && input.optJSONArray("history") != null
@@ -70,7 +70,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val profile = if (useDirect) checkNotNull(AiModelSelection.direct(config)) {
             "선택 모델 연결 설정이 필요합니다."
         } else null
-        val directTask = useDirect && kind == "task"
+        val directTask = useDirect && kind == "task" && explicitToolRequest
         check(!useDirect || directTask || (kind == "hint" && hintLifetimeMs > 0)) { "지원하지 않는 선택 모델 요청" }
         val lifetime = if (directTask) 360_000L else hintLifetimeMs
         val request = Request(id, text, context, complete, kind, input,

@@ -61,6 +61,7 @@ internal object SelectedModelToolTransport {
         require(name in allowedNames && (namespace == null || groups[namespace]?.contains(name) == true)) { "지원하지 않는 도구 호출" }
         require(raw.length <= 16_384) { "도구 요청 길이 초과" }
         val args = JSONObject(raw)
+        require(args.toString().length <= 16_384) { "도구 요청 길이 초과" }
         val schema = definitions().single { it.getString("name") == name }.getJSONObject("parameters")
         val props = schema.getJSONObject("properties")
         val required = schema.getJSONArray("required")

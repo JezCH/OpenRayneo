@@ -49,7 +49,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
         }
         try { requestId = harness.submit(text, policy, kind = kind, input = input,
             hintLifetimeMs = if (allowTools) 0L else if (ordinaryChat) CHAT_TIMEOUT_MS else ProactiveHintPolicy.MAX_AGE_MS,
-            automaticContext = auto) { result ->
+            automaticContext = auto, explicitToolRequest = allowTools) { result ->
             if (session == generation) {
                 requestId = null; running = false
                 result.fold({ reply ->

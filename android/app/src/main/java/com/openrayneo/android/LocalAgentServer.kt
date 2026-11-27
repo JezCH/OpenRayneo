@@ -121,6 +121,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private fun submitTool(name: String, args: JSONObject, ownerAllowed: () -> Boolean = { true },
                            completion: ((Result<JSONObject>) -> Unit)? = null): JSONObject {
         check(ownerAllowed()) { "업무 요청 취소" }
+        tasks.values.toList().forEach(::expire)
         tasks.entries.removeAll { it.value.state != "running" && SystemClock.elapsedRealtime() - it.value.startedAt > taskMs }
         val approval = CompanionTools.requiresReview(name) || (completion != null && name in setOf("memory_reference", "about_you_read", "location_current"))
         val requestId = args.optString("request_id")
