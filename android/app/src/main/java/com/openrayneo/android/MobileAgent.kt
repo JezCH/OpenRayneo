@@ -25,7 +25,7 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     var answer = ""; private set
     var question = ""; private set
     var ephemeral = false; private set
-    val harness = DshRelay(main, repository, restored) { message -> if (running) { status = message; changed() } }
+    val harness = DshRelay(main, repository, restored, settings::read) { message -> if (running) { status = message; changed() } }
     fun submit(text: String, context: String = "", allowTools: Boolean = true, retainHistory: Boolean = true, forceDsh: Boolean = true, references: JSONObject? = null) {
         check(!running) { "답변을 기다리거나 먼저 중지하세요" }
         // Restricted requests must not enter a durable tool-executing session.
@@ -72,5 +72,5 @@ internal class MobileAgent(private val settings: AppSettings, private val reposi
     fun cancel() { generation++; requestId?.let(harness::cancelRequest); requestId = null; running = false; status = "중지됨. 이미 실행된 작업은 유지됨"; changed() }
     fun resetChatHistory() { chatHistory.clear() }
     fun clear() { cancel(); resetChatHistory(); question = ""; answer = ""; changed() }
-    fun close() { generation++; chatHistory.clear(); running = false }
+    fun close() { generation++; harness.closeDirect(); chatHistory.clear(); running = false }
 }

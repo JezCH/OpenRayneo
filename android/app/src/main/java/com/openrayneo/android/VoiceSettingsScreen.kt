@@ -235,9 +235,11 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
         AboutYouSection()
         OrdinaryContextButton()
         Box(Modifier.bringIntoViewRequester(jumps[5])) { SectionLabel("기록 요약 모델") }
-        VoiceField(model, "modelUrl", "요약 모델 서비스 주소")
-        VoiceField(model, "modelName", "요약 모델 이름")
-        VoiceField(model, "modelKey", "요약 모델 API Key", secret = true)
+        if (model.aiLegacy) {
+            VoiceField(model, "modelUrl", "기존 요약 모델 서비스 주소")
+            VoiceField(model, "modelName", "기존 요약 모델 이름")
+            VoiceField(model, "modelKey", "기존 요약 모델 API Key", secret = true)
+        } else Note("요약 모델: " + AiModelSelection.label(model.config) + " · 설정의 모델 선택에서 변경")
         StructuredVoicePrompt(model, "memoryPrompt", "기억 귀속 및 정리", ConversationPrompts.memory)
         Note("실시간 번역(한국어 ↔ 영어)도 이 모델과 위에서 고른 ASR 엔진을 사용합니다.")
         Note("이 모델은 앱 내 기록 요약에 사용됩니다.원문, 화자, 서술 대상은 따로 저장되며 가져올 수 있는 모든 전사는 장기 보관됩니다.")

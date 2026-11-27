@@ -252,9 +252,8 @@ internal fun SettingsScreen(
         if (AppUpdate.supported) SettingsRow("앱 업데이트", model.updateCheck.summary, Icons.Outlined.Settings) { open("app-update") }
         SectionLabel("AI 연결")
         SettingsRow(
-            "기록 요약 모델",
-            if (!model.mobileModelConfigured) "아직 설정되지 않음"
-            else model.config.optString("modelName").ifBlank { "설정 저장됨" },
+            "모델 선택",
+            model.aiStatus,
             Icons.Outlined.Smartphone,
         ) {
             open("model")
@@ -349,6 +348,8 @@ private fun SettingsRow(title: String, summary: String, icon: ImageVector, click
 
 @Composable
 internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig: () -> Unit) {
+    if (mobile) { ModelSelectionScreen(model); return }
+
     val urlKey = if (mobile) "modelUrl" else "codexUrl"
     val nameKey = if (mobile) "modelName" else "codexCwd"
     val secretKey = if (mobile) "modelKey" else "codexToken"

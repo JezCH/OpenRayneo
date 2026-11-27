@@ -44,7 +44,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
     LaunchedEffect(autoSuggest) { if (autoSuggest && question.isNotBlank()) suggest() }
     val current = result
     val hits = current?.hits.orEmpty()
-    val enabled = !busy && !model.state.phoneRunning && !model.state.migration.busy && model.state.agentServer.enabled
+    val enabled = !busy && !model.state.phoneRunning && !model.state.migration.busy && model.aiReady
     AlertDialog(onDismissRequest = dismiss, title = { Text("기억을 참고한 질문") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

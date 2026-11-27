@@ -47,7 +47,7 @@ internal class LiveTranslator(
     private var mediaRenderedSequence = 0L
     var mediaFinalCount = 0L; private set
 
-    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     private val translations = Executors.newSingleThreadExecutor()
     private var config = JSONObject()
@@ -74,10 +74,7 @@ internal class LiveTranslator(
             return
         }
         if (local) { require(offline.readyFor(settings)) { "먼저 휴대폰 로컬 번역 모델 연결을 시험하세요" }; return }
-        require(MobileModelEndpoint.isConfigured(settings.optString("modelUrl"), settings.optString("modelName"), settings.optString("modelKey"))) {
-            "번역에는 기록 요약 모델(주소, 모델 이름, API Key)이 필요합니다. 음성 설정에서 먼저 입력하세요"
-        }
-        MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+        require(AiModelSelection.endpoint(settings) != null) { "모델 선택에서 온라인 번역에 사용할 AI 연결을 설정하세요" }
     }
 
     private fun offlineSpeech(settings: JSONObject): JSONObject {
@@ -387,26 +384,21 @@ internal class LiveTranslator(
     }
 
     private fun translate(token: Int, settings: JSONObject, text: String, from: String, to: String, context: List<Pair<String, String>>): String {
-        val endpoint = MobileModelEndpoint.resolve(settings.optString("modelUrl"), settings.optString("modelKey"))
+        val profile = checkNotNull(AiModelSelection.endpoint(settings)) { "선택 모델 연결 필요" }
         val previous = if (context.isEmpty()) "" else "\nRecent conversation for context only (do not translate it again):\n" +
             context.joinToString("\n") { (source, target) -> "- $source => $target" }
         val system = "You are a live interpreter between Korean and English shown on smart glasses. " +
             "Translate the user's utterance from $from to $to. Output only the translation in natural spoken $to, " +
             "with no quotes, notes, romanization or explanations. Keep names and numbers accurate.$previous"
-        val body = JSONObject().put("model", settings.getString("modelName")).put("stream", false)
-            .put("messages", JSONArray()
+        val messages = JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", text)))
-        val request = Request.Builder().url(endpoint).apply {
-            settings.optString("modelKey").takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
-        }.post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                .put(JSONObject().put("role", "user").put("content", text))
+        val request = SelectedModelTransport.request(profile, messages)
         val current = http.newCall(request); call = current
         // stop() may have run between the generation check and assigning the call.
         if (token != generation) current.cancel()
         return current.execute().use { response ->
-            check(response.isSuccessful) { "HTTP ${response.code}" }
-            JSONObject(checkNotNull(response.body).string()).getJSONArray("choices").getJSONObject(0)
-                .getJSONObject("message").getString("content").trim().trim('"').ifBlank { error("빈 번역 결과") }
+            SelectedModelTransport.read(response).text.trim('"').ifBlank { error("빈 번역 결과") }
         }
     }
 

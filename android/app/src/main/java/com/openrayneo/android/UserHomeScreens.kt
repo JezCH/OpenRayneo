@@ -78,8 +78,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     Column(Modifier.weight(1f)) {
                         Text("AI 연결", style = MaterialTheme.typography.labelLarge)
                         Note(when {
-                            !s.agentServer.enabled -> "연결하지 않음"
-                            !s.agentServer.pollRecent -> "연결 기능 켜짐 · 응답 수신 대기"
+                            !model.aiConfigured -> "연결하지 않음"
+                            !model.aiReady -> "연결 기능 켜짐 · 응답 수신 대기"
                             else -> "요청 수신 확인됨"
                         })
                     }
@@ -142,7 +142,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                 FeatureTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, Modifier.weight(1f)) {
                     if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
                     else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
-                    else if (!s.agentServer.enabled || !s.agentServer.pollRecent) open("agent-api") else hintRequested = true
+                    else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
                 }
                 FeatureTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, Modifier.weight(1f)) { open("korean-wake") }
             }
@@ -201,7 +201,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     if (hintRequested) AlertDialog(onDismissRequest = { hintRequested = false },
         title = { Text("실시간 힌트를 시작할까요?") },
         text = { Text("안경 음성을 인식하고 일상 기록을 시작합니다. 현재 발화는 연결된 AI 모델에 전송될 수 있으며 이용량이나 요금이 발생할 수 있습니다. 참여자 동의와 보안 규칙을 확인하세요.") },
-        confirmButton = { TextButton(enabled = linked && c.modelReady && model.speechConfigured && s.agentServer.enabled && s.agentServer.pollRecent && !c.running && !c.stopping && !otherMode && !s.alwaysOnResumePending,
+        confirmButton = { TextButton(enabled = linked && c.modelReady && model.speechConfigured && model.aiConfigured && model.aiReady && !c.running && !c.stopping && !otherMode && !s.alwaysOnResumePending,
             onClick = { hintRequested = false; model.attempt { model.service().startRealtimeHint() } }) { Text("동의하고 시작") } },
         dismissButton = { TextButton(onClick = { hintRequested = false }) { Text("취소") } })
 }

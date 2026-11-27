@@ -10,14 +10,15 @@ import java.util.UUID
 
 /** Encrypted Agent outbox. Offline queued work survives phone/service restarts. */
 internal class DshRelay(private val main: Handler, private val repository: ConversationRepository,
-    private val restored: (String, String, JSONObject) -> Unit, private val progress: (String) -> Unit) {
+    private val restored: (String, String, JSONObject) -> Unit, private val selectedConfig: () -> JSONObject, private val progress: (String) -> Unit) {
+    private val directInference = DirectModelInference()
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
         var state: String = "queued", var session: String = "", var claimedAt: Long = 0L, var answer: String? = null, var delivered: Boolean = false, val createdAt: Long = System.currentTimeMillis(), val hintDeadline: Long = 0L,
         val preview: ((String) -> Unit)? = null, val previewGate: HintStreamPolicy.Gate = HintStreamPolicy.Gate(),
         var modelRoute: AgentProbePolicy.ModelRoute? = null,
         var automaticContext: (() -> JSONObject?)? = null,
-        val queuedSinceElapsed: Long = SystemClock.elapsedRealtime()) {
+        val queuedSinceElapsed: Long = SystemClock.elapsedRealtime(), val direct: Boolean = false) {
         val explicitHint: Boolean get() = kind == "hint" && input?.optString("purpose") in setOf("record_followup", "agent_probe", "korean_wake", "explicit_question")
         fun json() = JSONObject().put("id", id).put("text", text).put("context", context).put("kind", kind).put("input", input)
             .put("state", state).put("sessionId", session).put("claimedAt", claimedAt).put("answer", answer).put("delivered", delivered).put("createdAt", createdAt)
@@ -49,7 +50,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val prune = finished.filter { it.hintDeadline == 0L }.dropLast(64) +
             finished.filter { it.hintDeadline > 0L }.dropLast(16)
         prune.forEach { requests.remove(it.id) }
-        repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L }.map { it.json() }))
+        repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L && !it.direct }.map { it.json() }))
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
                hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null,
@@ -64,21 +65,59 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         require(preview == null || (hintLifetimeMs > 0L && input?.optBoolean("streamHint") == true))
         val id = UUID.randomUUID().toString()
         if (input?.optString("recordId")?.isNotBlank() == true) input.put("derivedId", id)
+        val config = selectedConfig()
+        val useDirect = !AiModelSelection.legacy(config)
+        val profile = if (useDirect) checkNotNull(AiModelSelection.direct(config)) {
+            "선택 모델 연결 설정이 필요합니다."
+        } else null
+        check(!useDirect || (kind == "hint" && hintLifetimeMs > 0)) {
+            "선택 모델은 질문·요약 전용입니다. 외부 업무 실행 연결은 아직 지원하지 않습니다."
+        }
         val request = Request(id, text, context, complete, kind, input,
             hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview,
-            automaticContext = automaticContext)
+            automaticContext = automaticContext, direct = useDirect,
+            state = if (useDirect) "running" else "queued")
         synchronized(lock) {
             expireHints()
             if (request.hintDeadline > 0L && !request.explicitHint) {
                 // Ambient updates may coalesce, but must never replace an explicit review or diagnostic.
-                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && it.state == "queued" }.forEach { cancelHint(it) }
+                requests.values.filter { it.hintDeadline > 0L && !it.explicitHint && (it.state == "queued" || (it.direct && it.state == "running")) }.forEach { cancelHint(it) }
             }
             requests[request.id] = request; persist(); lock.notifyAll()
         }
         if (request.hintDeadline > 0L) main.postDelayed({
             synchronized(lock) { expireHints(); lock.notifyAll() }
         }, hintLifetimeMs)
-        if (kind == "task") scheduleUnclaimed(request)
+        if (profile != null) {
+            // Never hand a direct request to the DSH poller. The selected profile
+            // is immutable for this request, and replies from a previous selection are discarded.
+            val valid = {
+                synchronized(lock) { requests[id] === request && request.state == "running" &&
+                    SystemClock.elapsedRealtime() < request.hintDeadline } &&
+                    runCatching { AiModelSelection.direct(selectedConfig()) == profile }.getOrDefault(false)
+            }
+            directInference.submit(id, profile, text, context, input, automaticContext, valid) { result ->
+                main.post {
+                    val accepted = synchronized(lock) {
+                        if (requests[id] !== request || request.state != "running") false
+                        else if (!valid()) { cancelHint(request); false }
+                        else {
+                            request.state = if (result.isSuccess) "completed" else "failed"
+                            if (input?.optString("purpose") == "agent_probe") {
+                                result.getOrNull()?.reportedModel?.let { actual ->
+                                    request.modelRoute = AgentProbePolicy.ModelRoute.from(profile.label, actual,
+                                        if (input.optString("probeRoute") == "ambient") "ambient_default" else "default")
+                                }
+                            }
+                            request.automaticContext = null
+                            persist()
+                            true
+                        }
+                    }
+                    if (accepted) complete(result.map { it.text })
+                }
+            }
+        } else if (kind == "task") scheduleUnclaimed(request)
         return id
     }
     private fun deliver(request: Request) { main.post {
@@ -87,6 +126,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     } }
     // Call only under lock. Transient hints never survive a service restart.
     private fun cancelHint(request: Request) {
+        if (request.direct) directInference.cancel(request.id)
         request.state = "cancelled"
         request.automaticContext = null
         main.post { request.complete(Result.failure(IllegalStateException("선제 힌트 만료 또는 대체"))) }
@@ -103,6 +143,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val expired = requests.values.filter { it.kind == "task" && it.state == "queued" && remainingUnclaimed(it) == 0L }
         if (expired.isEmpty()) return
         expired.forEach { request ->
+            if (request.direct) directInference.cancel(request.id)
             request.state = "cancelled"; request.automaticContext = null
             main.post { request.complete(Result.failure(IllegalStateException("외부 Agent가 2분 안에 업무를 수신하지 않아 취소했습니다. 다시 요청하세요."))) }
         }
@@ -130,6 +171,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         }, remaining)
     }
     fun next(authorized: () -> Boolean): JSONObject {
+        if (!AiModelSelection.legacy(selectedConfig())) return JSONObject().put("request", JSONObject.NULL)
         val deadline = System.currentTimeMillis() + 20_000
         val selected = synchronized(lock) {
             expireHints()
@@ -140,6 +182,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                 expireHints()
             }
             check(authorized()) { "Agent 엔드포인트가 닫혔거나 토큰이 변경됨" }
+            if (!AiModelSelection.legacy(selectedConfig())) return JSONObject().put("request", JSONObject.NULL)
             expireHints()
             // Explicit/durable tasks take precedence over suggestions.
             val request = requests.values.firstOrNull { it.state == "queued" && it.hintDeadline == 0L }
@@ -205,6 +248,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     fun update(id: String, body: JSONObject): JSONObject = synchronized(lock) {
         expireHints()
         val request = checkNotNull(requests[id]) { "DSH 요청이 만료됨" }
+        check(!request.direct) { "직접 모델 요청은 외부 Agent가 갱신할 수 없습니다" }
         if (request.hintDeadline > 0L && request.state == "cancelled") return status(id)
         if (body.optString("state") == "partial") {
             if (request.state == "running" && request.hintDeadline > 0L && request.preview != null) {
@@ -245,11 +289,14 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.state == "running") persist()
         status(id)
     }
+    fun hasOutstanding(): Boolean = synchronized(lock) { expireHints(); requests.values.any { it.state in setOf("queued", "running") } }
+    fun closeDirect() { directInference.close() }
     fun cancelRequest(id: String) = cancelMatching { it.id == id }
     fun cancelPassiveHints() = cancelMatching { it.kind == "hint" && it.input?.optString("source") == "ALWAYS_ON" && it.input?.has("hintDeadline") == true }
     fun cancelConversation(key: String) = cancelMatching { it.input?.optString("conversationKey") == key }
     private fun cancelMatching(matches: (Request) -> Boolean) = synchronized(lock) {
         requests.values.filter { it.state in setOf("queued", "running") && matches(it) }.forEach { request ->
+            if (request.direct) directInference.cancel(request.id)
             request.state = "cancelled"; request.automaticContext = null
             main.post { request.complete(Result.failure(IllegalStateException("DSH 이번 요청이 취소됨. 이미 실행된 작업은 유지됨"))) }
         }
@@ -257,6 +304,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     }
     fun cancel(kind: String? = null) = synchronized(lock) {
         requests.values.filter { it.state in setOf("queued", "running") && (kind == null || kind == it.kind) }.forEach { request ->
+            if (request.direct) directInference.cancel(request.id)
             request.state = "cancelled"; request.automaticContext = null
             main.post { request.complete(Result.failure(IllegalStateException("DSH 작업이 취소됨. 이미 실행된 작업은 유지됨"))) }
         }
