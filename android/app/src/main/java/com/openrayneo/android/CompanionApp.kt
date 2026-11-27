@@ -227,7 +227,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                         pages.SaveableStateProvider(tab) {
                             when (tab) {
                                 0 -> HomeScreen(model, { tab = it }, { openRoute(it) }, { devices = true })
-                                1 -> AssistantScreen(model, actions, { openRoute(it) })
+                                1 -> AssistantScreen(model, actions, keyboardVisible) { openRoute(it) }
                                 2 -> ConversationScreen(model, actions, { openRoute(it) })
                                 3 -> ToolsScreen(model, { openRoute(it) }, { tab = it })
                                 else -> DeviceOverview(model, { devices = true }, { openRoute(it) })

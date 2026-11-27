@@ -37,9 +37,8 @@ import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (String) -> Unit) {
+internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisible: Boolean = false, configure: (String) -> Unit) {
     var mobile by rememberSaveable { mutableStateOf(true) }
-    LaunchedEffect(model.aiLegacy) { if (!model.aiLegacy) mobile = true }
     var executeTask by remember(model.aiLegacy) { mutableStateOf(false) }
     var memoryQuestion by remember { mutableStateOf(false) }
     var autoMemory by remember { mutableStateOf(false) }
@@ -48,8 +47,11 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     var showContextOptions by rememberSaveable { mutableStateOf(false) }
     val suggestMemory = model.config.optBoolean("memorySuggestOnSend")
-    val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val s = model.state
+    val pcAccessible = model.aiLegacy || s.computerRunning || s.approvals.isNotEmpty() ||
+        model.computerHistory.isNotEmpty() || s.computerQuestion.isNotBlank() || model.computerDraft.isNotBlank()
+    LaunchedEffect(pcAccessible) { if (!pcAccessible) mobile = true }
+    val source = if (mobile) AnswerSource.MOBILE_AGENT else AnswerSource.COMPUTER_CODEX
     val running = if (mobile) s.phoneRunning else s.computerRunning
     val question = if (mobile) s.phoneQuestion else s.computerQuestion
     val answer = if (mobile) s.phoneAnswer else s.computerAnswer
@@ -61,14 +63,13 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
         else model.aiLegacy && listOf("codexUrl", "codexToken").all { model.config.optString(it).isNotBlank() }
     val draft = if (mobile) model.phoneDraft else model.computerDraft
     val inputReady = s.available && configured && (if (mobile) model.aiReady else s.computerConnected) && !running
-    val pendingHere = s.agentReviews.size + if (mobile) 0 else s.approvals.size
+    val pendingHere = if (mobile) s.agentReviews.size else s.approvals.size
     val phase = opticalAiPhase(s.available, pendingHere > 0, running, inputReady, answer.isNotBlank())
     val statusDetail = if (mobile && configured && question.isBlank() && !running) model.aiStatus else status
     val destinationLabel = if (!mobile) "컴퓨터 Codex" else if (model.aiLegacy) "로컬 Agent" else AiModelSelection.label(model.config)
     // Non-legacy AI has no selectable PC execution path. Preserve the selector
     // whenever an existing PC task, conversation or approval needs access.
-    val showSourceSelector = model.aiLegacy || !mobile || s.computerRunning || s.approvals.isNotEmpty() ||
-        model.computerHistory.isNotEmpty() || s.computerQuestion.isNotBlank()
+    val showSourceSelector = pcAccessible || !mobile
     // Search locally after a pause in typing; cancellation prevents stale recommendations.
     var suggestionCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(draft, mobile, executeTask, suggestMemory, running, s.available, s.migration.busy,
@@ -157,7 +158,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             }
             SegmentedButton(
                 !mobile,
-                { if (model.aiLegacy) mobile = false },
+                { if (pcAccessible) mobile = false },
                 androidx.compose.foundation.shape.RoundedCornerShape(
                     topEnd = 8.dp,
                     bottomEnd = 8.dp,
@@ -165,7 +166,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             ) {
                 Text(
                     if (s.approvals.isNotEmpty()) "컴퓨터 · 응답 대기"
-                    else if (s.computerRunning) "컴퓨터 · 처리 중" else "PC 작업"
+                    else if (s.computerRunning) "컴퓨터 · 처리 중" else if (model.aiLegacy) "PC 작업" else "PC 이력"
                 )
             }
         }
@@ -174,7 +175,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            OpticalAiStatus(phase, statusDetail, Modifier.weight(1f))
+            OpticalAiStatus(phase, if (keyboardVisible) "" else statusDetail, Modifier.weight(1f))
             IconButton(
                 onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
@@ -196,7 +197,15 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
             contentPadding = PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            if (!configured)
+            if (!mobile && !model.aiLegacy)
+                item {
+                    OpticalPanel {
+                        Text("기존 PC 작업 이력", style = MaterialTheme.typography.titleMedium)
+                        Note("현재 선택한 AI에서는 새 PC 실행을 지원하지 않습니다. 이전 답변과 남은 승인 요청은 여기서 확인할 수 있습니다.")
+                        TextButton(onClick = { configure("model") }) { Text("AI 모델 관리") }
+                    }
+                }
+            else if (!configured)
                 item {
                     OpticalPanel {
                         if (mobile) OpticalSignature(Modifier.size(80.dp))
@@ -328,7 +337,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         }
                     }
                 }
-            s.agentReviews.forEach { review ->
+            if (mobile) s.agentReviews.forEach { review ->
                 item(key = "agent-review:${review.id}") { AgentWriteReviewCard(model, review) }
             }
             if (!mobile)
@@ -358,7 +367,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                                 Text(if (showContextOptions) "맥락 설정 접기" else "맥락 설정")
                             }
                         }
-                        if (showContextOptions) {
+                        if (showContextOptions && !keyboardVisible) {
                             TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
                                 Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
                             }
@@ -370,6 +379,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 if (!inputReady && !running) {
                     Note(when {
                         !s.available -> "연결 서비스 준비 중"
+                        !mobile && !model.aiLegacy -> "현재 모델은 새 PC 실행을 지원하지 않습니다. 기존 이력만 확인할 수 있습니다."
                         !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
                         mobile && !model.aiReady -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
                         !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
@@ -385,7 +395,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         { if (mobile) model.phoneDraft = it else model.computerDraft = it },
                         Modifier.weight(1f),
                         placeholder = { Text(if (mobile) (if (executeTask) "실행할 업무를 입력하세요…" else "AI에게 질문하세요…") else "컴퓨터에 맡길 작업…") },
-                        maxLines = 5,
+                        maxLines = if (keyboardVisible) 3 else 5,
                         shape = MaterialTheme.shapes.large,
                     )
                     if (running)
@@ -418,6 +428,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                 ) {
                     TextButton(
                         onClick = { actions.voice(source) },
+                        enabled = mobile || model.aiLegacy,
                         contentPadding = PaddingValues(horizontal = 4.dp),
                     ) {
                         Icon(Icons.Outlined.MicNone, null, Modifier.size(18.dp))
@@ -425,7 +436,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
-                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else "컴퓨터 Codex로 보내기",
+                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else if (model.aiLegacy) "컴퓨터 Codex로 보내기" else "기존 PC 작업 · 전송 불가",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
