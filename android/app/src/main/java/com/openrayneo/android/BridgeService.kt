@@ -68,11 +68,51 @@ internal class BridgeService : Service() {
     var capabilityStatus = "현재 연결의 협상 요청 미수신"; private set
     private var capabilitySequence = 0x6900
     private var capabilityRevision = 0L
+    private var peerCapabilityRevision = 0L
+    var peerCapabilityStatus = "현재 연결의 기능 조회 대기"; private set
+    private fun queryPeerCapabilities() {
+        if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL) return
+        val revision = ++peerCapabilityRevision
+        peerCapabilityStatus = "기기 지원 기능 조회 중"
+        runCatching {
+            connection.sendFrame(ProtocolCodec.capabilityQuery(capabilitySequence++ and 65535)) { result ->
+                if (destroyed || state.link.phase != LinkPhase.FULL || revision != peerCapabilityRevision) return@sendFrame
+                if (result.isFailure && peerCapabilityStatus == "기기 지원 기능 조회 중") {
+                    peerCapabilityStatus = "조회 전송 실패"
+                    notifyUI()
+                }
+            }
+        }.onFailure { peerCapabilityStatus = "조회 전송 실패" }
+        main.postDelayed({
+            if (!destroyed && revision == peerCapabilityRevision && peerCapabilityStatus == "기기 지원 기능 조회 중") {
+                peerCapabilityStatus = "5초 내 기기 기능 회신 미확인"
+                notifyUI()
+            }
+        }, 5_000)
+        notifyUI()
+    }
     private fun handleCapability(frame: ProtocolCodec.Frame) {
         if (frame.protocol != 0x06 || frame.payload.size !in 1..8192 ||
             state.link.phase != LinkPhase.FULL || state.disconnecting || destroyed) return
         val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
-        if (body.deviceInt("type") != 1) return
+        val kind = body.deviceInt("type")
+        if (kind == 2 || kind == 3) {
+            val items = body.optJSONArray("capabilities")
+            // No request ID exists in the known contract. A response/notification
+            // is peer evidence only, never proof that the preceding query or any
+            // device service was accepted.
+            if (items != null) {
+                val result = when (body.optString("ret")) {
+                    "OK" -> "OK"
+                    "" -> "결과 코드 없음"
+                    else -> "OK 이외 결과"
+                }
+                peerCapabilityStatus = "기기 기능 ${if (kind == 2) "회신" else "통지"} · $result · ${items.length()}개 · 서비스 적용 미확인"
+                notifyUI()
+            }
+            return
+        }
+        if (kind != 1) return
         val revision = ++capabilityRevision
         capabilityStatus = "안경 협상 요청 수신 · 지원 목록 응답 중"
         runCatching {
@@ -459,7 +499,9 @@ internal class BridgeService : Service() {
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     capabilityRevision++
+                    peerCapabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
+                    peerCapabilityStatus = "연결 끊김 · 이전 조회 무효"
                     cancelKoreanWake()
                     cancelNavigationSwitch()
                     clearVoiceNavigation()
@@ -483,11 +525,15 @@ internal class BridgeService : Service() {
                 }
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
                     nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
-                    capabilityStatus = "현재 연결의 협상 요청 미수신"
+                    capabilityStatus = "현재 연결의 SPP 협상 요청 미수신"
+                    queryPeerCapabilities()
                     syncHostVisibility()
                     content.connected()
                     runCatching { deviceSettings.refresh(initialize = true) {
                         if (reconnectCapture.pending) tryResumeAlwaysOn()
+                        // Core readback and capture recovery take precedence over
+                        // optional weather/network work on the request executor.
+                        content.initialSyncFinished()
                     } }.onFailure { onLog("연결 초기화 시작 실패") }
                 }
                 if (currentEvent is GlassesEvent.ExternalPage) navigationVoiceHandoff = null

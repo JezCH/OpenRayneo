@@ -43,9 +43,15 @@ internal object ProtocolCodec {
         return pairingIntent(systemBonded)
     }
 
-    fun pairingStatus(payload: ByteArray): Int? =
-        if (payload.size == 4 && (payload[0].toInt() and 255) in setOf(22, 23) && u16(payload, 1) == 1)
-            payload[3].toInt() and 255 else null
+    /** Raw state notifications, not TLV. Upstream documents 17 00 02 02 00
+     * (command 23); preserve the second byte without inventing its meaning. */
+    fun pairingStatusBytes(payload: ByteArray): List<Int>? {
+        if (payload.size !in 4..5 || (payload[0].toInt() and 255) !in setOf(22, 23) ||
+            u16(payload, 1) != payload.size - 3) return null
+        return payload.drop(3).map { it.toInt() and 255 }
+    }
+
+    fun pairingStatus(payload: ByteArray): Int? = pairingStatusBytes(payload)?.firstOrNull()
 
     fun isCapabilityRequest(frame: Frame): Boolean =
         frame.protocol == 6 && !frame.acknowledgement && frame.payload.size in 1..8192 &&
@@ -68,6 +74,7 @@ internal object ProtocolCodec {
 
     fun allowedBleLauncher(type: Int, command: String, mode: Any?, value: Any?, data: Any?): Boolean =
         when (type) {
+            1 -> command == "request_general_status" && mode == 0 && value == 0 && data == ""
             4 -> command == "request_general_settings" && mode == 0 && value == 0 && data == ""
             16 -> command in setOf("set_ai_state", "set_ai_voice_wakeup") && mode == 1 && value == 0 && data == ""
             else -> false
@@ -81,6 +88,10 @@ internal object ProtocolCodec {
      * capabilities are advertised. Reference: upstream CapabilityController.swift. */
     fun emptyCapabilityReply(sequence: Int): ByteArray =
         frame(0x06, sequence, """{"type":2,"ret":"OK","capabilities":[]}""".toByteArray(Charsets.UTF_8))
+
+    /** Upstream CapabilityController's read-only peer capability request. */
+    fun capabilityQuery(sequence: Int): ByteArray =
+        frame(0x06, sequence, """{"type":1}""".toByteArray(Charsets.UTF_8))
 
     fun recordingVisibility(sequence: Int, visible: Boolean): ByteArray =
         display(0x0e, sequence, 14, """{"isAppForeground":$visible}""", byteArrayOf())
