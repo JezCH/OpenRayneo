@@ -54,6 +54,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
     val pages = rememberSaveableStateHolder()
     // Unsaved manuscript stays only in this live composition, not Bundle/disk.
     val manuscript = remember { TeleprompterDraft() }
+    val contentDrafts = remember { ContentEditorDrafts() }
     val s = model.state
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     BackHandler(
@@ -203,7 +204,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 "voice-settings" -> VoiceSettingsScreen(model, actions)
                 "voice-profiles" -> VoiceProfilesScreen(model)
                 "device-settings" -> GlassesSettingsScreen(model)
-                "content" -> CompanionContentScreen(model)
+                "content" -> CompanionContentScreen(model, contentDrafts)
                 "teleprompter" -> TeleprompterScreen(model, manuscript)
                 "agent-api" -> AgentServerScreen(model, actions.bluetoothPermission)
                 "navigation" -> NavigationScreen(model, actions, { sources = true }, { key ->
