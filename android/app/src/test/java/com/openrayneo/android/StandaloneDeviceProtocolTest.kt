@@ -61,6 +61,9 @@ class StandaloneDeviceProtocolTest {
         assertNull(ProtocolCodec.pairingStatusBytes(byteArrayOf(23, 0, 1, 2, 0)))
     }
     @Test fun bleControlAllowsOnlyReadAndExplicitWakeEnable() {
+        assertTrue(ProtocolCodec.allowedBleLauncher(1, "request_general_status", 0, 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(1, "request_general_status", 1, 0, ""))
+        assertFalse(ProtocolCodec.allowedBleLauncher(1, "request_general_settings", 0, 0, ""))
         assertTrue(ProtocolCodec.allowedBleLauncher(4, "request_general_settings", 0, 0, ""))
         assertTrue(ProtocolCodec.allowedBleLauncher(16, "set_ai_state", 1, 0, ""))
         assertTrue(ProtocolCodec.allowedBleLauncher(16, "set_ai_voice_wakeup", 1, 0, ""))
