@@ -71,11 +71,13 @@ internal class MainActivity : ComponentActivity() {
             check(!voiceBusy() && dictation == null && pendingMediaCaption == null) { "다른 음성 기능이 시작되었습니다." }
             val language = KoreanLanguage.phoneInput(model.config.optString("phoneSpeechLanguage")).substringBefore('-')
             lateinit var session: PhoneDictation
-            session = PhoneDictation(applicationContext, language) { result ->
+            session = PhoneDictation(applicationContext, language, SpeechRounds.engine(model.config)) { result ->
                 if (dictation !== session) return@PhoneDictation
                 dictation = null
-                result.fold({ text ->
-                    if (text.isBlank()) model.notice = "인식된 음성이 없습니다."
+                result.fold({ input ->
+                    val text = input.text
+                    input.notice?.let { model.notice = it }
+                    if (text.isBlank()) model.notice = input.notice ?: "인식된 음성이 없습니다."
                     else if (source == AnswerSource.MOBILE_AGENT)
                         model.phoneDraft = listOf(model.phoneDraft, text).filter { it.isNotBlank() }.joinToString(" ")
                     else model.computerDraft = listOf(model.computerDraft, text).filter { it.isNotBlank() }.joinToString(" ")

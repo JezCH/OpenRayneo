@@ -7,6 +7,8 @@ internal object GlassesCoordinator {
     fun reduce(previous: GlassesState, event: GlassesEvent): GlassesTransition {
         var state = previous
         val effects = mutableListOf<GlassesEffect>()
+        var nativeSubtitle: NativeSubtitleStart? = null
+        var nativeHint: NativeHintStart? = null
         fun cancelRestore() {
             if (state.restoreRevision != null) effects += GlassesEffect.CancelRestore
             state = state.copy(restoreRevision = null)
@@ -98,10 +100,24 @@ internal object GlassesCoordinator {
                 setIntent(DisplayIntent.PromptStandby)
                 state = state.copy(standby = TranslationView())
             }
+            is GlassesEvent.StartNativeHint -> {
+                if (state.link.phase != LinkPhase.FULL || state.disconnecting || state.session != null ||
+                    state.intent != DisplayIntent.Idle || state.navigation.enabled) return GlassesTransition(state, emptyList())
+                setIntent(DisplayIntent.PromptStandby)
+                state = state.copy(standby = TranslationView())
+                nativeHint = event.request
+            }
             is GlassesEvent.StandbyText -> state = state.copy(standby = event.view)
             GlassesEvent.StartTranslation -> {
                 setIntent(DisplayIntent.Translation)
                 state = state.copy(captionMode = false, mediaCaptionMode = false, translation = TranslationView())
+            }
+            is GlassesEvent.StartNativeSubtitle -> {
+                if (state.link.phase != LinkPhase.FULL || state.disconnecting || state.session != null ||
+                    state.intent != DisplayIntent.Idle || state.navigation.enabled) return GlassesTransition(state, emptyList())
+                setIntent(DisplayIntent.Translation)
+                state = state.copy(captionMode = event.request.captions, mediaCaptionMode = false, translation = TranslationView())
+                nativeSubtitle = event.request
             }
             GlassesEvent.StartCaption -> {
                 setIntent(DisplayIntent.Translation)
@@ -153,6 +169,10 @@ internal object GlassesCoordinator {
                         state = state.copy(ownership = DisplayOwnership.YIELDED, error = signal.message)
                     }
                     else -> if (session.phase != PagePhase.CLOSING) when (signal) {
+                        is PageSignal.AudioAwaitingPeer -> if (session.receivesGlassesAudio) {
+                            state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "안경 시작 응답 전송됨 · 실제 오디오 대기"))
+                            effects += GlassesEffect.StartAudio(session.id, signal.channels)
+                        }
                         is PageSignal.AudioAccepted -> {
                             if (session.receivesGlassesAudio) {
                                 state = state.copy(audio = AudioState(AudioPhase.WAITING_PACKET, "오디오 세션 확인됨, 안경 오디오 대기"))
@@ -201,10 +221,12 @@ internal object GlassesCoordinator {
             }
         }
 
-        val target = target(state)
+        val target = target(state, nativeSubtitle ?: state.session?.nativeSubtitle, nativeHint ?: state.session?.nativeHint)
         val session = state.session
         if (state.link.phase == LinkPhase.FULL && session != null && session.phase != PagePhase.CLOSING &&
-            (target == null || target.first != session.mode || session.receivesGlassesAudio == state.mediaCaptionMode || state.blockedRevision == state.revision)) {
+            (target == null || target.first != session.mode || session.receivesGlassesAudio == state.mediaCaptionMode || state.blockedRevision == state.revision ||
+                (session.nativeSubtitle != null && state.intent != DisplayIntent.Translation) ||
+                (session.nativeHint != null && state.intent == DisplayIntent.Translation))) {
             cancelRestore()
             state = state.copy(session = session.copy(phase = PagePhase.CLOSING), audio = AudioState())
             effects += GlassesEffect.StopAudio
@@ -212,7 +234,7 @@ internal object GlassesCoordinator {
             effects += GlassesEffect.ClosePage(session.id)
         } else if (state.link.phase == LinkPhase.FULL && target != null && state.blockedRevision != state.revision) {
             if (session == null) {
-                val newSession = PageSession(state.nextSession, target.first, PagePhase.STARTING, target.second, receivesGlassesAudio = !state.mediaCaptionMode)
+                val newSession = PageSession(state.nextSession, target.first, PagePhase.STARTING, target.second, receivesGlassesAudio = !state.mediaCaptionMode, nativeSubtitle = nativeSubtitle, nativeHint = nativeHint)
                 state = state.copy(session = newSession, nextSession = state.nextSession + 1)
                 effects += GlassesEffect.StartPage(newSession)
             } else if (session.phase != PagePhase.CLOSING && session.content != target.second) {
@@ -227,14 +249,20 @@ internal object GlassesCoordinator {
         return GlassesTransition(state, effects)
     }
 
-    private fun target(state: GlassesState): Pair<PageMode, PageContent>? {
+    private fun target(state: GlassesState, native: NativeSubtitleStart?, hint: NativeHintStart?): Pair<PageMode, PageContent>? {
         if (state.disconnecting || state.ownership != DisplayOwnership.APP) return null
         return when (val intent = state.intent) {
             DisplayIntent.Idle -> null
             DisplayIntent.BlankPrompt -> PageMode.PROMPT to PageContent("blank", "　", "　")
-            DisplayIntent.PromptStandby -> PageMode.PROMPT to PageContent("standby",
-                state.standby.source.ifBlank { "OpenRayneo" }, state.standby.target.ifBlank { "실시간 힌트 준비됨" })
-            DisplayIntent.Translation -> if (state.mediaCaptionMode)
+            DisplayIntent.PromptStandby -> if (hint != null) PageMode.PROMPT to PageContent("standby", state.standby.source, state.standby.target)
+                else PageMode.PROMPT to PageContent("standby", state.standby.source.ifBlank { "OpenRayneo" }, state.standby.target.ifBlank { "실시간 힌트 준비됨" })
+            DisplayIntent.Translation -> if (native != null) {
+                // Caption UI has a title in source and recognized text in target.
+                // The stock subtitle page needs only actual transcript/translation.
+                if (native.captions) PageMode.PROMPT to PageContent("caption", state.translation.target, final = state.translation.final)
+                else PageMode.PROMPT to PageContent("translation", state.translation.source,
+                    state.translation.target.takeUnless { it == "…" }, state.translation.final)
+            } else if (state.mediaCaptionMode)
                 PageMode.PROMPT to PageContent("media-caption", state.translation.source.ifBlank { "미디어 원문 자막" },
                     state.translation.target.ifBlank { "휴대폰 재생음을 기다립니다" })
             else if (state.captionMode)

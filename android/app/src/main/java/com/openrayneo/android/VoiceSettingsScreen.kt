@@ -50,7 +50,7 @@ internal fun VoiceSettingsScreen(model: AppModel, actions: UiActions) {
                 Text(label)
             }
         }
-        Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 앱 내장 음성 모델로 인식하며 인터넷 연결은 필요하지 않습니다. 아래 안경 ASR과 별도 설정입니다.")
+        Note("AI 화면의 휴대폰 마이크 버튼에 적용됩니다. 기본은 한국어입니다. 아래에서 선택한 호환 내장 ASR을 사용하고, 클라우드 설정이면 언어별 내장 모델을 사용합니다. 최종 인식 결과가 없으면 내장 SenseVoice로 한 번 더 시도합니다. 음성은 저장하거나 외부로 보내지 않습니다.")
         SectionLabel("AI 기본 답변 언어")
         val answerLanguage = KoreanLanguage.answerLanguage(drafts["answerLanguage"].orEmpty())
         KoreanLanguage.answerOptions.forEach { (code, label) ->

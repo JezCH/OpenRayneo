@@ -343,7 +343,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                         FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
                         FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiConfigured)
                     }
-                    if (executeTask) Note("선택 AI로 업무 실행 · 쓰기 및 일부 개인 정보 조회는 승인 필요")
+                    if (executeTask) Note("마이크로 할 일만 말하고 인식 내용을 확인한 뒤 보내세요. 선택 AI로 실행 · 쓰기 및 일부 개인 정보 조회는 승인 필요")
                     else {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
@@ -418,7 +418,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, configure: (St
                     ) {
                         Icon(Icons.Outlined.MicNone, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
+                        Text(if (mobile && executeTask) "업무 음성 입력" else "휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
                         if (mobile) (if (executeTask) "업무 Agent로 보내기" else "도구 없는 AI 대화") else "컴퓨터 Codex로 보내기",

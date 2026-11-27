@@ -123,7 +123,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
         check(ownerAllowed()) { "업무 요청 취소" }
         tasks.values.toList().forEach(::expire)
         tasks.entries.removeAll { it.value.state != "running" && SystemClock.elapsedRealtime() - it.value.startedAt > taskMs }
-        val approval = CompanionTools.requiresReview(name) || (completion != null && name in setOf("memory_reference", "about_you_read", "location_current"))
+        val approval = CompanionTools.requiresReview(name) || (completion != null && name in setOf("memory_reference", "about_you_read", "location_current", "weather_current"))
         val requestId = args.optString("request_id")
         if (CompanionTools.mutates(name)) require(requestId.isNotBlank()) { "쓰기 작업에는 고정 request_id가 필요합니다" }
         if (requestId.isNotBlank()) {
