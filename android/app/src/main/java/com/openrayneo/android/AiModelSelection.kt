@@ -15,6 +15,7 @@ internal object AiModelSelection {
     const val GPT_DEFAULT = "gpt-6.1-terra"
     data class Profile(val id: String, val label: String, val url: String, val model: String, val key: String) {
         val configured get() = runCatching { model.isNotBlank() && MobileModelEndpoint.resolve(url, key).isNotBlank() }.getOrDefault(false)
+        override fun toString() = "Profile($id, $label, $model)"
         fun json() = JSONObject().put("id", id).put("label", label).put("url", url).put("model", model).put("key", key)
     }
     fun selected(config: JSONObject): String = config.optString(KEY).ifBlank { LEGACY }
