@@ -114,9 +114,16 @@ internal class LiveTranslator(
             return
         }
         val language = request.languageHint?.takeUnless { it == "auto" }
-            ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en") }.orEmpty()
+            ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en", "zh", "ja") }.orEmpty()
         val preferred = JSONObject(settings.toString()).put("asrLanguage", language)
         val engine = SpeechRounds.engine(preferred)
+        // The installed multilingual SenseVoice already supports these
+        // classic caption languages. Never route them to the Korean-only
+        // stream or the current Korean/English Nemotron configuration.
+        if (language in setOf("zh", "ja")) {
+            startSpeech(mediaCaptionConfig(language), captions = true, local = false)
+            return
+        }
         if (SpeechRounds.model(preferred) == null || !SpeechRounds.ready(context, preferred) || (engine == "stream" && language != "ko")) {
             preferred.put("asrEngine", when {
                 language == "ko" && LocalModels.zipformer.installed(context) -> "stream"
@@ -317,8 +324,16 @@ internal class LiveTranslator(
         else show(clip(sourceLine, SOURCE_LIMIT), targetLine, sourceFinal && targetLine != "…")
     }
 
+    /** SenseVoice already filters the configured language. The legacy
+     * ko/en noise heuristic must not discard explicitly requested CJK captions. */
+    private fun rejectSpeech(text: String): Boolean {
+        if (mediaSessionId != null) return false
+        if (captionOnly && !wakeActive && SpeechRounds.languageHints(config) in setOf("zh", "ja")) return false
+        return misheard(text)
+    }
+
     private fun interim(token: Int, text: String) {
-        if (token != generation || !active || wakeActive || (mediaSessionId == null && misheard(text))) return
+        if (token != generation || !active || wakeActive || rejectSpeech(text)) return
         heard()
         sourceFinal = false
         sourceLine = text
@@ -331,8 +346,8 @@ internal class LiveTranslator(
         if (token != generation || !active) return
         if (mediaSessionId != null && text.isNotBlank()) { mediaFinalCount++; changed() }
         if (keywordWakeOptions == null) heard()
-        // Neither Korean nor English (typically noise or Korean misread as Chinese): never show or translate it.
-        if (mediaSessionId == null && misheard(text)) return
+        // Preserve the ko/en noise filter except for explicit CJK captions.
+        if (rejectSpeech(text)) return
         wakeWindow?.let { window ->
             val question = window.accept(text, android.os.SystemClock.elapsedRealtime())
             if (question != null) {

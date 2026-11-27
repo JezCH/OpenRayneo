@@ -18,6 +18,8 @@ internal data class NativeSubtitleStart(
         fun language(value: String): String? = when (value) {
             "ko", "ko-KR" -> "ko"
             "en", "en-US", "en-GB" -> "en"
+            "zh", "zh-CN", "zh-TW" -> "zh"
+            "ja", "ja-JP" -> "ja"
             "auto" -> "auto"
             else -> null
         }

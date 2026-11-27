@@ -481,6 +481,10 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 Note(model.service().capabilityStatus)
                 Note(model.service().peerCapabilityStatus)
                 Note(model.service().nativeMenuDiagnostics)
+                TextButton(enabled = s.glasses.link.phase == LinkPhase.FULL,
+                    onClick = { model.service().probeNativeNavigation() }) {
+                    Text("순정 내비 지원 조회 (실험)")
+                }
             }
             Note("최근 연결 종료와 복구 기록입니다. 이전 서비스 종료 기록 누락은 앱 업데이트, 재부팅, 강제 종료 등으로 정상 종료 기록이 남지 않았음을 뜻합니다. 음성·대화·기기 주소는 저장하지 않습니다.")
             TextButton(onClick = {
