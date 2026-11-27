@@ -38,14 +38,31 @@ internal class GlassesDisplay(
         reset()
         validate(next.mode, next.content)
         session = next
-        val id = UUID.randomUUID().toString().replace("-", "")
+        val id = next.nativeSubtitle?.sid ?: next.nativeHint?.sid ?: UUID.randomUUID().toString().replace("-", "")
         sid = id; pending = next.content
+        val incoming = next.nativeSubtitle?.reply() ?: next.nativeHint?.reply()
+        if (incoming != null) {
+            val ownerGeneration = generation
+            schedule(timeout, 8_000)
+            send(protocol(next), 2, incoming) { result ->
+                if (generation != ownerGeneration || sid != id || failed) return@send
+                cancel(timeout)
+                if (result.isFailure) { fail("안경 시작 응답 전송 실패"); return@send }
+                audioAccepted = true; accepted = true
+                report("안경 시작 응답 전송 · 실제 음성/표시 확인 대기")
+                signal(next.id, PageSignal.AudioAwaitingPeer(2))
+                if (generation != ownerGeneration) return@send
+                signal(next.id, PageSignal.Settling)
+                if (generation == ownerGeneration) schedule(settle, 500)
+            }
+            return
+        }
         val body = JSONObject().put("sid", id).put("trigger", 1).put("force", false).put("code", 0)
             .put("settings", JSONObject().put("mode", if (next.mode == PageMode.NAVIGATION) "translation" else "conversation")
                 .put("source_language", "zh-CN").put("target_language", "zh-CN")
                 .put("save_audio", false).put("direction", "ahead"))
         schedule(timeout, 8_000)
-        send(protocol(next.mode), 1, body) { if (sid == id && it.isFailure) fail("표시 시작 전송 실패") }
+        send(protocol(next), 1, body) { if (sid == id && it.isFailure) fail("표시 시작 전송 실패") }
     }
 
     fun update(id: Long, content: PageContent) {
@@ -67,7 +84,7 @@ internal class GlassesDisplay(
         }
         val active = session ?: return
         val receivingGeneration = generation
-        if (frame.protocol != protocol(active.mode) || sid == null || failed) return
+        if (frame.protocol != protocol(active) || sid == null || failed) return
         val message = ProtocolCodec.message(frame.payload)
         val json = message.json?.let(::JSONObject) ?: return
         if (json.optString("sid") != sid) {
@@ -142,13 +159,16 @@ internal class GlassesDisplay(
         val id = sid ?: return
         val active = session ?: return
         pending = null
-        if (content == lastWritten) return
+        if (content == lastWritten || (active.nativeSubtitle != null && content.text.isBlank()) ||
+            (active.nativeHint != null && content.text.isBlank() && content.answer.isNullOrBlank())) return
         writing = true
         val text = (if (active.mode == PageMode.NAVIGATION && navigationFrameSent) "\u3000" else "") + content.text
         val payload = if (active.mode == PageMode.NAVIGATION) NavigationFrame.result(id, text)
+            else if (active.nativeSubtitle != null) JSONObject().put("sid", id).put("mode", 3).put("status", if (content.final) 1 else 0)
+                .put("content", JSONObject().put("source_transcript", text).apply { if (!active.nativeSubtitle.captions && !content.answer.isNullOrBlank()) put("target_translation", content.answer) })
             else JSONObject().put("sid", id).put("mode", 4).put("status", 1).put("content", JSONObject()
                 .put("source_transcript", text).put("target_translation", content.answer.orEmpty()).put("keyword_info", JSONObject.NULL).put("label", 0))
-        send(protocol(active.mode), 5, payload) { result ->
+        send(protocol(active), 5, payload) { result ->
             if (sid != id) return@send
             writing = false
             if (result.isSuccess) {
@@ -165,8 +185,8 @@ internal class GlassesDisplay(
         if (active == null || active.id != token || id == null) { signal(token, PageSignal.Closed()); return }
         reset()
         val closingGeneration = generation
-        send(protocol(active.mode), 3, JSONObject().put("sid", id)
-            .put("reason_code", if (active.mode == PageMode.NAVIGATION) 10 else 2).put("text", "")) { result ->
+        send(protocol(active), 3, JSONObject().put("sid", id)
+            .put("reason_code", if (protocol(active) == 0x13) 10 else 2).put("text", "")) { result ->
             if (generation == closingGeneration) signal(token, PageSignal.Closed(result.exceptionOrNull()?.let { "닫기 명령 전송 실패: ${it.message}" }))
         }
     }
@@ -183,7 +203,7 @@ internal class GlassesDisplay(
         navigationFrameSent = false; pending = null; lastWritten = null
         recentAudioSequences.clear(); audioReported = false; unmatchedAudioReported = false
     }
-    private fun protocol(mode: PageMode) = if (mode == PageMode.NAVIGATION) 0x13 else 0x17
+    private fun protocol(session: PageSession) = if (session.nativeSubtitle != null || session.mode == PageMode.NAVIGATION) 0x13 else 0x17
     private fun validate(mode: PageMode, content: PageContent) {
         if (mode == PageMode.NAVIGATION) require(NavigationFrame.isGrid(content.text)) { "내비게이션 화면은 20열 × 5행을 유지해야 함" }
     }

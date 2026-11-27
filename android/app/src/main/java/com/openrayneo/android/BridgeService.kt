@@ -30,6 +30,9 @@ internal class BridgeService : Service() {
     private lateinit var supervisor: ConnectionSupervisor
     val connection get() = supervisor.transport
     private lateinit var display: GlassesDisplay
+    private val nativeSubtitleRequests = LinkedHashSet<String>()
+    private val nativeHintRequests = LinkedHashSet<String>()
+    private var pendingNativeHint: NativeHintStart? = null
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
     val navigation get() = NavigationFeed
@@ -341,7 +344,7 @@ internal class BridgeService : Service() {
                     if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} ${m.json.orEmpty().take(160)}")
                 }
                 voiceTransport.receive(frame)
-                display.receive(frame, source)
+                if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
             }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
@@ -403,7 +406,7 @@ internal class BridgeService : Service() {
         }
         voiceTransport.bargeIn = { deviceSettings.state.settings.optJSONObject("voiceAssistantConfig")?.deviceFlag("workMode") == true &&
             settings.read().optBoolean("nativeAutoAnswer") && conversations.state.running && conversations.state.source == ConversationSource.NATIVE }
-        translator = LiveTranslator(this, main, { source, target -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target))) }, ::notifyUI) {
+        translator = LiveTranslator(this, main, { source, target, final -> dispatch(GlassesEvent.TranslationText(TranslationView(source, target, final))) }, ::notifyUI) {
             if (mediaCaptionState.busy) stopMediaCaption(translator.status)
             else if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
         }
@@ -496,6 +499,7 @@ internal class BridgeService : Service() {
                 state = transition.state
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
+                    pendingNativeHint = null
                     hostVisibilityRevision++
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
@@ -525,10 +529,12 @@ internal class BridgeService : Service() {
                     requests.disconnected(); deviceSettings.disconnected(); content.disconnected(); teleprompter.disconnected()
                 }
                 if (previous.link.phase != LinkPhase.FULL && state.link.phase == LinkPhase.FULL) {
+                    nativeSubtitleRequests.clear()
+                    nativeHintRequests.clear()
                     nativeWakeStatus = "현재 연결에서 아직 안경 깨우기 이벤트 없음"
                     capabilityStatus = "현재 연결의 SPP 협상 요청 미수신"
-                    queryPeerCapabilities()
                     syncHostVisibility()
+                    queryPeerCapabilities()
                     content.connected()
                     runCatching { deviceSettings.refresh(initialize = true) {
                         if (reconnectCapture.pending) tryResumeAlwaysOn()
@@ -1156,7 +1162,23 @@ internal class BridgeService : Service() {
             captureStartedAt = SystemClock.elapsedRealtime()
             captureTimingSource = source; firstLiveFinalMs = null
             when (source) {
-                ConversationSource.REALTIME -> { conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby) }
+                ConversationSource.REALTIME -> {
+                    val native = pendingNativeHint
+                    if (native != null) {
+                        check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
+                            audioOwner == null && deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) {
+                            "안경 힌트 시작 전 화면·마이크 상태가 변경됨"
+                        }
+                        pendingNativeHint = null
+                        conversationOwnsDisplay = true
+                        dispatch(GlassesEvent.StartNativeHint(native))
+                        check(state.session?.nativeHint?.sid == native.sid) { "안경 힌트 세션 시작 실패" }
+                        nativeHintRequests.add(native.sid)
+                        if (nativeHintRequests.size > 64) nativeHintRequests.remove(nativeHintRequests.first())
+                    } else {
+                        conversationOwnsDisplay = true; dispatch(GlassesEvent.OpenStandby)
+                    }
+                }
                 ConversationSource.NATIVE, ConversationSource.ALWAYS_ON -> {
                     conversationOwnsDisplay = false
                     dispatch(GlassesEvent.PauseDisplay); voiceAudio.start(1); voiceTransport.start(source)
@@ -1174,6 +1196,7 @@ internal class BridgeService : Service() {
             agent.harness.cancel("route"); agent.harness.cancelPassiveHints()
             if (source == ConversationSource.NATIVE) cancelNativeChat()
             if (source == ConversationSource.REALTIME) {
+                pendingNativeHint = null
                 if (conversationOwnsDisplay) dispatch(GlassesEvent.PauseDisplay)
                 conversationOwnsDisplay = false
             } else { voiceAudio.stop(); voiceTransport.stop() }
@@ -1645,6 +1668,84 @@ internal class BridgeService : Service() {
     fun pausePrompt() { stopConversation(); dispatch(GlassesEvent.PauseDisplay) }
     fun startCaption() = startCaptionMode(false, false)
 
+    /** A native menu request is a bounded foreground feature session, never an automatic reconnect recording. */
+    private fun handleNativeMenuFrame(frame: ProtocolCodec.Frame, source: String): Boolean {
+        if (frame.protocol !in setOf(0x13, 0x17, 0x20) || frame.acknowledgement) return false
+        val message = ProtocolCodec.message(frame.payload)
+        if (message.type != 1) return false
+        if (frame.protocol == 0x17) return handleNativeHintStart(frame, source)
+        if (frame.protocol != 0x13) {
+            onLog("안경 기본 메뉴 시작 요청: business=${frame.protocol.toString(16)} type=1 · $source · 전용 처리 미구현")
+            return false
+        }
+        val request = NativeSubtitleStart.parse(frame)
+        if (request == null) { onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
+        if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) return true
+        var starting = false
+        runCatching {
+            check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "안경 연결 준비 중" }
+            requireNativeRecorderFree(); requirePrompterFree(); requireCaptureFree()
+            check(state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled && audioOwner == null &&
+                !reconnectCapture.pending && !migration.state.busy && wakeRequest == null && !agent.running && !codex.running &&
+                !speechOutput.speaking && !translator.mediaTranslation.state.preparing) { "다른 화면·기록·AI 작업 진행 중" }
+            check(deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) { "안경 마이크 허용 상태 미확인" }
+            val config = settings.read()
+            cancelVoiceAlwaysOnStart(); cancelAlwaysOnRecovery()
+            starting = true
+            translator.startNativeSubtitle(config, request)
+            dispatch(GlassesEvent.StartNativeSubtitle(request))
+            check(state.session?.nativeSubtitle?.sid == request.sid && translator.active) { "안경 자막 세션 시작 실패" }
+            nativeSubtitleRequests.add(request.sid)
+            if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
+        }.onFailure { error ->
+            if (state.session?.nativeSubtitle?.sid == request.sid) {
+                translator.stop(); dispatch(GlassesEvent.PauseDisplay)
+            } else if (starting && translator.active) translator.stop()
+            onLog("안경 자막 시작 보류: " + (error.message ?: "준비 상태 확인 필요"))
+        }
+        return true
+    }
+
+    /** Stock hint shares type 1/2/3/4/5 with subtitle. Reuse the existing realtime
+     * capture/selected-model path, but reply only after the worker is prepared.
+     * The device SID is not replaced with a second phone-originated start. */
+    private fun handleNativeHintStart(frame: ProtocolCodec.Frame, source: String): Boolean {
+        val request = NativeHintStart.parse(frame)
+        if (request == null) { onLog("안경 AI 힌트 시작 · 지원 범위 외 형식 · $source"); return true }
+        if (pendingNativeHint?.sid == request.sid || state.session?.nativeHint?.sid == request.sid ||
+            request.sid in nativeHintRequests) return true
+        var starting = false
+        runCatching {
+            check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting) { "안경 연결 준비 중" }
+            requireCaptureFree(); requirePrompterFree()
+            check(pendingNativeHint == null && state.intent == DisplayIntent.Idle && state.session == null &&
+                !state.navigation.enabled && audioOwner == null && !reconnectCapture.pending && !migration.state.busy &&
+                wakeRequest == null && !agent.running && !codex.running && !speechOutput.speaking &&
+                !translator.mediaTranslation.state.preparing) { "다른 화면·기록·AI 작업 진행 중" }
+            check(deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true) { "안경 마이크 허용 상태 미확인" }
+            check(aiReady()) { "선택한 AI 모델 연결을 확인하세요" }
+            check(focusPolicy.allows(FocusPolicy.Output.PASSIVE_HINT)) { "집중 모드에서 AI 힌트가 제한됨" }
+            // Same recording/retention and model settings as the explicit phone hint feature.
+            // Do not change retention or enable AlwaysOn/reconnect recovery here.
+            check(SpeechRounds.ready(this, settings.read())) { "음성 인식 모델을 먼저 준비하세요" }
+            pendingNativeHint = request
+            starting = true
+            startConversation(ConversationMode.DAILY, ConversationSource.REALTIME)
+            main.postDelayed({
+                if (pendingNativeHint === request) {
+                    pendingNativeHint = null
+                    if (conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
+                    onLog("안경 AI 힌트 준비 시간 초과 · 새 세션으로 자동 전환하지 않음")
+                }
+            }, 3_000)
+        }.onFailure { error ->
+            if (pendingNativeHint === request) pendingNativeHint = null
+            if (starting && conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
+            onLog("안경 AI 힌트 시작 보류: " + (error.message ?: "준비 상태 확인 필요"))
+        }
+        return true
+    }
+
     fun prepareMediaTranslation(language: String) {
         check(!destroyed && !mediaCaptionState.busy && !translator.active &&
             !conversations.state.running && !conversations.state.stopping &&
@@ -2026,6 +2127,7 @@ internal class BridgeService : Service() {
         translator.stop(); if (state.intent == DisplayIntent.Translation) dispatch(GlassesEvent.PauseDisplay)
     }
     fun openStandby() {
+        check(pendingNativeHint == null) { "안경 AI 힌트 시작 준비 중" }
         requirePrompterFree()
         check(!translator.active && !voiceTransport.nativeActive && voiceTransport.source == null &&
             (!conversations.state.running || (conversations.state.source == ConversationSource.REALTIME && !conversations.state.stopping))) {
@@ -2035,6 +2137,7 @@ internal class BridgeService : Service() {
     }
     /** One-tap realtime hint: open the window and start the realtime dual-mic record that actually processes speech. */
     fun startRealtimeHint() {
+        check(pendingNativeHint == null) { "안경 AI 힌트 시작 준비 중" }
         requirePrompterFree()
         check(!translator.active && !mediaCaptionState.busy && !voiceTransport.nativeActive && voiceTransport.source == null) { "다른 음성 기능을 먼저 종료하세요" }
         check(state.link.phase == LinkPhase.FULL && !state.disconnecting) { "먼저 안경을 완전히 연결하세요" }
