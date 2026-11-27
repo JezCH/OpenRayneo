@@ -42,7 +42,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
             Note(gpt?.let { it.model + if (selected == it.id) " · 선택됨" else " · 저장됨" }
                 ?: "첫 연결에 사용자 API 인증 필요")
             Note("OpenAI API 연결입니다. ChatGPT 앱 로그인이나 구독이 자동으로 연결되지 않으며 API 이용료가 발생할 수 있습니다.")
-            ToolButton(onClick = { if (gpt?.configured == true) pending = gpt else edit(AiModelSelection.GPT) },
+            ToolButton(onClick = { if (gpt?.configured == true) model.selectAiModel(gpt.id) else edit(AiModelSelection.GPT) },
                 enabled = model.aiSwitchAllowed && selected != AiModelSelection.GPT) { Text(if (selected == AiModelSelection.GPT) "선택됨" else "GPT 선택") }
             if (gpt != null) TextButton(onClick = { edit(gpt.id) }, enabled = model.aiSwitchAllowed) { Text("GPT 연결 설정") }
         }
@@ -54,7 +54,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
             ContentCard {
                 Text(profile.label, style = MaterialTheme.typography.titleMedium)
                 Note(profile.model + if (selected == profile.id) " · 선택됨" else " · 저장됨")
-                ToolButton(onClick = { pending = profile }, enabled = model.aiSwitchAllowed && profile.configured && selected != profile.id) {
+                ToolButton(onClick = { model.selectAiModel(profile.id) }, enabled = model.aiSwitchAllowed && profile.configured && selected != profile.id) {
                     Text(if (selected == profile.id) "선택됨" else "이 모델 선택")
                 }
                 TextButton(onClick = { edit(profile.id) }, enabled = model.aiSwitchAllowed) { Text("연결 설정") }
