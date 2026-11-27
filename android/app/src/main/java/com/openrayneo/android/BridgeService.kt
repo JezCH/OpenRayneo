@@ -531,6 +531,9 @@ internal class BridgeService : Service() {
                     content.connected()
                     runCatching { deviceSettings.refresh(initialize = true) {
                         if (reconnectCapture.pending) tryResumeAlwaysOn()
+                        // Core readback and capture recovery take precedence over
+                        // optional weather/network work on the request executor.
+                        content.initialSyncFinished()
                     } }.onFailure { onLog("연결 초기화 시작 실패") }
                 }
                 if (currentEvent is GlassesEvent.ExternalPage) navigationVoiceHandoff = null
