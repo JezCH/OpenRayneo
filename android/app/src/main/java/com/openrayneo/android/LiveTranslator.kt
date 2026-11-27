@@ -47,7 +47,7 @@ internal class LiveTranslator(
     private var mediaRenderedSequence = 0L
     var mediaFinalCount = 0L; private set
 
-    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+    private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     private val translations = Executors.newSingleThreadExecutor()
     private var config = JSONObject()
@@ -385,26 +385,20 @@ internal class LiveTranslator(
 
     private fun translate(token: Int, settings: JSONObject, text: String, from: String, to: String, context: List<Pair<String, String>>): String {
         val profile = checkNotNull(AiModelSelection.endpoint(settings)) { "선택 모델 연결 필요" }
-        val endpoint = MobileModelEndpoint.resolve(profile.url, profile.key)
         val previous = if (context.isEmpty()) "" else "\nRecent conversation for context only (do not translate it again):\n" +
             context.joinToString("\n") { (source, target) -> "- $source => $target" }
         val system = "You are a live interpreter between Korean and English shown on smart glasses. " +
             "Translate the user's utterance from $from to $to. Output only the translation in natural spoken $to, " +
             "with no quotes, notes, romanization or explanations. Keep names and numbers accurate.$previous"
-        val body = JSONObject().put("model", profile.model).put("stream", false)
-            .put("messages", JSONArray()
+        val messages = JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", text)))
-        val request = Request.Builder().url(endpoint).apply {
-            profile.key.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
-        }.post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                .put(JSONObject().put("role", "user").put("content", text))
+        val request = SelectedModelTransport.request(profile, messages)
         val current = http.newCall(request); call = current
         // stop() may have run between the generation check and assigning the call.
         if (token != generation) current.cancel()
         return current.execute().use { response ->
-            check(response.isSuccessful) { "HTTP ${response.code}" }
-            JSONObject(checkNotNull(response.body).string()).getJSONArray("choices").getJSONObject(0)
-                .getJSONObject("message").getString("content").trim().trim('"').ifBlank { error("빈 번역 결과") }
+            SelectedModelTransport.read(response).text.trim('"').ifBlank { error("빈 번역 결과") }
         }
     }
 
