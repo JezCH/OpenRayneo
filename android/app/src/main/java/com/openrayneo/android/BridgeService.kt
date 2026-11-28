@@ -817,7 +817,11 @@ internal class BridgeService : Service() {
         }
         if (message.type !in setOf(0x31, 0x40)) return
         val expected = pendingNavProbe ?: return
-        if (expected.sequence != message.sequence) return
+        diagnosticEvent("navigation-reply", NativeNavigationCapabilities.replyEvidence(message, expected.requestId, expected.sequence))
+        if (!NativeNavigationCapabilities.matchesPending(message, expected.requestId, expected.sequence)) {
+            diagnosticEvent("navigation-reply", "rejected: request correlation")
+            return
+        }
         if (message.type == 0x40) {
             val code = NativeNavigationCapabilities.queryError(message, expected.requestId) ?: return
             pendingNavProbe = null
@@ -827,12 +831,16 @@ internal class BridgeService : Service() {
                 else -> "순정 내비 조회 거부 · 오류($code)"
             }
         } else {
-            val reply = NativeNavigationCapabilities.correlatedReply(message, expected.requestId) ?: return
+            val reply = NativeNavigationCapabilities.correlatedReply(message, expected.requestId) ?: run {
+                diagnosticEvent("navigation-reply", "rejected: envelope or request ID")
+                return
+            }
             pendingNavProbe = null
             nativeNavQuerySettled = true
             val code = reply.opt("code")
             val actual = NativeNavigationCapabilities.parse(message, expected.requestId)
             nativeNavCapabilities = actual
+            diagnosticEvent("navigation-reply", "accepted envelope; supportedSchema=${actual != null} raster=${actual?.raster != null}")
             nativeNavCapabilityStatus = when {
                 code == 17 -> "순정 내비 조회 거부 · 지원하지 않는 프로토콜(17)"
                 code is Int && code != 0 -> "순정 내비 조회 거부 · 오류($code)"
@@ -2451,6 +2459,35 @@ internal class BridgeService : Service() {
             }
             return true
         }
+        // Explicit read-only device questions use live app evidence even with direct AI.
+        val statusQuestion = NativeStatusQuestion.parse(request.text, request.source, request.backfill)
+        if (statusQuestion != null) {
+            request.retainInAgentContext = false
+            val active = conversations.state
+            val wake = request.wakeId
+            val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
+            val unmixed = request.hintContext?.optJSONArray("segments")?.let { rows ->
+                rows.length() > 0 && (0 until rows.length()).all { rows.optJSONObject(it)?.optBoolean("mixed") == false }
+            } == true
+            if (fresh && unmixed && wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                active.source == ConversationSource.NATIVE && request.recordId != null &&
+                active.activeRecord?.id == request.recordId && !destroyed && foreground &&
+                state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                diagnosticEvent("ai-tool", "local-read=$statusQuestion")
+                val answer = when (statusQuestion) {
+                    NativeStatusQuestion.Kind.FIRMWARE -> deviceSettings.state.initialization.firmwareVersion
+                        ?.takeIf { it.matches(Regex("[0-9A-Za-z._-]{1,64}")) }
+                        ?.let { "현재 연결된 안경 펌웨어는 $it 입니다." }
+                        ?: "현재 연결에서 펌웨어 버전 회신을 확인하지 못했습니다."
+                    NativeStatusQuestion.Kind.NAVIGATION -> "현재 안경 연결 정상. " + nativeNavCapabilityStatus +
+                        if (nativeNavCapabilities?.raster != null) " · " + nativeStartTestStatus else ""
+                }
+                input.put("derivedId", java.util.UUID.randomUUID().toString())
+                deliverExternalVoice(request.text, answer, input)
+            } else diagnosticEvent("ai-tool", "local-read=$statusQuestion rejected: stale or mixed wake")
+            return true
+        }
         // Exact local commands are consumed even if their native wake has expired.
         // Check permission again when the serialized operation actually sends each wire command.
         val localCommand = LocalDeviceQuery.parse(request.text, request.source, request.backfill)
@@ -2559,6 +2596,7 @@ internal class BridgeService : Service() {
             segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
         } == true
         val routeTools = unmixed && AiModelSelection.legacy(cfg)
+        diagnosticEvent("ai-routing", "explicit wake direct=${!AiModelSelection.legacy(cfg)} unmixed=$unmixed agentTools=$routeTools")
         // Do not persist automatic context or ordinary chat history in a task.
         // Only the original current utterance can become an execution request.
         val taskInput = if (routeTools) JSONObject(input.toString()) else null
@@ -3708,6 +3746,7 @@ internal class BridgeService : Service() {
             val c = conversations.state
             val a = audioLevels
             val page = state.session
+            diagnosticEvent("firmware", deviceSettings.state.initialization.firmwareVersion?.takeIf { it.matches(Regex("[0-9A-Za-z._-]{1,64}")) } ?: "current-link version unconfirmed", true)
             diagnosticEvent("connection", "link=${state.link.phase} disconnecting=${state.disconnecting} foreground=$foreground readback=${deviceSettings.state.readback} mic=${deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")} ", true)
             diagnosticEvent("link-negotiation", connection.linkEvidence, true)
             diagnosticEvent("host-capability", capabilityStatus, true)

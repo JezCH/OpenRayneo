@@ -48,9 +48,25 @@ internal data class NativeNavigationCapabilities(
         }
 
         fun correlatedReply(message: ProtocolCodec.Message, requestId: String): JSONObject? {
-            if (message.version != 1 || message.type != 0x31 || message.mode != 1L) return null
+            // Actual v1449 / stock peer trace: 0x31 mode=2 version=1 code=0.
+            if (message.version != 1 || message.type != 0x31 || message.mode !in setOf(1L, 2L)) return null
             val body = readBody(message) ?: return null
             return body.takeIf { it.opt("request_id") == requestId }
+        }
+
+        /** Mode 2 is the observed peer response envelope. The unique echoed
+         * request ID remains mandatory, even if firmware does not echo PbMsg.seq.
+         * Old mode 1 and uncorrelated error messages keep the sequence guard. */
+        fun matchesPending(message: ProtocolCodec.Message, requestId: String, sequence: Long): Boolean =
+            if (message.type == 0x31 && message.mode == 2L) correlatedReply(message, requestId) != null
+            else message.sequence == sequence
+
+        fun replyEvidence(message: ProtocolCodec.Message, requestId: String, sequence: Long): String {
+            val body = readBody(message)
+            val match = body?.opt("request_id") == requestId
+            val engineCount = body?.optJSONArray("supported_engine_profiles")?.length() ?: -1
+            val mapCount = body?.optJSONArray("supported_map_profiles")?.length() ?: -1
+            return "type=${message.type} mode=${message.mode} version=${message.version} seqMatch=${message.sequence == sequence} idPresent=${body?.has("request_id") == true} idMatch=$match engineCount=$engineCount mapCount=$mapCount guidance=${body?.opt("guidance_supported") == true} maps=${body?.opt("map_supported") == true}"
         }
 
         fun queryError(message: ProtocolCodec.Message, requestId: String): Int? {

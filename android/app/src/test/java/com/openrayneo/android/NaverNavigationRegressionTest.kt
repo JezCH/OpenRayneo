@@ -596,4 +596,26 @@ class NaverNavigationRegressionTest {
         assertNull(session.peerEndReason(end(sid,8)))
     }
 
+    @Test fun observedModeTwoCapabilityReplyRequiresExactRequestId() {
+        val id = "current-query"
+        val json = org.json.JSONObject().put("request_id",id).put("code",0).put("protocol_version",1)
+            .put("supported_engine_profiles",org.json.JSONArray().put("PHONE_GUIDANCE_V1"))
+            .put("guidance_supported",true).put("map_supported",false)
+        val reply = ProtocolCodec.Message(0x31,json.toString(),null,1,0,2)
+        assertTrue(NativeNavigationCapabilities.matchesPending(reply,id,19))
+        assertNotNull(NativeNavigationCapabilities.parse(reply,id))
+        assertFalse(NativeNavigationCapabilities.matchesPending(reply,"old-query",19))
+        assertFalse(NativeNavigationCapabilities.matchesPending(reply.copy(mode=1),id,19))
+        assertNull(NativeNavigationCapabilities.parse(reply.copy(mode=0),id))
+        assertNull(NativeNavigationCapabilities.parse(reply.copy(audio=byteArrayOf(1)),id))
+        assertNull(NativeNavigationCapabilities.parse(reply.copy(json=json.put("code",17).toString()),id))
+    }
+
+    @Test fun observedExplicitStatusQuestionsStayLocalAndReadOnly() {
+        assertEquals(NativeStatusQuestion.Kind.NAVIGATION, NativeStatusQuestion.parse("아니네비연동상태를파악해봐",ConversationSource.NATIVE,false))
+        assertEquals(NativeStatusQuestion.Kind.FIRMWARE, NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.NATIVE,false))
+        assertNull(NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.REALTIME,false))
+        assertNull(NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.NATIVE,true))
+        assertNull(NativeStatusQuestion.parse("펌웨어 업데이트해줘",ConversationSource.NATIVE,false))
+    }
 }
