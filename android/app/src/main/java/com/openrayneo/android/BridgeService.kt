@@ -717,7 +717,9 @@ internal class BridgeService : Service() {
         val mic = when (deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")) {
             true -> "허용"; false -> "꺼짐"; null -> "미확인"
         }
-        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus\n$nativePresetStatus"
+        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus\n휴대폰 순정 내비 공급: " +
+            (if (hasLiveNativeHostSource()) "실제 경로 준비" else "미연동 · 기능 버전 경고 가능") +
+            "\n$capabilityStatus\n$nativePresetStatus"
     }
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
@@ -757,6 +759,10 @@ internal class BridgeService : Service() {
     var capabilityStatus = "현재 연결의 협상 요청 미수신"; private set
     private var capabilitySequence = 0x6900
     private var capabilityRevision = 0L
+    // Current-link last successful host capability write, not a peer ACK.
+    private var nativeHostCapabilitySent = false
+    private var nativeHostCapabilityPending = false
+    private var nativeHostCapabilityRetryAt = 0L
     private var peerCapabilityRevision = 0L
     var peerCapabilityStatus = "현재 연결의 기능 조회 대기"; private set
     private fun queryPeerCapabilities() {
@@ -802,18 +808,52 @@ internal class BridgeService : Service() {
             return
         }
         if (kind != 1) return
+        sendNativeHostCapability(reply = true, supported = hasLiveNativeHostSource())
+    }
+    /** A complete real route source is the only implemented phone navigation
+     * service. A successful 0x31, GPX preview, diagnostic probe or notification
+     * alone is not a provider. Keep the capability through a real session;
+     * withdraw after close or stale/unavailable prepared source. */
+    private fun hasLiveNativeHostSource(): Boolean {
+        if (nativeNavCapabilities?.raster == null) return false
+        if (nativeStartProbe?.live != null) return true
+        val route = preparedNativeRoute ?: return false
+        if (!liveNativeSourceMatches(route)) return false
+        val observation = route.observation() ?: return false
+        return observation.guidance.freshAt(SystemClock.elapsedRealtime()) &&
+            !observation.guidance.arrival && observation.miniPng != null && observation.overviewPng != null
+    }
+    private fun syncNativeHostCapability() {
+        if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
+            nativeHostCapabilityPending || SystemClock.elapsedRealtime() < nativeHostCapabilityRetryAt) return
+        val supported = hasLiveNativeHostSource()
+        if (supported != nativeHostCapabilitySent)
+            sendNativeHostCapability(reply = false, supported = supported)
+    }
+    private fun sendNativeHostCapability(reply: Boolean, supported: Boolean) {
         val revision = ++capabilityRevision
-        capabilityStatus = "안경 협상 요청 수신 · 지원 목록 응답 중"
-        runCatching {
-            connection.sendFrame(ProtocolCodec.emptyCapabilityReply(capabilitySequence++ and 65535)) { result ->
-                // Connection transport invalidates completions after disconnect. A
-                // visibility change alone must not turn a capability reply into success.
-                if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
-                    revision != capabilityRevision) return@sendFrame
-                capabilityStatus = if (result.isSuccess) "빈 지원 목록 응답 전송됨 · 적용 미확인" else "협상 응답 전송 실패"
-                notifyUI()
+        nativeHostCapabilityPending = true
+        capabilityStatus = if (supported) "실제 경로 공급 확인 · 순정 내비 지원 목록 전송 중"
+            else "실제 경로 공급 미확인 · 빈 지원 목록 전송 중"
+        fun finish(success: Boolean) {
+            if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
+                revision != capabilityRevision) return
+            nativeHostCapabilityPending = false
+            if (success) {
+                nativeHostCapabilitySent = supported
+                nativeHostCapabilityRetryAt = 0L
+                capabilityStatus = if (supported) "app.navigation.main 1.0.0.0 전송 · 안경 적용 미확인"
+                    else "실제 경로 공급 미확인 · 빈 지원 목록 전송 · 안경 적용 미확인"
+            } else {
+                nativeHostCapabilityRetryAt = SystemClock.elapsedRealtime() + 5_000L
+                capabilityStatus = "휴대폰 기능 협상 전송 실패"
             }
-        }.onFailure { capabilityStatus = "협상 응답 전송 실패" }
+            notifyUI()
+        }
+        runCatching {
+            connection.sendFrame(ProtocolCodec.navigationHostCapabilities(capabilitySequence++ and 65535,
+                reply, supported)) { result -> finish(result.isSuccess) }
+        }.onFailure { finish(false) }
         notifyUI()
     }
     fun setHostVisible(visible: Boolean) {
@@ -1001,6 +1041,9 @@ internal class BridgeService : Service() {
             pollNavigationSwitch()
             pollVoiceNavigation()
             pumpNativeNavigation()
+            // Reflect actual source availability on the stock reciprocal
+            // feature registry, not merely the peer's navigation profile.
+            syncNativeHostCapability()
             pollNavigationVoiceHandoff()
             pollEndedNavigation()
             // A missed read-only negotiation gets at most one correlated
@@ -1255,6 +1298,9 @@ internal class BridgeService : Service() {
                     hostVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     recordingVisibilityStatus = "연결 끊김 · 이전 전송 무효"
                     capabilityRevision++
+                    nativeHostCapabilitySent = false
+                    nativeHostCapabilityPending = false
+                    nativeHostCapabilityRetryAt = 0L
                     peerCapabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
                     peerCapabilityStatus = "연결 끊김 · 이전 조회 무효"

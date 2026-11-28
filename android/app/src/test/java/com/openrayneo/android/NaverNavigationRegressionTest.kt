@@ -5,6 +5,30 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NaverNavigationRegressionTest {
+    @Test fun reciprocalNavigationCapabilityUsesExactHostIdAndWithdrawsWhenUnavailable() {
+        fun decode(reply: Boolean, supported: Boolean): org.json.JSONObject {
+            val frame = ProtocolCodec.StreamDecoder().append(
+                ProtocolCodec.navigationHostCapabilities(0x6901, reply, supported)).single()
+            assertEquals(0x06, frame.protocol)
+            return org.json.JSONObject(frame.payload.toString(Charsets.UTF_8))
+        }
+        val available = decode(true, true)
+        assertEquals(2, available.getInt("type"))
+        assertEquals("OK", available.getString("ret"))
+        val item = available.getJSONArray("capabilities").getJSONArray(0)
+        assertEquals("app.navigation.main", item.getString(0))
+        assertEquals("1.0.0.0", item.getString(1))
+        val unavailable = decode(true, false)
+        assertEquals(0, unavailable.getJSONArray("capabilities").length())
+        val change = decode(false, true)
+        assertEquals(3, change.getInt("type"))
+        assertFalse(change.has("ret"))
+        assertEquals(1, change.getJSONArray("capabilities").length())
+        val withdrawn = decode(false, false)
+        assertEquals(3, withdrawn.getInt("type"))
+        assertEquals(0, withdrawn.getJSONArray("capabilities").length())
+    }
+
     @Test fun explicitCommandsAndNonCommands() {
         val c = NaverVoiceCommand
         val expected = mapOf(
