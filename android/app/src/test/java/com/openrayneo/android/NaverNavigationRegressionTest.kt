@@ -570,6 +570,20 @@ class NaverNavigationRegressionTest {
             NaverWalkingCourse.Course(listOf(points[0],points[1],points[0])),
             emptyList(),null,null)
         assertNull(OfflineRouteProgress.match(crossing,fix,1200L))
+        // A route crossing with a unique approach: preserve only a physically
+        // reachable branch from the previous actual fix. A stale/wrong-route
+        // anchor must not break the original ambiguity rule.
+        val crossingPoint=pt(37.001,127.001)
+        val loopRoute=OfflineWalkingRoute.Route(NaverWalkingCourse.Course(listOf(
+            pt(37.0,127.001),crossingPoint,pt(37.002,127.001),
+            pt(37.002,127.002),pt(37.001,127.002),crossingPoint,pt(37.001,127.0))),
+            emptyList(),null,null)
+        val approach=OfflineRouteProgress.Fix(pt(37.0009,127.001),3.0,5000L)
+        val atCrossing=approach.copy(point=crossingPoint,observedAtMs=7000L)
+        val anchor=checkNotNull(OfflineRouteProgress.assess(loopRoute,approach,5100L).anchor)
+        assertNull(OfflineRouteProgress.assess(loopRoute,atCrossing,7100L).progress)
+        assertNotNull(OfflineRouteProgress.assess(loopRoute,atCrossing,7100L,anchor).progress)
+        assertNull(OfflineRouteProgress.assess(loopRoute,atCrossing.copy(observedAtMs=11000L),11100L,anchor).progress)
         val noEstimate = OfflineWalkingRoute.Route(route.course,emptyList(),null,null)
         assertNull(requireNotNull(OfflineRouteProgress.match(noEstimate,fix,1200L)).remainingEstimateSeconds)
     }

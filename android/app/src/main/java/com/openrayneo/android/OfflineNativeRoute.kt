@@ -122,6 +122,7 @@ internal class OfflineNativeRoute(
     private var busy = false
     private var latest: OfflineRouteProgress.Fix? = null
     private var current: NativeLiveNavigation.Observation? = null
+    private var progressAnchor: OfflineRouteProgress.Anchor? = null
     private var revision = 0L
     private var lastSeenAt = -1L
     private var terminal = false
@@ -134,6 +135,7 @@ internal class OfflineNativeRoute(
                         diagnostic("gps-fix-invalid-or-inaccurate")
                         ++revision
                         terminalTracker.reset()
+                        progressAnchor = null
                         latest = null
                         current = null
                         changed()
@@ -154,11 +156,12 @@ internal class OfflineNativeRoute(
         if (closed || terminal || busy) return
         val fix = latest ?: return
         val ticket = revision
+        val previous = progressAnchor
         latest = null
         busy = true
         worker.execute {
             val result = runCatching {
-                val assessment = OfflineRouteProgress.assess(course, fix, SystemClock.elapsedRealtime())
+                val assessment = OfflineRouteProgress.assess(course, fix, SystemClock.elapsedRealtime(), previous)
                 diagnostic(if (assessment.progress != null) "gps-route-matched" else if (assessment.confidentlyOffRoute) "gps-off-route-candidate" else "gps-route-match-unavailable")
                 val guidance = assessment.progress?.let { snapshot(it, wire, fix.speedMpsX100) }
                 if (assessment.progress != null && guidance == null) diagnostic("guidance-encoding-rejected")
@@ -176,6 +179,9 @@ internal class OfflineNativeRoute(
                 if (ticket == revision) {
                     val now = SystemClock.elapsedRealtime()
                     val assessment = result?.first ?: OfflineRouteProgress.Assessment(null)
+                    if (assessment.anchor != null && fix.observedAtMs <= now &&
+                        now-fix.observedAtMs < NativePhoneGuidance.VALID_FOR_MS) progressAnchor = assessment.anchor
+                    else if (assessment.confidentlyOffRoute) progressAnchor = null
                     val decision = terminalTracker.observe(assessment, fix.observedAtMs, now)
                     current = when (decision) {
                         OfflineRouteProgress.Terminal.ARRIVED -> {
@@ -213,6 +219,7 @@ internal class OfflineNativeRoute(
         ++revision
         latest = null
         current = null
+        progressAnchor = null
         runCatching { watch?.close() }
         watch = null
         worker.shutdownNow()

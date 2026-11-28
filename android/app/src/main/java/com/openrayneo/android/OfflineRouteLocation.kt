@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
-import android.os.CancellationSignal
 import android.os.SystemClock
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -46,16 +45,27 @@ internal object OfflineRouteLocation {
         if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) return null
         val manager=context.getSystemService(LocationManager::class.java) ?: return null
         if(!manager.isLocationEnabled || !manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) return null
-        val cancel=CancellationSignal()
-        val received=AtomicReference<Location?>()
+        val received=AtomicReference<OfflineRouteProgress.Fix?>()
         val latch=CountDownLatch(1)
-        try {
-            manager.getCurrentLocation(LocationManager.GPS_PROVIDER,cancel,context.mainExecutor) {
-                received.set(it); latch.countDown()
+        // The first GNSS result may still be coarse while the receiver acquires
+        // satellites. Wait for a measured, fresh usable fix within the existing
+        // 12s budget, using only the same explicit foreground location permission.
+        val listener=object : android.location.LocationListener {
+            override fun onLocationChanged(location: Location) {
+                val fix=toFix(location) ?: return
+                if (fix.accuracyMeters in 0.0..25.0 && received.compareAndSet(null,fix))
+                    latch.countDown()
             }
+            override fun onProviderDisabled(provider: String) { latch.countDown() }
+        }
+        var registered=false
+        try {
+            manager.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000L,0f,listener,android.os.Looper.getMainLooper())
+            registered=true
             if(!latch.await(12,TimeUnit.SECONDS)) return null
-            val value=received.get() ?: return null
-            return toFix(value)
-        } finally { cancel.cancel() }
+            val fix=received.get() ?: return null
+            val now=SystemClock.elapsedRealtime()
+            return fix.takeIf { now>=it.observedAtMs && now-it.observedAtMs<NativePhoneGuidance.VALID_FOR_MS }
+        } finally { if(registered) manager.removeUpdates(listener) }
     }
 }
