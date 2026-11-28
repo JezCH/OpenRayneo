@@ -109,7 +109,124 @@ internal class BridgeService : Service() {
     private var nativeNavAutoQuerySent = false
     private var nativeNavCoreReadbackFinished = false
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
+    // One explicitly consented, stationary START/READY/END round trip. It is
+    // a real stock session, but never sends 0x34/0x35/0x3F or a fabricated route.
+    private class NativeStartProbe(val session: NativeNavigationStartup.Session) {
+        var closing = false
+        var readyObserved = false
+    }
+    private var nativeStartProbe: NativeStartProbe? = null
+    var nativeStartTestStatus = "순정 시작·종료 시험 미실행"; private set
+    val nativeStartTestPending get() = nativeStartProbe != null
+    val nativeStartTestCanRun get() = nativePresetCanSync &&
+        nativeNavCapabilities?.raster != null && nativeStartProbe == null &&
+        state.error == null && pendingNativeHint == null && audioOwner == null &&
+        voiceTransport.source == null && !reconnectCapture.pending && !voiceAlwaysOnStart.pending &&
+        !migration.state.busy
+    fun runNativeStartTest(expectedEpoch: String) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        check(expectedEpoch == nativePresetConsentEpoch && nativeStartTestCanRun) {
+            "현재 연결의 PNG 프로파일 회신과 유휴 상태를 확인하세요."
+        }
+        val capabilities = checkNotNull(nativeNavCapabilities)
+        val session = NativeNavigationStartup.Session(NativeNavigationStartup.Parameters(
+            NativeNavigationStartup.Profile.RASTER_FRAME, 1, "ko-KR", "KR", 1, 1,
+            "overseas", "DISPLAY TEST - NOT NAVIGATION"))
+        session.configureRaster(capabilities)
+        val probe = NativeStartProbe(session)
+        nativeStartProbe = probe
+        nativeStartTestStatus = "순정 시작 요청 준비 · 길 안내 데이터 전송 없음"
+        dispatch(GlassesEvent.ReserveNativeNavigation)
+        if (state.intent != DisplayIntent.NativeNavigation) {
+            nativeStartProbe = null
+            nativeStartTestStatus = "안경 화면 예약 실패 · 전송하지 않음"
+            notifyUI()
+            return
+        }
+        val frame = session.startFrame(navProbeTransportSequence++ and 65535)
+        nativeStartTestStatus = "START_REQUEST 전송 · START_REPLY/GLASS_READY 대기"
+        runCatching {
+            connection.sendFrame(frame) { result ->
+                if (nativeStartProbe === probe && result.isFailure)
+                    finishNativeStartTest(probe, "시작 전송 실패 · 안경 화면 상태 미확인", true)
+            }
+        }.onFailure { finishNativeStartTest(probe, "시작 전송 실패 · 안경 화면 상태 미확인", true) }
+        main.postDelayed({
+            if (nativeStartProbe === probe && !probe.readyObserved && !probe.closing)
+                closeNativeStartTest(probe, "5초 내 시작·준비 회신 미확인")
+        }, 5_000L)
+        notifyUI()
+    }
+    fun cancelNativeStartTest() {
+        nativeStartProbe?.let { closeNativeStartTest(it, "사용자 종료 요청") }
+    }
+    private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
+        val probe = nativeStartProbe ?: return false
+        if (message.type !in setOf(2, 3, 4)) return false
+        if (probe.closing) return message.type in setOf(2, 4)
+        probe.session.receive(message)
+        when (probe.session.phase) {
+            NativeNavigationStartup.Session.Phase.READY -> if (!probe.readyObserved) {
+                probe.readyObserved = true
+                nativeStartTestStatus = "START_REPLY + GLASS_READY 확인 · 실제 화면 관찰 · 곧 종료"
+                main.postDelayed({
+                    if (nativeStartProbe === probe && !probe.closing)
+                        closeNativeStartTest(probe, "시작·준비 회신 확인")
+                }, 2_000L)
+                notifyUI()
+            }
+            NativeNavigationStartup.Session.Phase.REJECTED ->
+                closeNativeStartTest(probe, "시작 거부/확인 요구(${probe.session.rejectionCode}) · 자동 승인하지 않음")
+            NativeNavigationStartup.Session.Phase.ENDED ->
+                finishNativeStartTest(probe, "안경 종료 요청 확인 · 지도/길 안내 미시험", false)
+            else -> Unit
+        }
+        return true
+    }
+    private fun closeNativeStartTest(probe: NativeStartProbe, reason: String) {
+        if (nativeStartProbe !== probe || probe.closing) return
+        probe.closing = true
+        if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) {
+            finishNativeStartTest(probe, "$reason · 연결 변경으로 종료 전송 없음", false)
+            return
+        }
+        val frame = probe.session.closeFrame(navProbeTransportSequence++ and 65535)
+        if (frame == null) {
+            finishNativeStartTest(probe, "$reason · 지도/길 안내 미시험", false)
+            return
+        }
+        nativeStartTestStatus = "$reason · 순정 종료 전송 중"
+        runCatching {
+            connection.sendFrame(frame) { result ->
+                if (nativeStartProbe === probe)
+                    finishNativeStartTest(probe,
+                        if (result.isSuccess) "$reason · END_REQUEST 전송 완료 · 실제 화면 종료/지도 미검증"
+                        else "$reason · 종료 전송 실패 · 안경 화면 확인 필요",
+                        // A transport write cannot establish actual peer closure.
+                        true)
+            }
+        }.onFailure { finishNativeStartTest(probe, "$reason · 종료 전송 실패 · 화면 확인 필요", true) }
+        main.postDelayed({
+            if (nativeStartProbe === probe)
+                finishNativeStartTest(probe, "$reason · 종료 전송 미확인 · 안경 화면 확인 필요", true)
+        }, 5_000L)
+        notifyUI()
+    }
+    private fun finishNativeStartTest(probe: NativeStartProbe, status: String, yield: Boolean) {
+        if (nativeStartProbe !== probe) return
+        nativeStartProbe = null
+        nativeStartTestStatus = status
+        if (state.intent == DisplayIntent.NativeNavigation) {
+            // No implicit competing page when the peer's close is not confirmed.
+            dispatch(if (yield && state.link.phase == LinkPhase.FULL)
+                GlassesEvent.ExternalPage("순정 내비 시험 종료 · 안경 화면을 확인한 뒤 다른 기능을 선택하세요")
+                else GlassesEvent.ReleaseNativeNavigation)
+        }
+        notifyUI()
+    }
     private fun resetNativeNavigationProbe() {
+        nativeStartProbe = null
+        nativeStartTestStatus = "순정 시작·종료 시험 미실행 · 연결 변경"
         navProbeRevision++
         pendingNavProbe = null
         pendingNativePreset = null
@@ -211,6 +328,7 @@ internal class BridgeService : Service() {
             noteNativeMenu(0x20, "지원 범위 외 PbMsg version")
             return
         }
+        if (receiveNativeStartTest(message)) return
         val preset = pendingNativePreset
         if (preset != null) {
             val code = NativeNavigationPresets.resultCode(message, preset)
@@ -445,6 +563,7 @@ internal class BridgeService : Service() {
     private val prompterReserved: Boolean get() = prompterLaunchPending || teleprompter.state.active != null ||
         teleprompter.state.busy || teleprompter.state.smartFollow
     private fun requirePrompterFree() {
+        check(nativeStartProbe == null) { "순정 내비 시작 시험을 먼저 종료하세요" }
         check(!prompterReserved) { "프롬프터 재생·전송·전환을 먼저 종료하세요" }
     }
     private fun requireCaptureFree() {
@@ -453,6 +572,7 @@ internal class BridgeService : Service() {
             !voiceTransport.nativeActive && !translator.active && !mediaCaptionState.busy) { "현재 음성·기록 기능을 먼저 종료하세요" }
     }
     private fun requireNativeRecorderFree() {
+        check(nativeStartProbe == null) { "순정 내비 시작 시험을 먼저 종료하세요" }
         check(!deviceSettings.state.initialization.recorder.occupied) {
             "안경 자체 녹음이 진행 중입니다. 안경에서 녹음을 종료한 후 상태를 다시 읽으세요."
         }
@@ -461,7 +581,7 @@ internal class BridgeService : Service() {
         if (source != ConversationSource.REALTIME)
             check(state.session == null && state.intent == DisplayIntent.Idle) { "기존 안경 화면을 먼저 종료하세요" }
     }
-    private fun hudAnswerAvailable(): Boolean = !destroyed && !prompterReserved && !translator.active &&
+    private fun hudAnswerAvailable(): Boolean = !destroyed && nativeStartProbe == null && !prompterReserved && !translator.active &&
         !voiceTransport.nativeActive && !conversations.state.running && !conversations.state.stopping &&
         voiceTransport.source == null
     private fun cancelPrompterLaunch() { prompterLaunchGeneration++; prompterLaunchPending = false }
@@ -766,6 +886,18 @@ internal class BridgeService : Service() {
         try {
             while (events.isNotEmpty()) {
                 val currentEvent = events.removeFirst()
+                if (nativeStartProbe != null) {
+                    if (currentEvent == GlassesEvent.StopNavigation || currentEvent == GlassesEvent.PauseDisplay) {
+                        cancelNativeStartTest()
+                        continue
+                    }
+                    if (currentEvent == GlassesEvent.Disconnect || currentEvent == GlassesEvent.BeginConnection ||
+                        currentEvent is GlassesEvent.ExternalPage ||
+                        (currentEvent is GlassesEvent.LinkChanged && currentEvent.state.phase != LinkPhase.FULL)) {
+                        nativeStartProbe = null
+                        nativeStartTestStatus = "순정 시작 시험 중단 · 연결/안경 화면 변경"
+                    }
+                }
                 val transition = GlassesCoordinator.reduce(state, currentEvent)
                 val previous = state
                 state = transition.state
@@ -2982,6 +3114,7 @@ internal class BridgeService : Service() {
     override fun onDestroy() {
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
+        nativeStartProbe = null
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         clearVoiceNavigation()
         NaverVoiceLaunch.onOpened = null
