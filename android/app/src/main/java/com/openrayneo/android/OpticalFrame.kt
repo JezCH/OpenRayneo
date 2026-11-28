@@ -39,17 +39,18 @@ private val FrameTabs = listOf("홈", "AI", "기억", "도구", "기기")
 @Composable
 internal fun OpticalFrameHeader(title: String, isDetail: Boolean, compact: Boolean, back: () -> Unit, settings: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val dense = compact || LocalDensity.current.fontScale > 1.3f
     Column(Modifier.fillMaxWidth().background(colors.background)
         .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-        Row(Modifier.fillMaxWidth().heightIn(min = if (compact) 48.dp else 68.dp)
-            .padding(horizontal = 16.dp, vertical = if (compact) 2.dp else 6.dp),
+        Row(Modifier.fillMaxWidth().heightIn(min = if (dense) 48.dp else 56.dp)
+            .padding(horizontal = 16.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (isDetail) IconButton(onClick = back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "뒤로") }
-            else OpticalFrameGlyph(0, colors.primary, Modifier.size(if (compact) 22.dp else 30.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (!compact) Text("OPENRAYNEO", style = MaterialTheme.typography.labelSmall,
+            else OpticalFrameGlyph(0, colors.primary, Modifier.size(if (dense) 22.dp else 28.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                if (!dense) Text("OPENRAYNEO", style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant, letterSpacing = 2.sp)
-                Text(title, style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                Text(title, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.semantics { heading() })
             }
             if (!isDetail) IconButton(onClick = settings) { Icon(Icons.Outlined.Settings, "설정") }
@@ -69,7 +70,7 @@ internal fun OpticalFrameNavigation(selected: Int, pending: Int, select: (Int) -
             FrameTabs.forEachIndexed { index, label ->
                 val active = selected == index
                 val ink = if (active) colors.primary else colors.onSurfaceVariant
-                Column(Modifier.weight(1f).heightIn(min = 66.dp)
+                Column(Modifier.weight(1f).heightIn(min = 60.dp)
                     .selectable(selected = active, onClick = { select(index) }, role = Role.Tab),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -78,11 +79,11 @@ internal fun OpticalFrameNavigation(selected: Int, pending: Int, select: (Int) -
                     BadgedBox(badge = {
                         if (index == 1 && pending > 0) Badge { Text(pending.toString()) }
                     }) {
-                        OpticalFrameGlyph(index, ink, Modifier.padding(top = 5.dp).size(25.dp))
+                        OpticalFrameGlyph(index, ink, Modifier.padding(top = 3.dp).size(24.dp))
                     }
                     Text(label, color = ink, style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                        modifier = Modifier.padding(bottom = 8.dp))
+                        modifier = Modifier.padding(bottom = 6.dp))
                 }
             }
         }
@@ -144,7 +145,7 @@ internal fun OpticalHeroPanel(content: @Composable ColumnScope.() -> Unit) {
             Box(Modifier.weight(.28f).fillMaxHeight().background(colors.primary))
             Box(Modifier.weight(.72f).fillMaxHeight().background(colors.outlineVariant))
         }
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
 
@@ -161,6 +162,6 @@ internal fun OpticalWorkspaceHeading(
             Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
         if (LocalDensity.current.fontScale <= 1.3f)
-            OpticalFrameGlyph(glyph, colors.primary, Modifier.size(48.dp))
+            OpticalFrameGlyph(glyph, colors.primary, Modifier.size(36.dp))
     }
 }

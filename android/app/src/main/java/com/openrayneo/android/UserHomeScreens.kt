@@ -50,7 +50,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             OpticalHeroPanel {
                 OpticalActivityHeader(activity)
@@ -228,12 +228,12 @@ private fun ToolDestinationGroup(title: String, destinations: List<ToolDestinati
         SectionLabel(title)
         destinations.forEach { destination ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
                 .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = destination.open)
-                .padding(vertical = 10.dp, horizontal = 4.dp),
+                .padding(vertical = 8.dp, horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Surface(shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainer) {
-                    Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp).size(25.dp))
+                    Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(9.dp).size(24.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(destination.title, style = MaterialTheme.typography.titleMedium)
@@ -438,7 +438,15 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
                 OpticalWorkspaceHeading(model.deviceName, connection.label, 4,
                     detailColor = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant)
-                GlassesArtwork(Modifier.fillMaxWidth().height(110.dp), MaterialTheme.colorScheme.primary)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(battery?.let { "${it}%" } ?: "배터리 미확인", style = if (battery != null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium)
+                        if (battery != null) Note("기기가 보고한 배터리")
+                    }
+                    if (androidx.compose.ui.platform.LocalDensity.current.fontScale <= 1.3f)
+                        GlassesArtwork(Modifier.width(116.dp).height(66.dp), MaterialTheme.colorScheme.primary)
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
                 Note(when {
@@ -446,8 +454,6 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
                     linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
                     else -> s.glasses.link.detail
                 })
-                Text(battery?.let { "${it}%" } ?: "배터리 미확인", style = if (battery != null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium)
-                if (battery != null) Note("기기가 보고한 배터리")
                 if (battery != null) {
                     LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
                 }

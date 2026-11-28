@@ -56,11 +56,11 @@ internal fun OpticalSignature(modifier: Modifier = Modifier) {
 internal fun OpticalActivityHeader(activity: String) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val wide = maxWidth >= 260.dp && LocalDensity.current.fontScale <= 1.3f
-        val artSize = if (maxWidth >= 288.dp) 148.dp else 120.dp
+        val artSize = if (maxWidth >= 288.dp) 108.dp else 88.dp
         if (wide) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(activity, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
+                Text(activity, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
             }
             OpticalSignature(Modifier.size(artSize))
         } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -90,16 +90,17 @@ internal fun OpticalQuickPair(first: @Composable (Modifier) -> Unit, second: @Co
 
 @Composable
 internal fun OpticalQuickTile(title: String, subtitle: String, icon: ImageVector, modifier: Modifier, click: () -> Unit) {
-    Surface(onClick = click, modifier = modifier.heightIn(min = 100.dp),
+    Surface(onClick = click, modifier = modifier.heightIn(min = 80.dp),
         shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(25.dp))
-                Spacer(Modifier.weight(1f))
-                Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
             }
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

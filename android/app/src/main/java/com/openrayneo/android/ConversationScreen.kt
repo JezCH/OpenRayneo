@@ -99,6 +99,8 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 Text(recording(s).label, style = MaterialTheme.typography.labelLarge,
                     color = if (recording(s).phase == SystemStatusPolicy.Phase.ACTIVE) OpticalActiveInk() else MaterialTheme.colorScheme.onSurfaceVariant)
                 if (!s.available) Note("서비스 상태를 확인하고 있습니다.")
+                TextButton(onClick = { listScope.launch { recordListState.scrollToItem(savedRecordsIndex) } },
+                    modifier = Modifier.fillMaxWidth()) { Text("저장된 기록 찾기 · ${state.records.size}개") }
                 if (!state.running && !state.stopping && !s.alwaysOnResumePending)
                     Note("일상과 회의를 기록합니다. 참여자 동의와 장소의 보안 규칙을 먼저 확인하세요.")
                 if (model.state.alwaysOnResumePending) {
@@ -144,7 +146,6 @@ internal fun ConversationScreen(model: AppModel, actions: UiActions, open: (Stri
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { open("voice-settings") }) { Text("음성 설정") }
                     TextButton(onClick = { open("voice-profiles") }) { Text("인물 관리") }
-                    TextButton(onClick = { listScope.launch { recordListState.scrollToItem(savedRecordsIndex) } }) { Text("저장된 기록 찾기") }
                 }
             }
         }

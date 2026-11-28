@@ -67,6 +67,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
     val draft = if (mobile) model.phoneDraft else model.computerDraft
     val inputReady = s.available && configured && (if (mobile) model.aiReady else s.computerConnected) && !running
     val pendingHere = if (mobile) s.agentReviews.size else s.approvals.size
+    // Enlarged text or a short screen must have a scrollable header and composer.
+    val constrained = androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f ||
+        androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 500
     val phase = opticalAiPhase(s.available, pendingHere > 0, running, inputReady, answer.isNotBlank())
     val statusDetail = if (mobile && configured && question.isBlank() && !running) model.aiStatus else status
     val destinationLabel = if (!mobile) "컴퓨터 Codex" else if (model.aiLegacy) "로컬 Agent" else AiModelSelection.label(model.config)
@@ -101,11 +104,12 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
     }
     // Approval cards are the final items before the end spacer. Keep them in
     // view instead of following the answer past an actionable approval.
-    LaunchedEffect(source, answer, question, s.approvals.map { it.id }, s.agentReviews.map { it.id }) {
+    LaunchedEffect(source, answer, question, s.approvals.map { it.id }, s.agentReviews.map { it.id }, constrained) {
         withFrameNanos {}
         val count = list.layoutInfo.totalItemsCount
-        if (followLatest && count > 0)
-            list.scrollToItem((count - 1 - pendingHere).coerceAtLeast(0))
+        // Do not scroll an empty thread's connection or welcome screen away.
+        if (followLatest && count > 0 && (question.isNotBlank() || history.isNotEmpty() || pendingHere > 0))
+            list.scrollToItem((count - 1 - pendingHere - (if (constrained && pendingHere > 0) 1 else 0)).coerceAtLeast(0))
     }
     if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft, autoMemory) { memoryQuestion = false; autoMemory = false }
     if (continuityDialog) AlertDialog(
@@ -145,7 +149,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
         confirmButton = { TextButton(onClick = { model.newConversation(AnswerSource.MOBILE_AGENT); confirmNewChat = false }) { Text("새 대화 시작") } },
         dismissButton = { TextButton(onClick = { confirmNewChat = false }) { Text("취소") } }
     )
-    Column(Modifier.fillMaxSize().imePadding()) {
+    val assistantHeader: @Composable () -> Unit = {
+        Column {
         if (showSourceSelector) SingleChoiceSegmentedButtonRow(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
@@ -178,7 +183,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            OpticalAiStatus(phase, if (keyboardVisible) "" else statusDetail, Modifier.weight(1f))
+            OpticalAiStatus(phase, if (keyboardVisible || constrained) "" else statusDetail, Modifier.weight(1f))
             IconButton(
                 onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
@@ -189,17 +194,139 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
         if (pendingHere > 0) TextButton(onClick = {
             scrollScope.launch {
                 val count = list.layoutInfo.totalItemsCount
-                if (count > 0) list.scrollToItem((count - 1 - pendingHere).coerceAtLeast(0))
+                if (count > 0) list.scrollToItem((count - 1 - pendingHere - (if (constrained) 1 else 0)).coerceAtLeast(0))
             }
         }, modifier = Modifier.fillMaxWidth()) { Text("확인이 필요한 요청 ${pendingHere}건 보기") }
         if (mobile && s.approvals.isNotEmpty()) TextButton(onClick = { mobile = false }) { Text("PC 작업 승인 ${s.approvals.size}건 확인") }
         if (!mobile && s.agentReviews.isNotEmpty()) TextButton(onClick = { mobile = true }) { Text("AI 작업 승인 ${s.agentReviews.size}건 확인") }
+        }
+    }
+    val assistantComposer: @Composable () -> Unit = {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = OpticalFrameShape) {
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Row(Modifier.fillMaxWidth().height(2.dp)) {
+                    Box(Modifier.weight(.25f).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+                    Box(Modifier.weight(.75f).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                if (mobile) {
+                    if (model.aiLegacy) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
+                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
+                    }
+                    if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
+                    else {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
+                                enabled = !running && !s.migration.busy && draft.length <= 2000) {
+                                Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개" else "기억 첨부")
+                            }
+                            TextButton(onClick = { showContextOptions = !showContextOptions }) {
+                                Text(if (showContextOptions) "맥락 설정 접기" else "맥락 설정")
+                            }
+                        }
+                        if (showContextOptions && !keyboardVisible) {
+                            TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
+                                Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
+                            }
+                            OrdinaryContextButton()
+                        }
+                    }
+                    if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
+                }
+                if (!inputReady && !running && (configured || !s.available || !mobile && !model.aiLegacy)) {
+                    Note(when {
+                        !s.available -> "연결 서비스 준비 중"
+                        !mobile && !model.aiLegacy -> "현재 모델은 새 PC 실행을 지원하지 않습니다. 기존 이력만 확인할 수 있습니다."
+                        !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
+                        mobile && !model.aiReady -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
+                        !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
+                        else -> "현재 질문을 보낼 수 없습니다."
+                    })
+                }
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextField(
+                        draft,
+                        { if (mobile) model.phoneDraft = it else model.computerDraft = it },
+                        Modifier.weight(1f),
+                        placeholder = { Text(if (mobile) (if (executeTask) "실행할 업무를 입력하세요…" else "AI에게 질문하세요…") else "컴퓨터에 맡길 작업…") },
+                        maxLines = if (keyboardVisible) 3 else 5,
+                        shape = OpticalControlShape,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                    )
+                    if (running)
+                        FilledIconButton(
+                            onClick = { model.attempt { model.service().cancelAnswer(source) } },
+                            Modifier.size(48.dp),
+                        ) {
+                            Icon(Icons.Outlined.Stop, "현재 작업 중지")
+                        }
+                    else
+                        FilledIconButton(
+                            onClick = {
+                                followLatest = true
+                                model.send(source, executeTask = mobile && executeTask)
+                                executeTask = false
+                            },
+                            enabled = inputReady && draft.isNotBlank(),
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.Send,
+                                "$destinationLabel(으)로 보내기",
+                            )
+                        }
+                }
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    TextButton(
+                        onClick = { actions.voice(source) },
+                        enabled = mobile || model.aiLegacy,
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) {
+                        Icon(Icons.Outlined.MicNone, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Text(
+                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else if (model.aiLegacy) "컴퓨터 Codex로 보내기" else "기존 PC 작업 · 전송 불가",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        }
+    }
+    Column(Modifier.fillMaxSize().imePadding()) {
+        if (!constrained) assistantHeader()
         LazyColumn(
             state = list,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (constrained) item(key = "assistant-header") {
+                assistantHeader()
+                if (configured && statusDetail.isNotBlank()) Note(statusDetail)
+            }
             if (!mobile && !model.aiLegacy)
                 item {
                     OpticalPanel {
@@ -211,11 +338,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
             else if (!configured)
                 item {
                     OpticalHeroPanel {
-                        if (mobile) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OpticalSignature(Modifier.size(156.dp)) }
-                        else Icon(Icons.Outlined.Computer, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(
+                        OpticalWorkspaceHeading(
                             if (mobile) "AI에 연결해야 질문할 수 있습니다" else "컴퓨터가 아직 설정되지 않음",
-                            style = MaterialTheme.typography.headlineSmall,
+                            destinationLabel,
+                            if (mobile) 1 else 3,
                         )
                         Note(
                             if (mobile) "설정의 모델 선택에서 사용할 AI를 선택하고 연결하세요."
@@ -252,11 +378,11 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
             else if (question.isBlank() && history.isEmpty())
                 item {
                     Column(
-                        Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (mobile) OpticalSignature(Modifier.size(168.dp))
+                        if (mobile) OpticalSignature(Modifier.size(if (constrained) 64.dp else 108.dp))
                         else Icon(Icons.Outlined.Computer, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(if (mobile) "무엇을 도와드릴까요?" else "새 PC 작업", style = MaterialTheme.typography.headlineSmall)
                         Note(if (mobile) "질문을 입력하거나 기억을 첨부해 대화를 시작하세요." else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
@@ -350,120 +476,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                 s.approvals.forEach { request ->
                     item(key = "approval:${request.id}") { ApprovalCard(model, request) }
                 }
+            if (constrained) item(key = "assistant-composer") { assistantComposer() }
             item(key = "conversation-end") { Spacer(Modifier.height(1.dp)) }
         }
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = OpticalFrameShape) {
-            Column(
-                Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Row(Modifier.fillMaxWidth().height(2.dp)) {
-                    Box(Modifier.weight(.25f).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
-                    Box(Modifier.weight(.75f).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-                }
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (mobile) {
-                    if (model.aiLegacy) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = !executeTask, onClick = { executeTask = false }, label = { Text("일반 대화") }, enabled = !running)
-                        FilterChip(selected = executeTask, onClick = { executeTask = true }, label = { Text("업무 실행") }, enabled = !running && model.aiLegacy)
-                    }
-                    if (executeTask) Note("외부 도구 사용 · 쓰기 작업은 승인 필요")
-                    else {
-                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = { autoMemory = suggestMemory && draft.isNotBlank(); memoryQuestion = true },
-                                enabled = !running && !s.migration.busy && draft.length <= 2000) {
-                                Text(if (suggestionCount > 0) "관련 기억 ${suggestionCount}개" else "기억 첨부")
-                            }
-                            TextButton(onClick = { showContextOptions = !showContextOptions }) {
-                                Text(if (showContextOptions) "맥락 설정 접기" else "맥락 설정")
-                            }
-                        }
-                        if (showContextOptions && !keyboardVisible) {
-                            TextButton(onClick = { continuityDialog = true }, enabled = s.available) {
-                                Text(if (s.chatContinuity.enabled) "대화 이어가기 켜짐 · ${s.chatContinuity.turns.size}턴" else "대화 이어가기 꺼짐 · 설정")
-                            }
-                            OrdinaryContextButton()
-                        }
-                    }
-                    if (s.chatContinuityError.isNotBlank()) Note(s.chatContinuityError)
-                }
-                if (!inputReady && !running) {
-                    Note(when {
-                        !s.available -> "연결 서비스 준비 중"
-                        !mobile && !model.aiLegacy -> "현재 모델은 새 PC 실행을 지원하지 않습니다. 기존 이력만 확인할 수 있습니다."
-                        !configured -> if (mobile) "AI 연결 설정을 먼저 완료하세요." else "컴퓨터 연결 설정을 먼저 완료하세요."
-                        mobile && !model.aiReady -> "외부 Agent의 최근 수신 요청이 없습니다. DSH Go 연결 또는 처리 상태를 확인하세요. 입력 내용은 유지됩니다."
-                        !mobile && !s.computerConnected -> "컴퓨터 연결이 끊겼습니다."
-                        else -> "현재 질문을 보낼 수 없습니다."
-                    })
-                }
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    TextField(
-                        draft,
-                        { if (mobile) model.phoneDraft = it else model.computerDraft = it },
-                        Modifier.weight(1f),
-                        placeholder = { Text(if (mobile) (if (executeTask) "실행할 업무를 입력하세요…" else "AI에게 질문하세요…") else "컴퓨터에 맡길 작업…") },
-                        maxLines = if (keyboardVisible) 3 else 5,
-                        shape = OpticalControlShape,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                        ),
-                    )
-                    if (running)
-                        FilledIconButton(
-                            onClick = { model.attempt { model.service().cancelAnswer(source) } },
-                            Modifier.size(48.dp),
-                        ) {
-                            Icon(Icons.Outlined.Stop, "현재 작업 중지")
-                        }
-                    else
-                        FilledIconButton(
-                            onClick = {
-                                followLatest = true
-                                model.send(source, executeTask = mobile && executeTask)
-                                executeTask = false
-                            },
-                            enabled = inputReady && draft.isNotBlank(),
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.Send,
-                                "$destinationLabel(으)로 보내기",
-                            )
-                        }
-                }
-                FlowRow(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    TextButton(
-                        onClick = { actions.voice(source) },
-                        enabled = mobile || model.aiLegacy,
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                    ) {
-                        Icon(Icons.Outlined.MicNone, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
-                    }
-                    Text(
-                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else if (model.aiLegacy) "컴퓨터 Codex로 보내기" else "기존 PC 작업 · 전송 불가",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        }
+        if (!constrained) assistantComposer()
     }
 }
 

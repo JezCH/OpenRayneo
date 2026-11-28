@@ -103,7 +103,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                     isDetail = route.isNotEmpty(), compact = keyboardVisible,
                     back = { backRoute() }, settings = { openRoute("settings") }
                 )
-                if (route != "system-status") SystemStatusStrip(model, phoneInput, compact = keyboardVisible) { openRoute("system-status") }
+                if (route != "system-status") SystemStatusStrip(model, phoneInput, compact = keyboardVisible ||
+                    androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) { openRoute("system-status") }
                 }
         },
         bottomBar = {
