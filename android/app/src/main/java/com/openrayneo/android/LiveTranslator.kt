@@ -57,6 +57,9 @@ internal class LiveTranslator(
     private var mediaFinalTarget = ""
     private var mediaRenderedSequence = 0L
     var mediaFinalCount = 0L; private set
+    var diagnosticPartialSeen = false; private set
+    var diagnosticFinalSeen = false; private set
+    val diagnosticFailures get() = failures
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -171,6 +174,7 @@ internal class LiveTranslator(
         mediaLanguage = mediaSourceLanguage
         mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
         if (mediaId != null) mediaFinalCount = 0
+        diagnosticPartialSeen = false; diagnosticFinalSeen = false
         synchronized(this) {
             mediaSessionId = mediaId
             captionOnly = captions
@@ -345,6 +349,7 @@ internal class LiveTranslator(
 
     private fun interim(token: Int, text: String) {
         if (token != generation || !active || wakeActive || rejectSpeech(text)) return
+        diagnosticPartialSeen = true
         heard()
         sourceFinal = false
         sourceLine = text
@@ -359,6 +364,7 @@ internal class LiveTranslator(
         if (keywordWakeOptions == null) heard()
         // Preserve the ko/en noise filter except for explicit CJK captions.
         if (rejectSpeech(text)) return
+        diagnosticFinalSeen = true
         wakeWindow?.let { window ->
             val question = window.accept(text, android.os.SystemClock.elapsedRealtime())
             if (question != null) {

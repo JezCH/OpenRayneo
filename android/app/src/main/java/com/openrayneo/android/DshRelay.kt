@@ -289,6 +289,19 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (request.state == "running") persist()
         status(id)
     }
+    /** Explicit export only. Never include input/context, IDs, references,
+     * automatic/passive hints or no-retention questions. Does not mutate outbox. */
+    fun diagnosticRequests(includeText: Boolean): String = synchronized(lock) {
+        val rows = requests.values.toList().takeLast(40)
+        if (!includeText) rows.joinToString("\n") { r ->
+            "at=${r.createdAt} kind=${r.kind} state=${r.state} direct=${r.direct} delivered=${r.delivered}"
+        } else rows.filter { r ->
+            (r.kind == "task" && (r.input == null || r.input.optString("source") == "NATIVE") && r.input?.optBoolean("backfill") != true) ||
+                (r.input?.optString("purpose") == "explicit_question" && r.input.optJSONArray("history") != null)
+        }.joinToString("\n\n") { r ->
+            "at=${r.createdAt} kind=${r.kind} state=${r.state}\nQ: ${r.text.take(4000)}\nA: ${r.answer.orEmpty().take(6000)}"
+        }
+    }
     fun hasOutstanding(): Boolean = synchronized(lock) { expireHints(); requests.values.any { it.state in setOf("queued", "running") } }
     fun closeDirect() { directInference.close() }
     fun cancelRequest(id: String) = cancelMatching { it.id == id }

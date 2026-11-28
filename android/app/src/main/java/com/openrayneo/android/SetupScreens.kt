@@ -484,6 +484,7 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        DiagnosticExportPanel(model)
         OpticalPanel {
             Text("현재 연결 상태", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.titleMedium)
@@ -600,5 +601,71 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             Text(if (showLogs) "연결 로그 접기" else "연결 로그 보기 · ${s.logs.size}개")
         }
         if (showLogs) OpticalPanel { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
+    }
+}
+
+// User explicitly previews the exact export. No automatic transfer, storage
+// permission, microphone recording, extra endpoint or new AI history retention.
+@Composable
+private fun DiagnosticExportPanel(model: AppModel) {
+    val context = LocalContext.current
+    var includeDetails by remember { mutableStateOf(false) }
+    var includeAi by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<String?>(null) }
+    var pendingFile by remember { mutableStateOf<String?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val report = pendingFile
+        pendingFile = null
+        if (uri != null && report != null) model.attempt {
+            checkNotNull(context.contentResolver.openOutputStream(uri, "wt")).bufferedWriter(Charsets.UTF_8).use { it.write(report) }
+            model.notice = "진단 파일 저장 완료 · ChatGPT에 첨부할 수 있습니다"
+        }
+    }
+    ContentCard {
+        Text("전체 기능 진단 내보내기", style = MaterialTheme.typography.titleMedium)
+        Note("문제를 재현한 뒤 보고서를 만들면 연결·순정 내비·라이프로그·실시간 자막·실시간 답변의 단계와 최근 300개 진단 이력이 포함됩니다. 기본 보고서는 음성 원문, 위치, 인증 정보 없이 생성됩니다.")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(includeDetails, { includeDetails = it })
+            Text("현재 오류 메시지와 기존 앱 로그 포함")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(includeAi, { includeAi = it })
+            Text("기존 AI 지시·답변 원문 포함")
+        }
+        Note("선택 항목에는 개인 정보가 있을 수 있으므로 미리보기를 확인한 뒤 직접 저장하거나 복사하세요. 기록하지 않도록 설정한 질문과 원본 녹음은 새로 저장하지 않습니다.")
+        ToolButton(enabled = model.state.available, onClick = {
+            model.attempt { preview = model.diagnosticReport(includeDetails, includeAi) }
+        }) { Text("진단 보고서 미리보기") }
+        TextButton(enabled = model.state.available, onClick = { confirmClear = true }) { Text("진단 이력만 초기화") }
+    }
+    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false },
+        title = { Text("진단 이력 초기화") },
+        text = { Text("기능 진단 이벤트만 삭제합니다. AI 대화와 라이프로그 기록은 변경하지 않습니다.") },
+        confirmButton = { TextButton(onClick = { model.attempt { model.service().clearDiagnosticTrace() }; confirmClear = false }) { Text("초기화") } },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("취소") } })
+    preview?.let { report ->
+        AlertDialog(onDismissRequest = { preview = null },
+            title = { Text("전송 전 보고서 확인") },
+            text = {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    Text(report, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                pendingFile = report
+                launcher.launch("OpenRayneo-diagnostics-${System.currentTimeMillis()}.txt")
+            }) { Text("파일 저장") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OpenRayneo diagnostics", report))
+                        model.notice = "진단 보고서 복사됨"; preview = null
+                    }) { Text("복사") }
+                    TextButton(onClick = { preview = null }) { Text("닫기") }
+                }
+            })
     }
 }

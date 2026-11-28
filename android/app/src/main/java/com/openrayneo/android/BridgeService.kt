@@ -16,6 +16,14 @@ internal class BridgeService : Service() {
     val observers = mutableSetOf<() -> Unit>()
     val devices = linkedMapOf<String, RayneoConnection.Device>()
     val logs = ArrayDeque<String>()
+    private lateinit var diagnosticTrace: DiagnosticTrace
+    private fun diagnosticEvent(category: String, detail: String, snapshot: Boolean = false) {
+        if (!::diagnosticTrace.isInitialized || destroyed) return
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { diagnosticEvent(category, detail, snapshot) }; return }
+        runCatching { diagnosticTrace.event(category, detail, snapshot) }
+    }
+    fun diagnosticUiFailure(error: Exception) = diagnosticEvent("UI", "action rejected: " + error.javaClass.simpleName)
+    fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear() }
     lateinit var settings: AppSettings; private set
     lateinit var conversations: ConversationController; private set
     lateinit var voiceTransport: GlassesVoiceTransport; private set
@@ -738,6 +746,7 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun noteNativeMenu(protocol: Int, status: String) {
+        diagnosticEvent("native-menu", "protocol=0x" + protocol.toString(16) + " " + status, snapshot = true)
         nativeMenuEvidence[protocol] = status
         notifyUI()
     }
@@ -1084,6 +1093,7 @@ internal class BridgeService : Service() {
             // retry per authenticated connection; explicit rejects are terminal.
             negotiateNativeNavigation()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
+            collectFeatureDiagnostics()
             updateNotification()
             main.postDelayed(this, 1_000)
         }
@@ -1091,6 +1101,8 @@ internal class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        diagnosticTrace = DiagnosticTrace(this)
+        diagnosticEvent("service", "start version=" + BuildConfig.VERSION_CODE + " commit=" + BuildConfig.GIT_COMMIT)
         settings = AppSettings(this)
         nativePresetHandoffEnabled = runCatching { NativeNavigationPresets.handoffEnabled(this) }.getOrDefault(false)
         runCatching { ChatGptSubscription.initialize(this) }
@@ -1100,6 +1112,7 @@ internal class BridgeService : Service() {
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {
+                traceIncomingFeature(frame, source)
                 if (frame.protocol == 0x06) {
                     handleCapability(frame)
                     return@runCatching
@@ -1645,6 +1658,7 @@ internal class BridgeService : Service() {
         return navigationSwitchStatus
     }
     private fun requestNativeNavigation(request: NaverVoiceCommand.Request?): String {
+        diagnosticEvent("navigation-action", "explicit start; destinationSpecified=${request != null}")
         val status = when {
             destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ->
                 "안경 연결을 먼저 확인하세요."
@@ -1672,6 +1686,7 @@ internal class BridgeService : Service() {
             }
         }
         navigationSwitchStatus = status
+        diagnosticEvent("navigation-result", status)
         notifyUI()
         return status
     }
@@ -1961,6 +1976,7 @@ internal class BridgeService : Service() {
         updateNotification(); notifyUI()
     }
     private fun nativeWake() {
+        diagnosticEvent("ai-action", "native wake received")
         nativeWakeStatus = "안경 기본 호출 이벤트 수신"
         // An unsolicited wake while auto-answer is disabled is not an owned
         // audio session. Do not leave all settings locked until a type-8 exit
@@ -2054,6 +2070,7 @@ internal class BridgeService : Service() {
         runCatching { startConversation(resume.mode, ConversationSource.ALWAYS_ON, resumeOnReconnect = resume.reconnect) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
+        diagnosticEvent("recording-action", "source=$source captureStart=$start")
         if (source != ConversationSource.NATIVE) resetAmbientWake()
         if (start) {
             requirePrompterFree()
@@ -2364,6 +2381,7 @@ internal class BridgeService : Service() {
             if (!isRealtimeStreamCurrent(input) || !passiveInputGate.accept("REALTIME", request.recordId.orEmpty(), request.text, SystemClock.elapsedRealtime())) {
                 request.retainInAgentContext = false; return true
             }
+            diagnosticEvent("hint-action", "realtime request submitted")
             realtimeStreamId = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime, preview = if (stream) ({ text: String ->
                     if (isRealtimeStreamCurrent(input)) {
@@ -2514,6 +2532,7 @@ internal class BridgeService : Service() {
             dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", "듣는 중")))
     }
     private fun finishRealtimeStream(input: JSONObject, result: Result<String>) {
+        diagnosticEvent("hint-result", "success=${result.isSuccess} nonempty=${!result.getOrNull().isNullOrBlank()}")
         val sequence = input.optLong("realtimeRequest")
         if (sequence != latestRealtimeRequest) return
         if (!isRealtimeStreamCurrent(input)) {
@@ -3249,6 +3268,7 @@ internal class BridgeService : Service() {
         invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.newConversation()
     }
     private fun completed(source: AnswerSource, question: String, text: String) {
+        diagnosticEvent("ai-result", "source=$source nonempty=${text.isNotBlank()}")
         val permit = pendingAnswers.remove(source) ?: return
         val delivery = voiceReply?.takeIf { it.ref == permit.ref }
         if (text.isBlank()) {
@@ -3529,6 +3549,89 @@ internal class BridgeService : Service() {
                 else content.execute(name, args, completion)
         }
     }
+    /** Inspect only protocol type/mode/version and known integer result codes.
+     * Voice data, JSON payloads and identifiers are never recorded. */
+    private fun traceIncomingFeature(frame: ProtocolCodec.Frame, source: String) {
+        if (frame.acknowledgement || frame.protocol !in setOf(0x06, 0x20, 0x13, 0x17, 0x0d)) return
+        if (frame.payload.size > 65531) return
+        if (frame.protocol == 0x06) {
+            val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
+            val type = body.optInt("type", -1)
+            if (type !in 1..3) return
+            val list = body.optJSONArray("capabilities")
+            val nav = list != null && (0 until minOf(list.length(), 64)).any {
+                list.optJSONArray(it)?.optString(0) == "app.navigation.main"
+            }
+            diagnosticEvent("wire-capability", "rx=$source type=$type entries=${list?.length() ?: 0} nav=$nav", true)
+            return
+        }
+        val message = runCatching { ProtocolCodec.message(frame.payload) }.getOrNull() ?: return
+        if (frame.protocol == 0x0d && message.type !in setOf(1, 2, 4, 5, 6, 7, 8, 9)) return
+        if (frame.protocol in setOf(0x13, 0x17) && message.type !in 1..5) return
+        if (message.audio?.isNotEmpty() == true) return
+        val body = message.json?.takeIf { it.length <= 8192 }?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val codes = listOf("code", "reason_code", "failed_type", "protocol_version").mapNotNull { key ->
+            (body?.opt(key) as? Int)?.let { "$key=$it" }
+        }.joinToString(" ")
+        diagnosticEvent("wire-0x" + frame.protocol.toString(16),
+            "rx=$source type=${message.type} mode=${message.mode} version=${message.version} $codes", true)
+    }
+
+    private fun collectFeatureDiagnostics() {
+        if (!initialized || destroyed) return
+        runCatching {
+            val c = conversations.state
+            val a = audioLevels
+            val page = state.session
+            diagnosticEvent("connection", "link=${state.link.phase} disconnecting=${state.disconnecting} foreground=$foreground readback=${deviceSettings.state.readback} mic=${deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")} ", true)
+            diagnosticEvent("display", "intent=${state.intent.javaClass.simpleName} owner=${state.ownership} mode=${page?.mode} phase=${page?.phase} written=${page != null && page.writtenContent == page.content} error=${state.error != null}", true)
+            diagnosticEvent("audio", "phase=${a.coordinatorState().phase} channels=${a.channels} firstPacket=${a.firstPacketAt > 0} firstPCM=${a.firstPcmAt > 0} dropped=${a.dropped > 0} error=${a.error != null}", true)
+            val probe = nativeStartProbe
+            diagnosticEvent("navigation", "queryAttempts=$nativeNavQueryAttempts settled=$nativeNavQuerySettled raster=${nativeNavCapabilities?.raster != null} hostWrite=$nativeHostCapabilitySent hostPending=$nativeHostCapabilityPending prepared=${preparedNativeRoute != null} calculating=${offlinePreparation != null} waiting=$nativeRouteWaiting phase=${probe?.session?.phase} accepted=${probe?.session?.startAccepted} ready=${probe?.session?.glassReady} reject=${probe?.session?.rejectionCode} closing=${probe?.closing}", true)
+            diagnosticEvent("navigation-status", nativeStartTestStatus, true)
+            diagnosticEvent("navigation-capability", nativeNavCapabilityStatus, true)
+            diagnosticEvent("recording", "source=${c.source} mode=${c.mode} running=${c.running} stopping=${c.stopping} modelReady=${c.modelReady} firstFinalMs=${firstLiveFinalMs ?: -1} decoded=${c.decodedSeconds > 0} activeRecord=${c.activeRecord != null} transcriptOnly=${c.liveTranscriptOnly} error=${c.error != null}", true)
+            diagnosticEvent("caption", "active=${translator.active} caption=${translator.captionOnly} partial=${translator.diagnosticPartialSeen} final=${translator.diagnosticFinalSeen} retries=${translator.diagnosticFailures} media=${mediaCaptionState.phase} mediaPCM=${mediaCaptionState.samples > 0} mediaFinal=${translator.mediaFinalCount > 0}", true)
+            diagnosticEvent("ai", "phoneRunning=${agent.running} computerRunning=${codex.running} voicePending=$voiceAiPending hintPending=${pendingNativeHint != null} stream=${realtimeStreamId != null} preview=${realtimePreviewRequest != 0L} answerPresent=${state.answer != null}", true)
+        }
+    }
+
+    fun diagnosticReport(includeDetails: Boolean, includeAi: Boolean): String {
+        collectFeatureDiagnostics()
+        return buildString {
+            appendLine("OpenRayneo diagnostic report v1")
+            appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
+            appendLine("exportedAt=${System.currentTimeMillis()} Android=${android.os.Build.VERSION.SDK_INT}")
+            appendLine("Phone-side evidence only; no physical HUD confirmation. Times are Unix ms.")
+            appendLine("[Recent feature timeline, bounded to 300 events]")
+            appendLine(diagnosticTrace.export())
+            appendLine("[AI request states, no prompt or payload]")
+            appendLine(agent.harness.diagnosticRequests(false))
+            if (includeDetails) {
+                appendLine("[Optional current error/status and recent raw app logs: review before sharing]")
+                appendLine(connectionHealth)
+                appendLine(connection.linkEvidence)
+                appendLine(capabilityStatus); appendLine(peerCapabilityStatus); appendLine(nativeMenuDiagnostics)
+                appendLine(nativeStartTestStatus); appendLine(navigationSwitchStatus)
+                appendLine(conversations.state.status); appendLine(conversations.state.error.orEmpty())
+                appendLine(audioLevels.summary()); appendLine(audioLevels.timingSummary()); appendLine(captureTimingStatus)
+                appendLine(translator.status); appendLine(mediaCaptionState.detail)
+                appendLine(agent.status); appendLine(codex.status)
+                appendLine(logs.takeLast(120).joinToString("\n"))
+            }
+            if (includeAi) {
+                appendLine("[Optional existing explicit AI task records]")
+                appendLine(agent.harness.diagnosticRequests(true))
+                appendLine("[Optional saved ordinary conversation]")
+                chatContinuity.state.turns.forEach { t ->
+                    appendLine("source=${t.source}\nQ: ${t.question}\nA: ${t.answer}")
+                }
+                appendLine("[Optional recent explicit glasses conversation]")
+                nativeChatHistory.forEach { (q, a) -> appendLine("Q: $q\nA: $a") }
+            }
+        }
+    }
+
     private fun onLog(text: String) {
         android.util.Log.i("OpenRayneo", text)
         logs.addLast("${LocalTime.now().withNano(0)} $text")
@@ -3549,6 +3652,7 @@ internal class BridgeService : Service() {
     private fun notifyUI() {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { notifyUI() }; return }
         if (initialized && !destroyed) {
+            collectFeatureDiagnostics()
             updateNotification()
             observers.toList().forEach { it() }
         }
@@ -3620,6 +3724,7 @@ internal class BridgeService : Service() {
         }
     }
     override fun onDestroy() {
+        diagnosticEvent("service", "stop")
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         nativeStartProbe?.live?.close()
