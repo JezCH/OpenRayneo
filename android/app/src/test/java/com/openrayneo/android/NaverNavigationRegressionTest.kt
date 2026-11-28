@@ -521,4 +521,46 @@ class NaverNavigationRegressionTest {
         assertNull(requireNotNull(OfflineRouteProgress.match(noEstimate,fix,1200L)).remainingEstimateSeconds)
     }
 
+    @Test fun offlineArrivalAndDeviationRequireRepeatedFreshUnambiguousMeasurements() {
+        fun pt(lat: Double, lon: Double) = NaverWalkingCourse.Point(lat, lon)
+        val end = pt(37.001,127.0)
+        val points = listOf(pt(37.0,127.0), end)
+        val route = OfflineWalkingRoute.Route(NaverWalkingCourse.Course(points),
+            emptyList(), null, null, end)
+        fun assess(point: NaverWalkingCourse.Point, stamp: Long, accuracy: Double = 5.0,
+                   source: OfflineWalkingRoute.Route = route, now: Long = stamp + 100) =
+            OfflineRouteProgress.assess(source, OfflineRouteProgress.Fix(point, accuracy, stamp), now)
+        val tracker = OfflineRouteProgress.TerminalTracker()
+        val near = assess(end,1000L)
+        assertTrue(near.arrivalCandidate)
+        assertNull(tracker.observe(near,1000L,1100L))
+        assertNull(tracker.observe(near,1000L,1200L))
+        assertNull(tracker.observe(assess(end,2000L),2000L,2100L))
+        assertEquals(OfflineRouteProgress.Terminal.ARRIVED,
+            tracker.observe(assess(end,3000L),3000L,3100L))
+        val wire = checkNotNull(OfflineNativeRoute.verifiedWire())
+        val arrived = OfflineNativeRoute.arrivalSnapshot(checkNotNull(near.progress),wire,null)
+        assertTrue(arrived.arrival)
+        assertEquals(4,arrived.navState)
+        assertEquals(23,arrived.maneuver)
+        assertEquals(1000L,arrived.observedAtMs)
+        val snappedWrong = OfflineWalkingRoute.Route(route.course,emptyList(),null,null,pt(37.0017,127.0))
+        assertFalse(assess(end,4000L,source=snappedWrong).arrivalCandidate)
+        assertFalse(assess(end,4000L,accuracy=20.0).arrivalCandidate)
+        assertFalse(assess(end,4000L,now=7000L).arrivalCandidate)
+        val loop = OfflineWalkingRoute.Route(NaverWalkingCourse.Course(listOf(end,points.first(),end)),emptyList(),null,null,end)
+        assertFalse(assess(end,4000L,source=loop).arrivalCandidate)
+        val far=pt(37.0005,127.002)
+        val off=assess(far,4000L)
+        assertTrue(off.confidentlyOffRoute)
+        assertFalse(assess(far,4000L,accuracy=20.0).confidentlyOffRoute)
+        tracker.reset()
+        assertNull(tracker.observe(off,4000L,4100L))
+        assertNull(tracker.observe(assess(far,5000L,accuracy=25.0),5000L,5100L))
+        assertNull(tracker.observe(assess(far,6000L),6000L,6100L))
+        assertNull(tracker.observe(assess(far,7000L),7000L,7100L))
+        assertEquals(OfflineRouteProgress.Terminal.OFF_ROUTE,
+            tracker.observe(assess(far,8000L),8000L,8100L))
+    }
+
 }
