@@ -198,5 +198,22 @@ class NaverNavigationRegressionTest {
         rejected.receive(ready)
         assertEquals(NativeNavigationStartup.Session.Phase.REJECTED, rejected.phase)
         assertEquals(6, rejected.rejectionCode)
+        val presetConfig = NativeNavigationPresets.Config(1,
+            NativeNavigationPresets.Slot("1234567890abcdef", "테스트 목적지"),
+            NativeNavigationPresets.Slot("fedcba0987654321", "다른 목적지"))
+        val presetBody = org.json.JSONObject().put("sid", sid).put("trigger", 2).put("code", 0)
+            .put("preset", "HOME").put("preset_id", "1234567890abcdef")
+            .put("engine_profile", "AUTO").put("map_profile", "AUTO").put("route_scene_profile", "AUTO")
+        val request = ProtocolCodec.Message(1, presetBody.toString(), null, 1, 0, 2)
+        assertEquals("집", NativeNavigationPresets.initialRequest(request, presetConfig)?.alias)
+        assertEquals(sid, NativeNavigationPresets.initialRequest(request, presetConfig)?.sid)
+        assertNull(NativeNavigationPresets.initialRequest(request.copy(mode = 0), presetConfig))
+        assertNull(NativeNavigationPresets.initialRequest(request.copy(json = presetBody.put("preset_id", "other").toString()), presetConfig))
+        val close = ProtocolCodec.StreamDecoder().append(NativeNavigationStartup.phoneCloseFrame(46, sid)).single()
+        assertEquals(0x20, close.protocol)
+        val closeMessage = ProtocolCodec.message(close.payload)
+        assertEquals(3, closeMessage.type)
+        assertEquals(0L, closeMessage.mode)
+        assertEquals(sid, org.json.JSONObject(closeMessage.json!!).getString("sid"))
     }
 }

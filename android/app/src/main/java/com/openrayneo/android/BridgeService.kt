@@ -57,12 +57,14 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
+        // Consume even when disabled/busy; enabling later cannot resurrect an earlier tap.
+        if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
         if (!nativePresetHandoffEnabled || nativePresetSyncedRevision != config.revision ||
-            !nativePresetCanSync || pendingPresetHandoff != null || handledPresetSids.size >= 128 ||
-            request.sid in handledPresetSids || voiceNavigation != null || voiceNavigationLookup != null ||
+            !nativePresetCanSync || pendingPresetHandoff != null ||
+            voiceNavigation != null || voiceNavigationLookup != null ||
+            voiceTransport.source != null || reconnectCapture.pending || resumeAlwaysOn != null ||
             voiceNavigationBlock() != null) return
         val transaction = PresetHandoff(request, config, nativePresetConsentEpoch)
-        handledPresetSids.add(request.sid)
         pendingPresetHandoff = transaction
         noteNativeMenu(0x20, request.alias + " 요청 · 순정 세션 종료 전송 후 네이버지도 연결")
         fun complete(result: Result<Unit>) {
@@ -72,7 +74,8 @@ internal class BridgeService : Service() {
                 nativePresetConsentEpoch != transaction.epoch || !nativePresetCanSync ||
                 nativePresetSyncedRevision != config.revision ||
                 runCatching { NativeNavigationPresets.read(this) }.getOrNull() != config ||
-                voiceNavigation != null || voiceNavigationLookup != null || voiceNavigationBlock() != null) {
+                voiceNavigation != null || voiceNavigationLookup != null || voiceTransport.source != null ||
+                reconnectCapture.pending || resumeAlwaysOn != null || voiceNavigationBlock() != null) {
                 noteNativeMenu(0x20, "네이버지도 전환 취소 · 연결/목적지/기능 상태 변경 또는 전송 실패")
                 return
             }
@@ -234,7 +237,7 @@ internal class BridgeService : Service() {
                 if (pending != null && message.mode == 2L && message.sequence == 0L &&
                     message.audio?.isNotEmpty() != true && message.json.orEmpty().length in 1..8192) {
                     val body = runCatching { JSONObject(message.json!!) }.getOrNull()
-                    if (body?.opt("sid") == pending.request.sid && body.opt("reason_code") == 1)
+                    if (body?.opt("sid") == pending.request.sid && body?.opt("reason_code") in setOf(1, 6, 7))
                         pendingPresetHandoff = null
                 }
                 noteNativeMenu(0x20, "종료 요청 수신 ($source)")
