@@ -296,10 +296,19 @@ class NaverNavigationRegressionTest {
         assertTrue(requireNotNull(progress.nextTurnMeters) in 54..57)
         assertEquals(5, progress.nextTurn?.sourceCode)
         assertEquals(130, progress.remainingEstimateSeconds)
-        // Walking/unit/side values are fixture-only; maneuver codes now
-        // come from the actual official 0x1c4f8f4 constant table.
-        val wire=OfflineNativeRoute.Wire(1,OfflineNativeRoute.VERIFIED_GUIDING_STATE,1,1,
-            OfflineNativeRoute.VERIFIED_NO_MANEUVER,OfflineNativeRoute.verifiedManeuvers)
+        // Real production mapping, not fixture-only values.
+        val wire=checkNotNull(OfflineNativeRoute.verifiedWire())
+        assertEquals(2,wire.travelMode)
+        assertEquals(1,wire.guidingState)
+        assertEquals(1,wire.unitSystem)
+        assertEquals(1,wire.drivingSide)
+        assertEquals(0,wire.noManeuver)
+        val profile=NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            wire.travelMode,"ko-KR","KR",wire.unitSystem,wire.drivingSide,"overseas","선택한 경로")
+        val startJson=profile.json()
+        assertEquals(2,startJson.getInt("travel_mode"))
+        assertEquals(1,startJson.getInt("unit_system"))
+        assertEquals(1,startJson.getInt("driving_side"))
         assertEquals(2,wire.maneuver(1))
         assertEquals(4,wire.maneuver(2))
         assertEquals(7,wire.maneuver(5))

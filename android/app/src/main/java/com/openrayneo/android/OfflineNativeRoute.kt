@@ -41,10 +41,18 @@ internal class OfflineNativeRoute(
         )
         internal const val VERIFIED_NO_MANEUVER = 0
         internal const val VERIFIED_GUIDING_STATE = 1
-        // The maneuver map is now independently verified. Still require
-        // exact walking/unit/driving-side profile values before any live
-        // start; do not copy SDK ordinals or legacy icon IDs.
-        fun verifiedWire(): Wire? = null
+        // Exact stock OverseaSessionProfile construction: AOT
+        // 0x33edb6c..0x33edb80 selects ride=3, walk=2;
+        // 0x33edc10..0x33edcc8 selects US=2, other regions=1;
+        // 0x33edc50..0x33edcd8 selects left-traffic region set=2,
+        // others=1. KR is neither US nor the left-traffic region set.
+        // Evidence: Rayneo-Original runs 46144382648 and 46144765172.
+        internal const val VERIFIED_WALKING_MODE = 2
+        internal const val VERIFIED_KR_UNIT_SYSTEM = 1
+        internal const val VERIFIED_KR_DRIVING_SIDE = 1
+        fun verifiedWire(): Wire? = Wire(VERIFIED_WALKING_MODE, VERIFIED_GUIDING_STATE,
+            VERIFIED_KR_UNIT_SYSTEM, VERIFIED_KR_DRIVING_SIDE,
+            VERIFIED_NO_MANEUVER, verifiedManeuvers)
 
         // Exact BRouter VoiceHint.java at ff7b616df988dbd82c9869368638065a7595b11d.
         // These are text labels, not RayNeo maneuver integers.
