@@ -8,11 +8,15 @@ class NaverNavigationRegressionTest {
     @Test fun explicitCommandsAndNonCommands() {
         val c = NaverVoiceCommand
         val expected = mapOf(
-            "안경 길 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 내비게이션 종료!" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 안내 꺼 줘" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 길 안내 시작해 줘" to NaverVoiceCommand.Control.START_HUD,
-            "안경 길 안내 재개해 줘" to NaverVoiceCommand.Control.START_HUD,
+            "안경 길 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 내비게이션 종료!" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 안내 꺼 줘" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 길 안내 시작해 줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 길 안내 재개해 줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 네비를 켜봐" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 내비 켜줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 알림 안내 재개해 줘" to NaverVoiceCommand.Control.START_HUD,
+            "안경 알림 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_HUD,
             "길찾기 취소해 줘" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 요청 취소" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 상태 알려 줘?" to NaverVoiceCommand.Control.STATUS,
@@ -29,6 +33,10 @@ class NaverNavigationRegressionTest {
             "안경 길 안내 종료해 줘 그리고 기록 삭제", "", "타이머 취소").forEach { assertNull(it, c.control(it)) }
         assertEquals(NaverVoiceCommand.Mode.WALK, c.parse("인천시청까지 걸어서 안내해 줘")?.mode)
         assertEquals("인천시청", c.parse("인천시청까지 걸어서 안내해 줘")?.destination)
+        assertEquals(false, c.parse("인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(false, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("휴대폰에서 네이버지도 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("네이버지도에서 강남역 검색해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 강남역 검색해 줘")?.routeRequested)
         assertNull(c.parse("서울역으로 안내하지 마"))
         assertEquals("집", c.parse("집까지 길찾기 해 줘")?.destination)

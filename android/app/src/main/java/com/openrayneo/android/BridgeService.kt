@@ -57,44 +57,10 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
-        // Consume even when disabled/busy; enabling later cannot resurrect an earlier tap.
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
-        if (!nativePresetHandoffEnabled || nativePresetSyncedRevision != config.revision ||
-            !nativePresetCanSync || pendingPresetHandoff != null ||
-            voiceNavigation != null || voiceNavigationLookup != null ||
-            voiceTransport.source != null || reconnectCapture.pending || resumeAlwaysOn != null ||
-            voiceNavigationBlock() != null) return
-        val transaction = PresetHandoff(request, config, nativePresetConsentEpoch)
-        pendingPresetHandoff = transaction
-        noteNativeMenu(0x20, request.alias + " 요청 · 순정 세션 종료 전송 후 네이버지도 연결")
-        fun complete(result: Result<Unit>) {
-            if (pendingPresetHandoff !== transaction) return
-            pendingPresetHandoff = null
-            if (result.isFailure || destroyed || !nativePresetHandoffEnabled ||
-                nativePresetConsentEpoch != transaction.epoch || !nativePresetCanSync ||
-                nativePresetSyncedRevision != config.revision ||
-                runCatching { NativeNavigationPresets.read(this) }.getOrNull() != config ||
-                voiceNavigation != null || voiceNavigationLookup != null || voiceTransport.source != null ||
-                reconnectCapture.pending || resumeAlwaysOn != null || voiceNavigationBlock() != null) {
-                noteNativeMenu(0x20, "네이버지도 전환 취소 · 연결/목적지/기능 상태 변경 또는 전송 실패")
-                return
-            }
-            // Reuse the existing authorized Naver handoff and fresh notification policy.
-            // Transport success does not prove stock UI closure or active map guidance.
-            val resultText = runCatching {
-                requestVoiceNavigation(NaverVoiceCommand.Request(request.alias, NaverVoiceCommand.Mode.UNSPECIFIED))
-            }.getOrElse { "네이버지도 연결 요청 실패 · 휴대폰에서 확인하세요." }
-            noteNativeMenu(0x20, "기존 알림 HUD 전환 · 순정 화면 종료 미확인 · " + resultText)
-        }
-        runCatching {
-            connection.sendFrame(NativeNavigationStartup.phoneCloseFrame(navProbeTransportSequence++ and 65535, request.sid), ::complete)
-        }.onFailure { complete(Result.failure(it)) }
-        main.postDelayed({
-            if (pendingPresetHandoff === transaction) {
-                pendingPresetHandoff = null
-                noteNativeMenu(0x20, "네이버지도 전환 시간 초과 · 자동 재전송하지 않음")
-            }
-        }, 5_000L)
+        // A stock menu request is not permission to launch a different phone app
+        // or to claim a route that has not been acquired.
+        noteNativeMenu(0x20, request.alias + " 순정 내비 요청 수신 · 실제 경로 공급 미연동 · 휴대폰 지도 미실행")
     }
     val nativePresetPending get() = pendingNativePreset != null
     val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
@@ -1169,6 +1135,14 @@ internal class BridgeService : Service() {
         navigationSwitchStatus = "네이버지도 길 안내 알림 종료 · 안경 표시 종료"; notifyUI()
     }
     private fun executeNavigationControl(command: NaverVoiceCommand.Control): String = when (command) {
+        NaverVoiceCommand.Control.START_NATIVE -> requestNativeNavigation(null)
+        NaverVoiceCommand.Control.STOP_NATIVE -> {
+            val active = nativeStartProbe != null
+            if (active) { cancelNativeStartTest(); "순정 내비 종료 요청을 전송합니다." }
+            else if (navigation.enabled || state.navigation.enabled) {
+                stopNavigation(); "안경 알림 HUD를 종료했습니다. 휴대폰 지도는 변경하지 않았습니다."
+            } else "순정 내비가 실행 중이지 않습니다."
+        }
         NaverVoiceCommand.Control.STOP_HUD -> {
             val active = navigation.enabled || state.navigation.enabled
             stopNavigation()
@@ -1197,7 +1171,8 @@ internal class BridgeService : Service() {
             navigationSwitchStatus = "길 안내 요청 취소 · 이미 열린 지도 앱은 변경하지 않습니다."; notifyUI()
             navigationSwitchStatus
         }
-        NaverVoiceCommand.Control.STATUS -> if (navigation.enabled) navigation.status
+        NaverVoiceCommand.Control.STATUS -> if (nativeStartProbe != null) nativeStartTestStatus
+            else if (navigation.enabled) "알림 HUD · " + navigation.status
             else if (voiceNavigationLookup != null || voiceNavigation != null) "목적지 또는 신규 안내 확인 중"
             else "안경 길 안내가 실행 중이지 않습니다."
         NaverVoiceCommand.Control.STOP_MAP_UNSUPPORTED ->
@@ -1239,7 +1214,28 @@ internal class BridgeService : Service() {
         notifyUI()
         return navigationSwitchStatus
     }
+    private fun requestNativeNavigation(request: NaverVoiceCommand.Request?): String {
+        val status = when {
+            destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ->
+                "안경 연결을 먼저 확인하세요."
+            nativeStartProbe != null -> nativeStartTestStatus
+            nativeNavCapabilities == null -> {
+                // A rejected or missing capability reply is not a firmware upgrade decision.
+                if (canQueryNativeNavigation()) probeNativeNavigation()
+                "순정 내비 연결 규격 확인 필요 · " + nativeNavCapabilityStatus
+            }
+            nativeNavCapabilities?.raster == null ->
+                "현재 연결에서 순정 PNG 내비 프로필을 확인하지 못했습니다."
+            request == null -> "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
+            else -> "순정 내비 경로 공급 미연동 · 휴대폰 지도 앱은 열지 않았습니다."
+        }
+        navigationSwitchStatus = status
+        notifyUI()
+        return status
+    }
     private fun requestVoiceNavigation(request: NaverVoiceCommand.Request): String {
+        // Provider selection must never silently change the requested display.
+        if (!request.phoneApp) return requestNativeNavigation(request)
         clearVoiceNavigation()
         voiceNavigationBlock()?.let { return it }
         val resolved = if (request.destination in setOf("집", "회사")) {
@@ -3023,7 +3019,19 @@ internal class BridgeService : Service() {
     private fun executeTool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
         when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
-                .put("notificationPresent", navigation.selected != null).put("status", navigation.status)))
+                .put("notificationPresent", navigation.selected != null)
+                .put("nativeSessionPending", nativeStartProbe != null).put("nativeStatus", nativeStartTestStatus)
+                .put("status", if (nativeStartProbe != null) nativeStartTestStatus else navigation.status)))
+            "native_navigation_start" -> {
+                check(!destroyed && requests.permission()()) { "안경 내비 요청이 취소되었습니다." }
+                val destination = args.optString("destination").trim()
+                val request = destination.takeIf { it.isNotEmpty() }?.let {
+                    require(it.length <= 120 && it.none(Char::isISOControl))
+                    NaverVoiceCommand.Request(it, NaverVoiceCommand.Mode.UNSPECIFIED)
+                }
+                val status = requestNativeNavigation(request)
+                completion(Result.success(JSONObject().put("started", false).put("status", status)))
+            }
             "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("mapNavigationChanged", false).put("provider", "naver").put("gaodeNavigationChanged", false))) }
             "show_notification" -> {
                 val queued = sendCompanionNotification(args.getString("title"), args.getString("body"))
