@@ -465,6 +465,21 @@ class NaverNavigationRegressionTest {
         assertEquals(sid, org.json.JSONObject(closeMessage.json!!).getString("sid"))
     }
 
+    @Test fun hostFeatureAdvertisesConfiguredProviderBeforeRouteExists() {
+        val ready = List(6) { true }
+        fun available(v: List<Boolean>) = OfflineNativeRouteSettings.canAdvertise(v[0], v[1], v[2], v[3], v[4], v[5])
+        assertTrue(available(ready))
+        for (i in ready.indices) assertFalse("missing prerequisite $i", available(ready.mapIndexed { j, value -> j != i && value }))
+        // Neither a route, fresh GPS fix, peer PNG profile nor session is an input.
+        val idle = ProtocolCodec.StreamDecoder().append(ProtocolCodec.navigationHostCapabilities(1, true, available(ready))).single()
+        val body = org.json.JSONObject(idle.payload.toString(Charsets.UTF_8))
+        assertEquals("app.navigation.main", body.getJSONArray("capabilities").getJSONArray(0).getString(0))
+        val revoked = ProtocolCodec.StreamDecoder().append(ProtocolCodec.navigationHostCapabilities(2, false, available(ready.mapIndexed { i, b -> i != 0 && b }))).single()
+        val update = org.json.JSONObject(revoked.payload.toString(Charsets.UTF_8))
+        assertEquals(3, update.getInt("type"))
+        assertEquals(0, update.getJSONArray("capabilities").length())
+    }
+
     @Test fun offlineRouteProgressUsesFreshFixAndRejectsAmbiguousCrossing() {
         fun pt(lat: Double, lon: Double) = NaverWalkingCourse.Point(lat,lon)
         val points = listOf(pt(37.0,127.0),pt(37.001,127.0),pt(37.001,127.001))
