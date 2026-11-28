@@ -46,6 +46,8 @@ internal class RayneoConnection(private val context: Context, private val listen
     private var presenceScan: ScanCallback? = null
     private var automaticConnection = false
     private var ready = false
+    // At most one in-place RFCOMM recovery per authenticated BLE generation.
+    private var sppRecoveryUsed = false
     private var expectedAddress: String? = null
     val resolvedClassicAddress: String? get() = expectedAddress
     private var classicAddress = byteArrayOf()
@@ -600,6 +602,36 @@ internal class RayneoConnection(private val context: Context, private val listen
         ensureBond(target) { connectRfcomm(target) }
     }
 
+    /** Recover only a previously open SPP socket on the still-authenticated,
+     * existing bond. No new registration or guessed wire command. A second
+     * loss or a BLE failure falls back to the supervisor's full reconnect. */
+    private fun sppFailed(connection: BluetoothSocket, session: Int, reason: String) {
+        if (session != generation || socket !== connection) return
+        val peer = runCatching { expectedAddress?.let(adapter::getRemoteDevice) }.getOrNull()
+        if (!ready || bleOnly || sppRecoveryUsed || !authenticationHandled || gatt == null ||
+            peer == null || runCatching { peer.bondState }.getOrNull() != BluetoothDevice.BOND_BONDED) {
+            fail(reason)
+            return
+        }
+        sppRecoveryUsed = true
+        ready = false
+        socket = null
+        runCatching { connection.close() }
+        main.removeCallbacks(timeout)
+        log(reason)
+        // Publish loss before opening the replacement so every higher-level
+        // session and outstanding command is invalidated, not replayed.
+        state("SPP 연결 끊김 · 인증된 BLE 유지 후 데이터 연결 복구 중", busy = true)
+        main.postDelayed({
+            if (session == generation && gatt != null && authenticationHandled && socket == null) {
+                guarded {
+                    check(peer.bondState == BluetoothDevice.BOND_BONDED) { "기존 페어링이 없어 데이터 연결 복구 중단" }
+                    connectRfcomm(peer)
+                }
+            }
+        }, 750L)
+    }
+
     private fun connectRfcomm(target: BluetoothDevice) {
         state("BLE  인증됨, 연결 중: SPP…", busy = true)
         val session = generation
@@ -621,7 +653,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                     if (session == generation) guarded { replyBleCapability() }
                 }
             } catch (error: Exception) {
-                main.post { if (session == generation) fail("SPP  연결 실패: ${error.message}") }
+                main.post { if (session == generation && socket === pending) fail("SPP  연결 실패: ${error.message}") }
             }
         }
     }
@@ -645,8 +677,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                             connection.outputStream.flush()
                         } catch (error: Exception) {
                             main.post {
-                                if (session == generation && socket === connection)
-                                    fail("SPP 확인 응답 전송 실패: ${error.message}")
+                                sppFailed(connection, session, "SPP 확인 응답 전송 실패: ${error.message}")
                             }
                         }
                     }
@@ -659,7 +690,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                     }
                 }
             } catch (error: Exception) {
-                main.post { if (session == generation) fail("데이터 연결 종료: ${error.message}") }
+                main.post { sppFailed(connection, session, "데이터 연결 종료: ${error.message}") }
             }
         }, "rayneo-reader").start()
     }
@@ -722,11 +753,13 @@ internal class RayneoConnection(private val context: Context, private val listen
                 check(socket === connection) { "연결이 변경됨" }
                 connection.outputStream.write(frame)
                 connection.outputStream.flush()
-                main.post { completion(if (session == generation) Result.success(Unit) else Result.failure(IllegalStateException("연결이 변경됨"))) }
+                main.post { completion(if (session == generation && socket === connection && ready) Result.success(Unit) else Result.failure(IllegalStateException("연결이 변경됨"))) }
             } catch (error: Exception) {
                 main.post {
+                    // Invalidate the dead socket before completing the old write;
+                    // its callback must not see a healthy link or abort a new one.
+                    sppFailed(connection, session, "데이터 전송 실패: ${error.message}")
                     completion(Result.failure(error))
-                    if (session == generation) fail("데이터 전송 실패: ${error.message}")
                 }
             }
         }
@@ -750,6 +783,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         stopObservingBond()
         stopScan()
         ready = false
+        sppRecoveryUsed = false
         authenticationHandled = false
         connectionPairValue = 1
         pendingCapability = null
