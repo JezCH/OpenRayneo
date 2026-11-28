@@ -803,7 +803,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             if (mobile) ChatRecord(state.phoneQuestion, state.phoneAnswer)
             else ChatRecord(state.computerQuestion, state.computerAnswer)
         val oldWasEphemeral = state.phoneEphemeral
-        service().submitAnswer(source, text, allowTools = !mobile || executeTask)
+        service().submitAnswer(source, text, allowTools = !mobile || executeTask || !aiLegacy)
         if (mobile) {
             if (old.question.isNotBlank() && !oldWasEphemeral) phoneHistory = (phoneHistory + old).takeLast(30)
             phoneDraft = ""
