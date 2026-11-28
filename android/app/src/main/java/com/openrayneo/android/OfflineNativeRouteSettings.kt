@@ -15,8 +15,13 @@ internal object OfflineNativeRouteSettings {
         }
         override fun toString() = "OfflineNativeRouteSettings(enabled=$enabled)"
     }
-    // Host support is independent of a particular route, GPS fix or peer raster reply.
-    // A missing local dependency must not advertise a working routing handler.
+    // Stock registry describes the implemented, configured phone capability,
+    // not transient GPS availability. Do not withdraw an installed handler just
+    // because location is temporarily disabled; reject actual START separately.
+    fun supportsConfiguredProvider(selected: Boolean, serviceAvailable: Boolean, wireAvailable: Boolean): Boolean =
+        selected && serviceAvailable && wireAvailable
+
+    // Operational gate for route computation / live guidance, NOT registry.
     fun canAdvertise(selected: Boolean, serviceAvailable: Boolean, wireAvailable: Boolean,
                      preciseLocation: Boolean, locationService: Boolean, gpsEnabled: Boolean): Boolean =
         selected && serviceAvailable && wireAvailable && preciseLocation && locationService && gpsEnabled

@@ -618,4 +618,14 @@ class NaverNavigationRegressionTest {
         assertNull(NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.NATIVE,true))
         assertNull(NativeStatusQuestion.parse("펌웨어 업데이트해줘",ConversationSource.NATIVE,false))
     }
+    @Test fun registrySupportIsNotTransientGpsReadiness() {
+        assertTrue(OfflineNativeRouteSettings.supportsConfiguredProvider(true,true,true))
+        assertFalse(OfflineNativeRouteSettings.supportsConfiguredProvider(false,true,true))
+        assertFalse(OfflineNativeRouteSettings.supportsConfiguredProvider(true,false,true))
+        assertFalse(OfflineNativeRouteSettings.supportsConfiguredProvider(true,true,false))
+        // A missing location permission/service/GPS still blocks actual routing.
+        assertFalse(OfflineNativeRouteSettings.canAdvertise(true,true,true,false,true,true))
+        assertFalse(OfflineNativeRouteSettings.canAdvertise(true,true,true,true,false,true))
+        assertFalse(OfflineNativeRouteSettings.canAdvertise(true,true,true,true,true,false))
+    }
 }

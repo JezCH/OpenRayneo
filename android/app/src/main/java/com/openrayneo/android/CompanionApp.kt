@@ -704,6 +704,17 @@ private fun NavigationScreen(
         }
         item { NativeNavigationStartTest(model) }
         item { NativeNavigationPresetSettings(model) }
+        item {
+            ContentCard {
+                Text("순정 내비 연결 상태 · 먼저 확인", style = MaterialTheme.typography.titleMedium)
+                Note("안경의 업데이트 경고가 실제 펌웨어 업데이트 필요를 뜻하지 않을 수 있습니다. 아래 지원 등록, 기기 회신, 위치 상태를 확인하세요.")
+                Note(s.nativeNavigationReadiness.ifBlank { "연결 서비스 준비 대기" })
+                ToolOutlinedButton(onClick = { model.attempt { model.service().refreshNativeNavigationSetup(requery = true) } },
+                    enabled = s.available && !s.nativeStartTestPending,
+                    modifier = Modifier.fillMaxWidth()) { Text("지원 등록 및 기능 조회 다시 확인") }
+                TextButton(onClick = actions.locationPermission) { Text("정확한 위치 권한 허용") }
+            }
+        }
         item { KakaoNativeRoutingSettings(model, actions) }
         item { OfflineNativeRoutingSettings(model) }
         item { NaverWalkingCourseSettings(model) }
@@ -785,7 +796,7 @@ private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
             KakaoNativeRouteSettings.save(context, next)
             if (saved != next) model.resetKakaoProviderCheck()
             saved = KakaoNativeRouteSettings.read(context)
-            if (enabled) model.service().enableLocationWhileVisible()
+            model.service().refreshNativeNavigationSetup()
         } }, enabled = saved != null && idle && (!enabled || key.isNotBlank()),
             modifier = Modifier.fillMaxWidth()) { Text("선택 및 API 키 저장") }
         Note("안경이나 GPS 없이 카카오 공식 예제 좌표로 실제 도보 API 1회 호출 및 PNG 생성을 확인합니다. API 쿼터가 소모됩니다.")
@@ -830,6 +841,7 @@ private fun OfflineNativeRoutingSettings(model: AppModel) {
             val next = OfflineNativeRouteSettings.Config(enabled, home, company)
             OfflineNativeRouteSettings.save(context, next)
             saved = OfflineNativeRouteSettings.read(context)
+            model.service().refreshNativeNavigationSetup()
         } }, enabled = saved != null && wireReady && !model.state.nativeStartTestPending,
             modifier = Modifier.fillMaxWidth()) { Text("선택 및 좌표 저장") }
         Note(if (wireReady)
@@ -947,7 +959,7 @@ private fun NativeNavigationPresetSettings(model: AppModel) {
         company.trim() == saved?.company?.destination.orEmpty()
     ContentCard {
         Text("집 · 회사 목적지", style = MaterialTheme.typography.titleMedium)
-        Note("실제 장소 이름 또는 주소를 저장하면 안경 음성 호출에서 '집까지 길찾기 해 줘' 또는 '회사까지 길찾기 해 줘'를 사용할 수 있습니다. 네이버지도에서 목적지와 실제 안내를 확인하세요.")
+        Note("실제 장소 이름 또는 주소를 저장하면 안경 음성 호출에서 '집까지 길찾기 해 줘' 또는 '회사까지 길찾기 해 줘'를 사용할 수 있습니다. 선택한 실제 도보 경로 공급자가 필요합니다.")
         if (saved == null) Note("기존 목적지 설정을 읽지 못했습니다. 덮어쓰지 않았습니다.")
         OutlinedTextField(home, { home = it }, modifier = Modifier.fillMaxWidth(), label = { Text("집 목적지") }, singleLine = true, enabled = saved != null && !s.nativePresetPending)
         OutlinedTextField(company, { company = it }, modifier = Modifier.fillMaxWidth(), label = { Text("회사 목적지") }, singleLine = true, enabled = saved != null && !s.nativePresetPending)
