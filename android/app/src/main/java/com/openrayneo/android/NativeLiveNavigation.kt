@@ -18,6 +18,8 @@ internal class NativeLiveNavigation(
         val naverWalkNotificationKey: String? get() = null
         /** Latest real observation for this route; null if not available. */
         fun observation(): Observation?
+        /** Terminal source failure after real observations, not a guess from missing GPS. */
+        val failureReason: String? get() = null
         fun close()
     }
     class Observation(val guidance: NativePhoneGuidance.Snapshot,
@@ -46,6 +48,7 @@ internal class NativeLiveNavigation(
             if (now >= deadline) failure = "순정 내비 전송 시간 초과"
             return null
         }
+        route.failureReason?.let { failure = it; return null }
         if (session.rasterState == NativeRasterTransfer.State.FAILED) {
             failure = "순정 지도 전송 거부 또는 시간 초과"
             return null

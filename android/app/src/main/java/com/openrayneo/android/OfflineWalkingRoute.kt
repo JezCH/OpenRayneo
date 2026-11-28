@@ -33,7 +33,8 @@ internal object OfflineWalkingRoute {
                     val instruction: String? = null, val nativeManeuver: Int? = null)
     class Route(val course: NaverWalkingCourse.Course, val turns: List<Turn>,
                 val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?,
-                val provider: String = "brouter") {
+                val provider: String = "brouter",
+                val requestedEnd: NaverWalkingCourse.Point? = null) {
         override fun toString() = "OfflineWalkingRoute(points=${course.points.size})"
     }
 
@@ -149,6 +150,6 @@ internal object OfflineWalkingRoute {
             (0 until seq.length()).map { i -> requireNotNull(number(seq.opt(i))).also { require(it in 0.0..604800.0) } }
                 .also { require(it.zipWithNext().all { (x,y) -> x <= y }) }
         }
-        return Route(course,turns,times,total)
+        return Route(course,turns,times,total, requestedEnd = end)
     }
 }
