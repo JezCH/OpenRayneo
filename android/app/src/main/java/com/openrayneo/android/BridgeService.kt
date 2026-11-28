@@ -1363,9 +1363,7 @@ internal class BridgeService : Service() {
                     receiveNativeNavigation(frame, source)
                     return@runCatching
                 }
-                // A native assistant event before this connection is authenticated
-                // cannot become a valid current-link wake.
-                if (frame.protocol == 0x0d && state.link.phase != LinkPhase.FULL) return@runCatching
+                if (receiveEarlyAssistant(frame, source)) return@runCatching
                 teleprompter.observe(frame)
                 requests.receive(frame)
                 // Assistant control events (not audio) go to the app log, to see how the firmware behaves around barge-in.
@@ -1570,6 +1568,7 @@ internal class BridgeService : Service() {
                 val previous = state
                 state = transition.state
                 if (previous.link.phase != LinkPhase.CONNECTING && state.link.phase == LinkPhase.CONNECTING) {
+                    initialAssistantWake = null
                     nativeMenuEvidence.clear()
                     resetNativeNavigationProbe()
                     // Authenticated BLE can report settings before FULL. Never
@@ -1580,12 +1579,14 @@ internal class BridgeService : Service() {
                 }
                 if (previous.link.phase == LinkPhase.CONNECTING &&
                     state.link.phase !in setOf(LinkPhase.CONNECTING, LinkPhase.FULL, LinkPhase.BLE_ONLY)) {
-                    // A failed attempt must not retain its partial readback.
+                    // A failed attempt must not retain its partial readback or wake.
+                    initialAssistantWake = null
                     requests.disconnected()
                     deviceSettings.disconnected()
                 }
                 if (voiceAlwaysOnStart.pending && (state.intent != DisplayIntent.Idle || state.session != null)) cancelVoiceAlwaysOnStart()
                 if (previous.link.phase == LinkPhase.FULL && state.link.phase != LinkPhase.FULL) {
+                    initialAssistantWake = null
                     pendingNativeHint = null
                     nativeMenuEvidence.clear()
                     resetNativeNavigationProbe()
@@ -1643,6 +1644,7 @@ internal class BridgeService : Service() {
                         nativeNavCoreReadbackFinished = true
                         negotiateNativeNavigation()
                     } }.onFailure { onLog("연결 초기화 시작 실패") }
+                    deliverInitialAssistantWake()
                 }
                 if (currentEvent is GlassesEvent.ExternalPage) navigationVoiceHandoff = null
                 if (currentEvent is GlassesEvent.ExternalPage && prompterLaunchPending) cancelPrompterLaunch()
@@ -2239,6 +2241,53 @@ internal class BridgeService : Service() {
             .onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
         updateNotification(); notifyUI()
     }
+    // Keep only a fresh, real Assistant wake arriving on authenticated BLE
+    // while the SPP channel is opening. Never queue microphone packets,
+    // synthesize a wake, or replay a request across a link transition.
+    private var initialAssistantWake: Pair<ProtocolCodec.Frame, Long>? = null
+
+    private fun receiveEarlyAssistant(frame: ProtocolCodec.Frame, source: String): Boolean {
+        if (frame.protocol != 0x0d) return false
+        if (state.link.phase == LinkPhase.FULL) {
+            initialAssistantWake = null
+            return false
+        }
+        // RayneoConnection forwards BLE business frames only after authentication.
+        if (source != "BLE" || state.link.phase != LinkPhase.CONNECTING ||
+            destroyed || state.disconnecting || !foreground) return true
+        val message = ProtocolCodec.message(frame.payload)
+        if (message.type == 8) {
+            initialAssistantWake = null
+        } else if (message.type == 1) {
+            initialAssistantWake = null
+            val code = runCatching { JSONObject(message.json ?: "").optInt("rc") }.getOrDefault(0)
+            if (code in 1..6 && settings.read().optBoolean("nativeAutoAnswer")) {
+                initialAssistantWake = frame to SystemClock.elapsedRealtime()
+                diagnosticEvent("voice-wire", "authenticated BLE wake received before FULL")
+            }
+        }
+        return true
+    }
+
+    private fun deliverInitialAssistantWake() {
+        val pending = initialAssistantWake ?: return
+        // Run after the FULL transition has finished; a newer control frame,
+        // link change, exit, or disabled auto-answer invalidates this request.
+        main.post {
+            if (initialAssistantWake !== pending) return@post
+            initialAssistantWake = null
+            if (destroyed || !foreground || state.disconnecting || state.link.phase != LinkPhase.FULL ||
+                !settings.read().optBoolean("nativeAutoAnswer") ||
+                SystemClock.elapsedRealtime() - pending.second > 1_500L) {
+                diagnosticEvent("voice-wire", "initial BLE wake expired or link changed")
+                return@post
+            }
+            diagnosticEvent("voice-wire", "initial BLE wake delivered on FULL")
+            runCatching { voiceTransport.receive(pending.first) }
+                .onFailure { onLog("초기 안경 음성 호출 처리 실패") }
+        }
+    }
+
     private fun nativeWake() {
         // A later explicit wake supersedes an earlier unstarted route. Never
         // let an old delayed exit close a new assistant session.
