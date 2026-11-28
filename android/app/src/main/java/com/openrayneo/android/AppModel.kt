@@ -218,6 +218,32 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var externalHudDraft by mutableStateOf("")
     var externalHudIncoming by mutableStateOf<String?>(null)
     var externalHudOpen by mutableStateOf(false)
+    var externalHudTransfer by mutableStateOf(ExternalHudTransfer())
+        private set
+    private var externalHudTransferSequence = 0L
+
+    fun resetExternalHudTransfer() {
+        check(!externalHudTransfer.busy) { "현재 텍스트 전송 결과를 먼저 기다리세요." }
+        externalHudTransfer = ExternalHudTransfer()
+    }
+
+    fun sendExternalHudPage(page: Int) = attempt {
+        check(externalHudIncoming == null && !externalHudTransfer.busy) { "현재 공유 또는 전송을 먼저 확인하세요." }
+        val pages = ExternalHudText.pages(externalHudDraft)
+        require(page in pages.indices && ExternalHudText.validPage(pages[page])) { "표시할 페이지를 확인하세요." }
+        val sequence = ++externalHudTransferSequence
+        externalHudTransfer = ExternalHudTransfer(page, ExternalHudTransfer.Phase.WRITING)
+        try {
+            service().sendExternalHudText(pages[page]) { result ->
+                if (sequence == externalHudTransferSequence) {
+                    externalHudTransfer = externalHudTransfer.complete(result.isSuccess)
+                }
+            }
+        } catch (failure: Exception) {
+            if (sequence == externalHudTransferSequence) externalHudTransfer = externalHudTransfer.complete(false)
+            throw failure
+        }
+    }
     var phoneDraft by mutableStateOf("")
     var selectedContact by mutableStateOf<SelectedContact?>(null)
     var computerDraft by mutableStateOf("")

@@ -660,7 +660,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         main.postDelayed({ if (ready) sendNotification("Test 3 (KO)", "한국어 테스트: 안녕하세요, RayNeo 안경.") }, 4_000)
     }
 
-    fun sendNotification(title: String, body: String) {
+    fun sendNotification(title: String, body: String, completion: ((Result<Unit>) -> Unit)? = null) {
         check(ready) { "먼저 안경을 연결하세요" }
         val timestamp = System.currentTimeMillis().toString()
         val payload = JSONObject().apply {
@@ -677,11 +677,12 @@ internal class RayneoConnection(private val context: Context, private val listen
         }
         val frame = ProtocolCodec.notification(notificationSequence++, payload.toString())
         if (bleOnly) {
-            enqueueBleFrame(frame, "BLE 알림을 전송했습니다. 안경에서 표시를 확인하세요")
+            enqueueBleFrame(frame, "BLE 알림을 전송했습니다. 안경에서 표시를 확인하세요", completion)
             return
         }
         sendFrame(frame) { result ->
             result.onSuccess { log("알림을 전송했습니다. 안경에서 표시를 확인하세요") }.onFailure { log("알림 전송 실패: ${it.message}") }
+            completion?.invoke(result)
         }
     }
 

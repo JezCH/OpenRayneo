@@ -26,6 +26,24 @@ class ExternalHudTextTest {
         assertFalse(ExternalHudText.validPage(" "))
         assertFalse(ExternalHudText.validPage("가".repeat(101)))
     }
+    @Test fun blankOnlyPagesAreNotPresentedAsSendableContent() {
+        val pages = ExternalHudText.pages("가".repeat(100) + " ".repeat(200) + "나")
+        assertEquals(listOf("가".repeat(100), "나"), pages)
+        assertTrue(pages.all(ExternalHudText::validPage))
+    }
+    @Test fun transportSuccessDoesNotClaimDisplayConfirmation() {
+        val pending = ExternalHudTransfer(2, ExternalHudTransfer.Phase.WRITING)
+        assertTrue(pending.busy)
+        val written = pending.complete(true)
+        assertEquals(2, written.page)
+        assertFalse(written.busy)
+        assertEquals(ExternalHudTransfer.Phase.WRITTEN, written.phase)
+        assertTrue(written.label.contains("표시 미확인"))
+        assertEquals(written, written.complete(false))
+        val failed = pending.complete(false)
+        assertFalse(failed.busy)
+        assertEquals(ExternalHudTransfer.Phase.FAILED, failed.phase)
+    }
     @Test(expected = IllegalArgumentException::class)
     fun oversizedInputRejected() { ExternalHudText.pages("가".repeat(4001)) }
 }

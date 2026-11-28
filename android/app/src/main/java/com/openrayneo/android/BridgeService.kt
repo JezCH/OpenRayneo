@@ -1354,10 +1354,11 @@ internal class BridgeService : Service() {
         passiveInputGate.clear()
     }
     private fun sendCompanionNotification(title: String, body: String,
-                                          output: FocusPolicy.Output = FocusPolicy.Output.GENERAL_NOTIFICATION): Boolean {
+                                          output: FocusPolicy.Output = FocusPolicy.Output.GENERAL_NOTIFICATION,
+                                          completion: ((Result<Unit>) -> Unit)? = null): Boolean {
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL || !focusPolicy.allows(output) ||
             prompterReserved || translator.active || voiceTransport.nativeActive || state.ownership != DisplayOwnership.APP) return false
-        connection.sendNotification(title, body)
+        connection.sendNotification(title, body, completion)
         return true
     }
     fun clockReadout(): Pair<String, String> {
@@ -2584,10 +2585,10 @@ internal class BridgeService : Service() {
         check(focusPolicy.allows(FocusPolicy.Output.GENERAL_NOTIFICATION)) { "집중 모드와 안경 알림 설정을 확인하세요." }
     }
 
-    fun sendExternalHudText(text: String) {
+    fun sendExternalHudText(text: String, completion: (Result<Unit>) -> Unit) {
         require(ExternalHudText.validPage(text)) { "표시할 텍스트 페이지를 확인하세요." }
         checkExternalHudReady()
-        check(sendCompanionNotification("외부 텍스트", text)) { "안경 알림 전송 조건을 확인하세요." }
+        check(sendCompanionNotification("외부 텍스트", text, completion = completion)) { "안경 알림 전송 조건을 확인하세요." }
     }
     fun sendAgentProbeHud() {
         val probe = agentProbe.state

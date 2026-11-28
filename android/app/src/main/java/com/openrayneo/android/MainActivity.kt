@@ -39,6 +39,7 @@ internal class MainActivity : ComponentActivity() {
             }
             val text = raw.toString()
             require(ExternalHudText.pages(text).isNotEmpty()) { "표시할 일반 텍스트가 없습니다." }
+            check(model.externalHudIncoming == null) { "이전에 공유한 텍스트를 먼저 확인하세요." }
             model.externalHudIncoming = text
             model.externalHudOpen = true
         }
