@@ -20,6 +20,11 @@ class KakaoWalkingRouteTest {
         assertEquals(2,guidance.maneuver)
         assertEquals("55m 직진",guidance.instruction)
     }
+    @Test fun officialExampleMayOmitSuccessStatusButExplicitErrorNeverPasses() {
+        val noStatus = sample.replace("\"status\":\"OK\",", "")
+        assertEquals("kakao", KakaoWalkingRoute.parse(noStatus,start,end).provider)
+        assertThrows(KakaoWalkingRoute.Failure::class.java) { KakaoWalkingRoute.parse(sample.replace("\"OK\"", "\"SAME_POINT\""),start,end) }
+    }
     @Test fun unknownTextDoesNotInventDirection() {
         assertEquals(0,KakaoWalkingRoute.maneuver("판교역 1번 출구까지 역사 내 이동"))
         assertEquals(0,KakaoWalkingRoute.maneuver("좌회전 또는 우회전"))

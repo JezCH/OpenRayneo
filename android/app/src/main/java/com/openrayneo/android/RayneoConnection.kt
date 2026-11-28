@@ -426,6 +426,10 @@ internal class RayneoConnection(private val context: Context, private val listen
         val session = generation
         pendingCapability = null
         earlyCapabilityStatus = "BLE 응답 전송 중"
+        runCatching {
+            val decoded = ProtocolCodec.StreamDecoder().append(bytes).single()
+            listener.onLog("BLE 기능 송신 규격: " + DiagnosticCapabilityShape.describe(decoded.payload))
+        }
         enqueueBleFrame(bytes, "BLE 기능 협상 응답 전송") { result ->
             if (session == generation) {
                 earlyCapabilityStatus = if (result.isSuccess) {

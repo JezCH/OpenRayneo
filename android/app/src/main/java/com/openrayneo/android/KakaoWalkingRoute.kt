@@ -75,6 +75,17 @@ internal object KakaoWalkingRoute {
 
     private fun resolve(key: String, destination: String, start: NaverWalkingCourse.Point): NaverWalkingCourse.Point {
         runCatching { OfflineWalkingRoute.coordinate(destination) }.getOrNull()?.let { return it }
+        if (Regex("""(?:로|길|동|리|가)\s+\d""").containsMatchIn(destination)) {
+            val address = JSONObject(query(key, "v2/local/search/address.json", mapOf("query" to destination, "size" to "10")))
+            val docs = address.getJSONArray("documents")
+            if (address.getJSONObject("meta").optBoolean("is_end", false) && docs.length() == 1) {
+                val match = docs.getJSONObject(0)
+                val x = match.optString("x").toDoubleOrNull() ?: fail("주소 좌표 오류")
+                val y = match.optString("y").toDoubleOrNull() ?: fail("주소 좌표 오류")
+                return point(x, y)
+            }
+            fail("주소 검색 결과가 없거나 여러 개입니다. 정확한 주소 또는 좌표를 입력하세요.")
+        }
         val raw = query(key, "v2/local/search/keyword.json", mapOf("query" to destination,
             "x" to start.longitude.toString(), "y" to start.latitude.toString(), "size" to "15"))
         val root = JSONObject(raw)
@@ -83,10 +94,10 @@ internal object KakaoWalkingRoute {
             destination == doc.optString("place_name") || destination == doc.optString("address_name") ||
                 destination == doc.optString("road_address_name")
         }
-        val complete = !root.getJSONObject("meta").optBoolean("is_end", false)
+        val complete = root.getJSONObject("meta").optBoolean("is_end", false)
         val match = when {
-            !complete && exact.size == 1 -> exact.single()
-            !complete && docs.length() == 1 -> docs.getJSONObject(0)
+            complete && exact.size == 1 -> exact.single()
+            complete && docs.length() == 1 -> docs.getJSONObject(0)
             else -> fail("목적지 검색 결과가 없거나 여러 개입니다. 정확한 장소 또는 좌표를 입력하세요.")
         }
         val x = match.optString("x").toDoubleOrNull() ?: fail("목적지 좌표 오류")
@@ -139,7 +150,8 @@ internal object KakaoWalkingRoute {
         if(raw.length !in 1..1_048_576) fail("경로 응답 크기 오류")
         val root = JSONObject(raw)
         val status = root.optString("status")
-        if (status != "OK") fail("경로 없음 또는 요청 거부" + when(status) {
+        // Official success example omits status; require a valid full route.
+        if ((root.has("status") && status != "OK") || !root.has("route")) fail("경로 없음 또는 요청 거부" + when(status) {
             "SAME_POINT", "START_LINK_NOT_FOUND", "END_LINK_NOT_FOUND", "TOO_MANY_SEARCH_LINK",
             "TOO_FAR_AWAY", "ROUTE_RESULT_NOT_FOUND" -> " ($status)"
             else -> ""

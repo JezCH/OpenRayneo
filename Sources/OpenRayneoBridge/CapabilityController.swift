@@ -19,10 +19,12 @@ final class CapabilityController {
             guard let self, let json = message.json else { return }
             switch json["type"] as? Int {
             case 1:
-                try? self.send(["type": 2, "ret": "OK", "capabilities": self.local])
+                try? self.send(["type": 2, "ret": "OK", "capabilities": Self.wire(self.local)])
             case 2, 3:
                 self.lastResult = json["ret"] as? String ?? "OK"
-                if let items = json["capabilities"] as? [[String]] { self.peer = items }
+                if let items = json["capabilities"] as? [[String: String]], items.allSatisfy({ $0.count == 1 }) {
+                    self.peer = items.compactMap { item in item.first.map { [$0.key, $0.value] } }
+                }
             default: break
             }
         }
@@ -35,13 +37,17 @@ final class CapabilityController {
         operationLock.lock(); defer { operationLock.unlock() }
         try transport.ensureConnected()
         if let items = body["capabilities"] as? [[String]] {
-            try queue.sync { local = items; try send(["type": 3, "capabilities": local]) }
+            try queue.sync { local = items; try send(["type": 3, "capabilities": Self.wire(local)]) }
         } else {
             let started = Date()
             try queue.sync { try send(["type": 1]) }
             _ = transport.waitForMessage(timeout: 5) { $0.protocolID == 6 && $0.messageType == 2 && $0.receivedAt >= started }
         }
         return (200, queue.sync { status() })
+    }
+
+    private static func wire(_ items: [[String]]) -> [[String: String]] {
+        items.filter { $0.count == 2 }.map { [$0[0]: $0[1]] }
     }
 
     private func send(_ body: [String: Any]) throws {
