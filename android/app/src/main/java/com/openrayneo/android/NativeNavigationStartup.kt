@@ -7,8 +7,9 @@ import java.util.UUID
 /** Stock 1.0.6.11 phone-originated start (0x10761594, 0x10741458),
  * reply (0x105c6f58), ready (0x105c5070), initial revision=1 and
  * route registration (0x1073d764, 0x1073c18c). No transport side effects.
- * A real route source and exact peer profile must be established by the caller.
- * This class must not be used to start a session from GPX geometry alone. */
+ * A real route source and exact peer profile must be established before
+ * sending guidance or a map. A separately consented, stationary START/READY/END
+ * diagnostic may test session negotiation without sending route data. */
 internal object NativeNavigationStartup {
     internal enum class Profile(val map: String, val scene: String) {
         RASTER_FRAME("REMOTE_RASTER_FRAME_V1", "NONE"),
@@ -47,7 +48,8 @@ internal object NativeNavigationStartup {
     }
 
     /** Session identity is local to this phone-hosted navigation, not a provider route ID.
-     * Start is intentionally inaccessible without a genuine route source at integration.
+     * Live guidance requires a genuine route source. The start-only diagnostic
+     * must not generate a route identity, guidance or map frame.
      * No success claim on transport writes or uncorrelated peer messages. */
     internal class Session(
         val parameters: Parameters,
@@ -90,7 +92,8 @@ internal object NativeNavigationStartup {
             private set
 
         /** Caller must verify actual negotiated capabilities and source availability
-         * before invoking. Code 0 is a request, never a received ACK. */
+         * for live navigation. The bounded start-only probe sends no guidance.
+         * Code 0 is a request, never a received ACK. */
         fun startFrame(sequence: Int): ByteArray {
             check(phase == Phase.NEW)
             if (parameters.profile == Profile.RASTER_FRAME) check(rasterLimits != null)

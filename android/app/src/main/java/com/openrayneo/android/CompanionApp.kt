@@ -698,6 +698,7 @@ private fun NavigationScreen(
                 Note("실제 안내는 네이버지도에서 확인된 신규 알림만 안경에 표시합니다. 실행이 제한된 경우 휴대폰 알림을 사용합니다.")
             }
         }
+        item { NativeNavigationStartTest(model) }
         item { NativeNavigationPresetSettings(model) }
         item { NaverWalkingCourseSettings(model) }
         item { NaverPlaceLookupSettings(model) }
@@ -717,6 +718,36 @@ private fun NavigationScreen(
             Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 지도 앱 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
         }
     }
+}
+
+@Composable
+private fun NativeNavigationStartTest(model: AppModel) {
+    val s = model.state
+    var consentEpoch by remember { mutableStateOf<String?>(null) }
+    ContentCard {
+        Text("순정 내비 시작·종료 시험", style = MaterialTheme.typography.titleMedium)
+        Note("정지한 상태에서만 실행하세요. 공식 앱 없이 안경의 0x20 시작·준비 회신을 확인합니다. 실제 방향, 거리, 지도 이미지나 위치는 전송하지 않습니다.")
+        Note(s.nativeStartTestStatus.ifBlank { "안경 연결 및 순정 PNG 프로파일 회신 필요" })
+        ToolOutlinedButton(onClick = { consentEpoch = s.nativePresetConsentEpoch },
+            enabled = s.nativeStartTestCanRun && !s.nativeStartTestPending,
+            modifier = Modifier.fillMaxWidth()) { Text("순정 내비 시작 시험") }
+        if (s.nativeStartTestPending) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            ToolOutlinedButton(onClick = { model.attempt { model.service().cancelNativeStartTest() } },
+                modifier = Modifier.fillMaxWidth()) { Text("시험 종료") }
+        }
+        Note("실제 길 안내 기능이 아닙니다. 시작 회신 확인 또는 시간 초과 시 종료를 전송합니다. 종료 후 안경의 실제 화면을 확인하세요.")
+    }
+    consentEpoch?.let { epoch -> AlertDialog(
+        onDismissRequest = { consentEpoch = null },
+        title = { Text("정지 상태에서 순정 시작 시험을 실행할까요?") },
+        text = { Text("이동 중에는 실행하지 마세요. 지도·길 안내를 시작하지 않으며 안경 화면만 잠시 예약합니다. 자동으로 종료 요청을 보내지만 실제 화면 종료는 직접 확인해야 합니다.") },
+        confirmButton = { TextButton(onClick = {
+            consentEpoch = null
+            model.attempt { model.service().runNativeStartTest(epoch) }
+        }) { Text("정지 상태에서 시험") } },
+        dismissButton = { TextButton(onClick = { consentEpoch = null }) { Text("취소") } }
+    ) }
 }
 
 @Composable
