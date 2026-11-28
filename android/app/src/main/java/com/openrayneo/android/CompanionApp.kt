@@ -760,12 +760,74 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
         if (uri != null) model.importWalkingCourse(uri)
     }
     val course = model.walkingCourse
+    val offline = model.offlineWalkingRoute
+    var offlineExpanded by remember { mutableStateOf(false) }
+    var autoReroute by remember { mutableStateOf(false) }
+    // Coordinates are not rememberSaveable or stored in app settings.
+    var start by remember { mutableStateOf("") }
+    var end by remember { mutableStateOf("") }
     ContentCard {
-        Text("네이버 도보 코스 파일", style = MaterialTheme.typography.titleMedium)
+        Text("도보 경로 데이터", style = MaterialTheme.typography.titleMedium)
         Note("네이버지도 저장 코스에서 내려받은 GPX를 선택하세요. 파일에 기록된 좌표를 가져오며, 파일의 출처나 보행 가능 여부를 자동 검증하지는 않습니다. 현재 실시간 길 안내 또는 안경 순정 내비 시작 기능은 아닙니다.")
         ToolButton(onClick = { picker.launch("*/*") }, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth()) { Text("GPX 코스 가져오기") }
+        ToolOutlinedButton(onClick = { offlineExpanded = !offlineExpanded }, enabled = !model.walkingCourseBusy,
+            modifier = Modifier.fillMaxWidth()) { Text(if (offlineExpanded) "오프라인 계산 접기" else "BRouter 오프라인 경로 계산 (선택형)") }
+        if (offlineExpanded) {
+            Note("네이버 기본 연동은 변경하지 않습니다. BRouter를 별도로 설치하고 지역 데이터 및 도보 프로필을 준비한 경우에만 선택할 수 있습니다. 입력한 두 좌표는 기기의 BRouter 앱에 전달되며 해당 앱이 로컬 계산 자료를 보관할 수 있습니다. 실시간 안내가 아닌 실제 계산 경로 확보 단계입니다.")
+            OutlinedTextField(start, { start = it }, label = { Text("출발 위도, 경도") }, singleLine = true, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(end, { end = it }, label = { Text("도착 위도, 경도") }, singleLine = true, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth())
+            ToolButton(onClick = { model.calculateOfflineFromCurrentPosition(end, autoReroute) },
+                enabled = !model.walkingCourseBusy && end.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("현재 위치에서 도보 경로 계산 및 추적") }
+            Note("현재 위치 버튼은 기존 정확한 위치 권한과 GPS를 사용하며, 현재 위치와 도착 좌표를 BRouter에 전달합니다. 화면을 떠나면 자동 추적을 시작하지 않습니다.")
+            ToolOutlinedButton(onClick = { model.calculateOfflineWalkingRoute(start, end) },
+                enabled = !model.walkingCourseBusy && start.isNotBlank() && end.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("입력한 출발 좌표로 경로만 계산") }
+        }
         if (model.walkingCourseBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         if (course != null) {
+            if (offline != null) {
+                Note("BRouter / © OpenStreetMap contributors · 네이버 경로가 아닙니다.")
+                Note("실제 계산된 회전 지점 ${offline.turns.size}개 · " +
+                    (offline.estimatedSeconds?.let { "엔진 예상 소요 시간 ${kotlin.math.ceil(it / 60).toInt()}분" } ?: "예상 시간 미제공"))
+                DisposableEffect(model) { onDispose { model.stopOfflineTracking() } }
+                ToolOutlinedButton(onClick = { model.checkOfflineRoutePosition() },
+                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy && !model.offlineTracking,
+                    modifier = Modifier.fillMaxWidth()) { Text("현재 위치로 경로 진행 확인 (1회)") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked=autoReroute,onCheckedChange={autoReroute=it},
+                        enabled=!model.offlineTracking && !model.walkingCourseBusy && offline.requestedEnd!=null)
+                    Text("확인된 경로 이탈 시 BRouter 자동 재탐색")
+                }
+                ToolButton(onClick = { if(model.offlineTracking) model.stopOfflineTracking() else model.startOfflineTracking(autoReroute) },
+                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
+                    modifier = Modifier.fillMaxWidth()) { Text(if(model.offlineTracking) "실시간 위치 갱신 종료" else "실시간 위치 갱신 시작") }
+                Note("이 화면에서 시작한 동안만 GPS를 사용합니다. 재탐색을 선택하면 확인된 이탈 시 현재 위치를 기기의 BRouter에 전달합니다. 안경 전송은 아직 연결되지 않습니다.")
+                if(model.offlineRerouting) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                if(model.offlineRerouteStatus.isNotBlank()) Note(model.offlineRerouteStatus)
+                if(model.offlineTracking && model.offlineLiveMini==null) Note("유효한 경로상 GPS 위치 대기 중")
+                model.offlineLiveMini?.let { bytes ->
+                    val live = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)?.asImageBitmap() }
+                    live?.let { Image(it, contentDescription="실측 위치 중심 경로", modifier=Modifier.width(184.dp).aspectRatio(184f/90f)) }
+                    Note("실측 위치 중심 · 북쪽 위 · 배경지도 없음")
+                }
+                if(model.offlineProgressBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                model.offlineProgress?.let { progress ->
+                    var current by remember(progress) { mutableStateOf(true) }
+                    LaunchedEffect(progress) {
+                        val remaining = NativePhoneGuidance.VALID_FOR_MS -
+                            (android.os.SystemClock.elapsedRealtime()-progress.observedAtMs)
+                        if(remaining>0) delay(remaining)
+                        current=false
+                    }
+                    Note("측정 결과${if(current) "" else " (이전 위치)"} · 경로 남은 거리 ${progress.remainingMeters}m")
+                    progress.nextTurnMeters?.let { distance ->
+                        val instruction=progress.nextTurn?.instruction
+                        Note(if(instruction!=null) "${distance}m 앞 · $instruction" else "다음 회전 지점까지 ${distance}m · 방향 미확인")
+                    }
+                    progress.followingTurn?.instruction?.let { Note("그다음 안내 · $it") }
+                    if(progress.nextTurn==null) Note("추가 회전 지시 미제공 · 남은 경로를 확인하세요.")
+                    progress.remainingEstimateSeconds?.let { Note("경로 시간 자료 기준 남은 예상 시간 ${kotlin.math.ceil(it / 60.0).toInt()}분") }
+                }
+            } else Note("사용자가 가져온 GPX 파일")
             Text("${course.points.size}개 좌표 · ${"%.2f".format(java.util.Locale.KOREA, course.lengthMeters / 1000.0)} km", style = MaterialTheme.typography.titleLarge)
             val preview = model.walkingCourseRaster
             if (preview != null) {
@@ -789,7 +851,7 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
             } else Note("순정 크기 PNG를 생성하지 못했습니다. 원본 코스 좌표는 유지됩니다.")
             val geometry = remember(course) { course.nativeGeometry() }
             Note(if (geometry == null) "순정 장면 규격에 맞지 않는 좌표 수 또는 범위 · 원본 코스는 보존됩니다." else "순정 장면용 경로 형상 준비 · 세션 및 실제 안내 연동 필요")
-            Note("파일 좌표의 연결선과 거리 합계입니다. 배경지도, 도로 검증, 실시간 위치, ETA는 포함하지 않습니다. 앱 메모리에만 유지하며 안경으로 전송하지 않습니다.")
+            Note("정적 코스 이미지에는 배경지도와 실시간 위치가 없습니다. 별도 위치 갱신 화면만 실측 위치를 사용하며, 앱은 결과를 메모리에 유지하고 안경으로 전송하지 않습니다.")
             ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }
     }
