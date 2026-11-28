@@ -1834,8 +1834,12 @@ internal class BridgeService : Service() {
         if (message.type != 1) return false
         noteNativeMenu(frame.protocol, "시작 요청 수신 ($source, ${state.link.phase.name})")
         if (frame.protocol == 0x17) return handleNativeHintStart(frame, source)
-        val request = NativeSubtitleStart.parse(frame)
-        if (request == null) { noteNativeMenu(0x13, "시작 요청 수신 · 지원 범위 외 형식"); onLog("안경 자막 시작 요청 · 지원 범위 외 형식 · $source"); return true }
+        val request = NativeSubtitleStart.parseResult(frame).getOrElse { error ->
+            val detail = nativeStartRejection(frame, error)
+            noteNativeMenu(0x13, "시작 요청 수신 ($source) · 거부: $detail")
+            onLog("안경 자막 시작 요청 거부 ($source): $detail")
+            return true
+        }
         if (state.session?.nativeSubtitle?.sid == request.sid || request.sid in nativeSubtitleRequests) {
             noteNativeMenu(0x13, "동일 세션 요청 · 재시작 방지")
             return true
@@ -1871,8 +1875,12 @@ internal class BridgeService : Service() {
      * capture/selected-model path, but reply only after the worker is prepared.
      * The device SID is not replaced with a second phone-originated start. */
     private fun handleNativeHintStart(frame: ProtocolCodec.Frame, source: String): Boolean {
-        val request = NativeHintStart.parse(frame)
-        if (request == null) { noteNativeMenu(0x17, "시작 요청 수신 · 지원 범위 외 형식"); onLog("안경 AI 힌트 시작 · 지원 범위 외 형식 · $source"); return true }
+        val request = NativeHintStart.parseResult(frame).getOrElse { error ->
+            val detail = nativeStartRejection(frame, error)
+            noteNativeMenu(0x17, "시작 요청 수신 ($source) · 거부: $detail")
+            onLog("안경 AI 힌트 시작 요청 거부 ($source): $detail")
+            return true
+        }
         if (pendingNativeHint?.sid == request.sid || state.session?.nativeHint?.sid == request.sid ||
             request.sid in nativeHintRequests) {
             noteNativeMenu(0x17, "동일 세션 요청 · 재시작 방지")
