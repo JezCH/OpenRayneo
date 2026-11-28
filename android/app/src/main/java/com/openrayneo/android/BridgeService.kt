@@ -1282,7 +1282,11 @@ internal class BridgeService : Service() {
             state.ownership == DisplayOwnership.APP
         val candidates = navigation.entries.values.filter {
             NavigationFeed.isNavigationSource(it.packageName) && it.updatedAt >= pending.requestedAt &&
-                it.safeInstruction != null && (pending.explicitKey == null || it.key == pending.explicitKey)
+                it.safeInstruction != null && (pending.explicitKey == null || it.key == pending.explicitKey) &&
+                // Walking is partial data; do not silently replace a requested
+                // native map with an automatic arrow-only session. Explicit
+                // resume/start of the existing HUD is a separate user action.
+                (it.walkStep == null || pending.explicitKey != null)
         }
         // Preserve the recording and native wake lifecycle. Never interrupt an ongoing capture.
         val captureFree = state.intent == DisplayIntent.Idle && state.session == null &&

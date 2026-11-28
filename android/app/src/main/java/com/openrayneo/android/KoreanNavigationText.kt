@@ -37,7 +37,12 @@ internal object KoreanNavigationText {
      * The caller must first match the stock package, channel and service category.
      * This is a partial observation, not full route geometry or route identity. */
     fun parseNaverWalk(title: String, text: String): Instruction? {
-        val action = KoreanLanguage.normalize(title).trim()
+        val action = when (val raw = KoreanLanguage.normalize(title).trim()) {
+            // Exact localized labels in stock NAVER 6.13.1.2 resources.
+            "왼쪽 방향" -> "좌회전"
+            "오른쪽 방향" -> "우회전"
+            else -> if (raw.equals("Go Straight", ignoreCase = true)) "continue straight" else raw
+        }
         val remaining = KoreanLanguage.normalize(text).trim()
         val ko = Regex("^" + distance + "\\s*남음$").matchEntire(remaining)
         if (action in directions && ko != null)

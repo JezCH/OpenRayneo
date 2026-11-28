@@ -30,7 +30,8 @@ internal object NavigationFeed {
                               val nowBar: Boolean = false, val progressPercent: Int? = null) {
         fun freshAt(now: Long) = now >= postedAt && now - postedAt < NativePhoneGuidance.VALID_FOR_MS
     }
-    // Partial native-source data only; never insert into legacy 0x13 entries.
+    // Partial source data, never a native map or route identity. The existing
+    // explicitly selected arrow HUD may consume the exact same observation.
     private val nativeWalkSteps = linkedMapOf<String, NativeWalkStep>()
     fun nativeWalkStep(now: Long): NativeWalkStep? =
         if (!connected || activeNavigationCount != 1) null
@@ -50,12 +51,12 @@ internal object NavigationFeed {
     fun resetObservations() { observations.clear(); nativeWalkSteps.clear() }
     fun observeWalk(key: String, pkg: String, title: String, text: String, postedAt: Long,
                     cardTitle: String? = null, cardDistance: String? = null,
-                    progress: Int? = null, progressMax: Int? = null) {
-        if (!isNavigationSource(pkg)) return
+                    progress: Int? = null, progressMax: Int? = null): NativeWalkStep? {
+        if (!isNavigationSource(pkg)) return null
         // Original stock resources: terminal titles (do not mark navigation active).
         if (title.trim() in setOf("길안내를 종료합니다.", "목적지에 도착했습니다.", "End directions.", "You've arrived at your destination.")) {
             observe(key, pkg, Observation.NON_NAVIGATION)
-            return
+            return null
         }
         val standard = KoreanNavigationText.parseNaverWalk(title, text)
         val card = if (cardTitle != null && cardDistance != null)
@@ -69,9 +70,13 @@ internal object NavigationFeed {
         if (step != null && postedAt > 0) {
             val percent = if (card != null && progressMax == 100 && progress != null &&
                 progress in 0..100) progress else null
-            nativeWalkSteps[key] = NativeWalkStep(step, postedAt, card != null, percent)
+            val value = NativeWalkStep(step, postedAt, card != null, percent)
+            nativeWalkSteps[key] = value
             observe(key, pkg, Observation.WALK_STEP)
-        } else observe(key, pkg, Observation.STATUS_ONLY)
+            return value
+        }
+        observe(key, pkg, Observation.STATUS_ONLY)
+        return null
     }
     val activeNavigationCount get() = observations.values.count { it.second != Observation.NON_NAVIGATION }
     fun activeNavigationKey(key: String) = observations[key]?.let { (pkg, observation) ->
@@ -93,13 +98,21 @@ internal object NavigationFeed {
         val updatedAt: Long,
         val channel: String,
         val packageName: String = PACKAGE,
+        val walkStep: NativeWalkStep? = null,
     ) {
-        val instruction = if (isNavigationSource(packageName)) KoreanNavigationText.parse(texts) else null
+        val instruction = if (!isNavigationSource(packageName)) null
+            else if (walkStep != null) walkStep.instruction.takeIf {
+                channel == "350_WALK_NAVIGATION" && updatedAt == walkStep.postedAt
+            } else KoreanNavigationText.parse(texts)
         val sourceName get() = sourceLabel(packageName)
         // No provider exemption: never extend an old turn's lifetime by resnapshotting it.
-        fun freshAt(now: Long) = (now - updatedAt) in 0..15_000L
+        fun freshAt(now: Long) = if (walkStep != null) walkStep.freshAt(now)
+            else (now - updatedAt) in 0..15_000L
         val fresh get() = freshAt(System.currentTimeMillis())
-        val safeInstruction get() = instruction?.takeIf { fresh }
+        val safeInstruction get() = instruction?.takeIf {
+            fresh && (walkStep == null || (connected && activeNavigationCount == 1 &&
+                nativeWalkSteps[key] == walkStep))
+        }
     }
 
     val entries = linkedMapOf<String, Entry>()
@@ -283,9 +296,10 @@ internal class NavigationNotifications : NotificationListenerService() {
         // Original NAVER Maps 6.13.1.2 classes18.dex WalkNaviNotificationBuilder
         // a/c uses channel 350_WALK_NAVIGATION and CATEGORY_SERVICE, and
         // WalkNaviNotiUiStateMapper emits title plus remaining next-step distance.
-        // Never send this partial native-source observation to the legacy HUD.
+        // Expose only the validated turn and distance to the existing explicit
+        // arrow HUD selection. Do not start a native map or infer route geometry.
         if (notification.channelId == "350_WALK_NAVIGATION" && notification.category == Notification.CATEGORY_SERVICE) {
-            NavigationFeed.observeWalk(item.key, item.packageName,
+            val step = NavigationFeed.observeWalk(item.key, item.packageName,
                 extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
                 extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(), item.postTime,
                 // Read only the four exact keys emitted by stock APK 6.13.1.2:
@@ -297,7 +311,10 @@ internal class NavigationNotifications : NotificationListenerService() {
                     extras.getInt("android.ongoingActivityNoti.progress", -1) else null,
                 if (extras.containsKey("android.ongoingActivityNoti.progressMax"))
                     extras.getInt("android.ongoingActivityNoti.progressMax", -1) else null)
-            return null
+            return step?.let {
+                NavigationFeed.Entry(item.key, "네이버 도보 방향·거리", emptyList(),
+                    item.postTime, notification.channelId, item.packageName, it)
+            }
         }
         // Existing NAVER interop evidence: NaviToTesla's NaverPoiFinder observes
         // this exact active-guidance text independently of notification category.
