@@ -63,6 +63,10 @@ internal object NativeNavigationStartup {
         private var ready = false
         private var scene: NativeRouteScene.Encoded? = null
         private var endSent = false
+        // A locally prepared route is not proof of acceptance by the glasses.
+        private var route: NativeRouteScene.Identity? = null
+        private var nextGuidanceSequence = 1L
+        private var lastGuidanceAt = -1L
         var rejectionCode: Int? = null
             private set
 
@@ -89,6 +93,7 @@ internal object NativeNavigationStartup {
                 if ((end.opt("reason_code") as? Int) in 1..7) {
                     phase = Phase.ENDED
                     scene = null
+                    route = null
                 }
                 return
             }
@@ -126,11 +131,32 @@ internal object NativeNavigationStartup {
         fun initialScene(generation: Long, token: String, sceneId: String,
                          overview: NativeRouteScene.Geometry, local: NativeRouteScene.Geometry): List<NativeRouteScene.Fragment> {
             check(phase == Phase.READY && parameters.profile.scene == "ROUTE_SCENE_V1")
-            val encoded = NativeRouteScene.encode(NativeRouteScene.Identity(sid, 1, generation, token),
-                sceneId, parameters.travelMode, overview, local)
+            val identity = NativeRouteScene.Identity(sid, 1, generation, token)
+            val encoded = NativeRouteScene.encode(identity, sceneId, parameters.travelMode, overview, local)
+            route = identity
             scene = encoded
             phase = Phase.SCENE_PENDING
             return encoded.fragments
+        }
+
+        /** Prepare 0x34 only after matching START_REPLY and GLASS_READY.
+         * Raster/NONE registers revision 1 through the first genuine update;
+         * scene profiles require an acknowledged initial scene first.
+         * This initial implementation refuses route replacement/rerouting.
+         * It does not manufacture observations or refresh stale provider data. */
+        fun guidanceFrame(sequence: Int, generation: Long, token: String,
+                          snapshot: NativePhoneGuidance.Snapshot, nowMs: Long): ByteArray {
+            check((parameters.profile == Profile.RASTER_FRAME && phase == Phase.READY) ||
+                (parameters.profile.scene == "ROUTE_SCENE_V1" && phase == Phase.SCENE_ACCEPTED))
+            check(snapshot.observedAtMs > lastGuidanceAt && snapshot.freshAt(nowMs))
+            val identity = route ?: NativeRouteScene.Identity(sid, 1, generation, token)
+            check(identity.generation == generation && identity.token == token)
+            val packet = NativePhoneGuidance.frame(sequence, identity, nextGuidanceSequence,
+                parameters, snapshot, nowMs)
+            route = identity
+            nextGuidanceSequence++
+            lastGuidanceAt = snapshot.observedAtMs
+            return packet
         }
 
         /** Explicit phone-side termination. Stock reason table index 2 = MOBILE_APP_CLOSE.
@@ -140,6 +166,7 @@ internal object NativeNavigationStartup {
             endSent = true
             phase = Phase.ENDED
             scene = null
+            route = null
             val body = JSONObject().put("sid", sid).put("reason_code", 2).put("text", "MOBILE_APP_CLOSE")
             return ProtocolCodec.display(0x20, sequence, 3, body.toString())
         }

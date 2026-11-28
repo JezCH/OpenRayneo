@@ -39,6 +39,8 @@ internal object NativeRasterFrame {
 
     internal sealed interface Reply {
         data object Committed : Reply
+        data object Pending : Reply
+        data object NotFound : Reply
         data class Rejected(val code: Long) : Reply
     }
 
@@ -72,6 +74,8 @@ internal object NativeRasterFrame {
             val code = uint(body, "code") ?: return null
             return when {
                 message.type == 0x36 && code == 0L -> Reply.Committed
+                message.type == 0x37 && code == 43L -> Reply.Pending
+                message.type == 0x37 && code == 42L -> Reply.NotFound
                 message.type == 0x37 && code > 0L -> Reply.Rejected(code)
                 else -> null
             }
