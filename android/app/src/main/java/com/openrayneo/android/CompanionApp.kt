@@ -567,7 +567,7 @@ private fun NavigationScreen(
                 ) {
                     GridPreview(frame, "내비게이션 레이아웃 전송 대기")
                 }
-                Note("네이버지도에서 확인된 방향과 거리만 안경으로 보냅니다.")
+                Note("네이버지도에서 확인된 방향과 거리만 안경으로 보냅니다. 순정 지도 화면과는 별도 기능입니다.")
             }
         }
         item {
@@ -619,7 +619,7 @@ private fun NavigationScreen(
                             if (s.glasses.link.phase != LinkPhase.FULL || s.glasses.disconnecting)
                                 ToolButton(onClick = connect, modifier = Modifier.fillMaxWidth()) { Text("안경 먼저 연결") }
                             else ToolButton(onClick = { if (candidates.size == 1) follow(candidates.single().key) else sources() },
-                                modifier = Modifier.fillMaxWidth()) { Text("안경 길 안내 시작") }
+                                modifier = Modifier.fillMaxWidth()) { Text("안경 방향·거리 안내 시작") }
                         } else Note("최신 방향·거리 안내 수신 대기")
                     }
                 if (nav.enabled) {
