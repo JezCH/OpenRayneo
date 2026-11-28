@@ -159,7 +159,9 @@ internal class OfflineNativeRoute(
                     val decision = terminalTracker.observe(assessment, fix.observedAtMs, now)
                     current = when (decision) {
                         OfflineRouteProgress.Terminal.ARRIVED -> {
-                            terminal = true
+                            // Continue sampling until the session actually sends
+                            // the terminal frame and closes. Never freeze a
+                            // pre-READY arrival timestamp or renew its TTL.
                             val arrived = arrivalSnapshot(checkNotNull(assessment.progress), wire, fix.speedMpsX100)
                             NativeLiveNavigation.Observation(arrived, null, null)
                         }
