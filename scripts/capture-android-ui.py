@@ -28,6 +28,7 @@ def wait_boot():
 def tree():
     for _ in range(5):
         try:
+            adb("shell", "rm", "-f", "/sdcard/optical-evidence.xml")
             adb("shell", "uiautomator", "dump", "/sdcard/optical-evidence.xml", timeout=30)
             raw = adb("exec-out", "cat", "/sdcard/optical-evidence.xml")
             return raw, ET.fromstring(raw)
@@ -119,7 +120,11 @@ def main():
                                  "native": True, "check": "actual app, selected tab, destination content"})
     finally:
         (a.out / "manifest.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
-        (a.out / "android-runtime.log").write_bytes(adb("logcat", "-d", "-s", "AndroidRuntime", check=False))
+        try:
+            (a.out / "android-runtime.log").write_bytes(adb("logcat", "-d", "-s", "AndroidRuntime", check=False))
+            (a.out / "last-window.xml").write_bytes(adb("exec-out", "cat", "/sdcard/optical-evidence.xml", check=False))
+        except (OSError, subprocess.SubprocessError):
+            pass
     assert len(evidence) == 15, f"captured only {len(evidence)} screens"
 
 if __name__ == "__main__":

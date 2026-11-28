@@ -29,7 +29,12 @@ jobs:
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           sdk="$ANDROID_HOME/cmdline-tools/latest/bin"
-          "$sdk/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          "$sdk/sdkmanager" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          "$ANDROID_HOME/platform-tools/adb" version
+          "$ANDROID_HOME/emulator/emulator" -version
+          printf '%s\n' "$ANDROID_HOME/platform-tools" "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           echo no | "$sdk/avdmanager" create avd -n optical-evidence -k "system-images;android-35;google_apis;x86_64" --force
       - name: Build actual app debug UI (not a distribution APK)
         working-directory: android
@@ -42,7 +47,13 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/optical-ui"
           "$ANDROID_HOME/emulator/emulator" -avd optical-evidence -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/optical-ui/emulator.log" 2>&1 &
-          timeout 420 adb wait-for-device
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          command -v adb
+          adb version
+          if ! timeout 420 adb wait-for-device; then
+            tail -n 100 "$RUNNER_TEMP/optical-ui/emulator.log" || true
+            exit 1
+          fi
           python3 scripts/capture-android-ui.py --apk android/app/build/outputs/apk/debug/app-debug.apk --out "$RUNNER_TEMP/optical-ui"
       - name: Upload native UI evidence
         if: always()
@@ -52,3 +63,27 @@ jobs:
           path: ${{ runner.temp }}/optical-ui/
           if-no-files-found: warn
           retention-days: 14
+      - name: Emit compact actual screenshots for visual review
+        if: always()
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/optical-ui"
+          if ! compgen -G "$out/*.png" > /dev/null; then
+            echo "No captured PNGs; see emulator and runtime logs."
+            exit 0
+          fi
+          python3 -m venv "$RUNNER_TEMP/evidence-venv"
+          "$RUNNER_TEMP/evidence-venv/bin/pip" -q install pillow==11.3.0
+          "$RUNNER_TEMP/evidence-venv/bin/python" - <<'PY'
+          import os, base64, io
+          from pathlib import Path
+          from PIL import Image
+          for path in sorted((Path(os.environ["RUNNER_TEMP"]) / "optical-ui").glob("*.png")):
+              img = Image.open(path).convert("RGB")
+              img.thumbnail((540, 1170), Image.Resampling.LANCZOS)
+              out = io.BytesIO()
+              img.save(out, format="JPEG", quality=72, optimize=True)
+              b64 = base64.b64encode(out.getvalue()).decode()
+              for i in range(0,len(b64),1800):
+                  print(f"EVIDENCE_JPEG {path.stem} {i//1800:04d} {b64[i:i+1800]}")
+          PY
