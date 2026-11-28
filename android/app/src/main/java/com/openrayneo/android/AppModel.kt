@@ -118,6 +118,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private var hostVisible = false
     fun setHostVisible(visible: Boolean) {
         hostVisible = visible
+        if (!visible) stopOfflineTracking()
         bridge?.setHostVisible(visible)
     }
     var state by mutableStateOf(CompanionState())
@@ -290,6 +291,117 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     // Only the explicitly selected file's coordinates; no disk copy, network or GPS.
     var walkingCourse by mutableStateOf<NaverWalkingCourse.Course?>(null)
         private set
+    var offlineWalkingRoute by mutableStateOf<OfflineWalkingRoute.Route?>(null)
+        private set
+    private val offlineRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    var offlineProgress by mutableStateOf<OfflineRouteProgress.Progress?>(null)
+        private set
+    var offlineProgressBusy by mutableStateOf(false)
+        private set
+    private var offlineProgressGeneration = 0L
+    var offlineTracking by mutableStateOf(false)
+        private set
+    var offlineLiveMini by mutableStateOf<ByteArray?>(null)
+        private set
+    private var offlineWatch: AutoCloseable? = null
+    private var offlineTrackingGeneration=0L
+    private var trackingWorkerBusy=false
+    private var latestFix: OfflineRouteProgress.Fix?=null
+    private var fixRevision=0L
+    private var trackingExpiry: Runnable?=null
+    fun stopOfflineTracking() {
+        ++offlineTrackingGeneration
+        runCatching { offlineWatch?.close() }
+        offlineWatch=null
+        offlineTracking=false
+        latestFix=null
+        trackingExpiry?.let(main::removeCallbacks)
+        trackingExpiry=null
+        offlineLiveMini=null
+        offlineProgress=null
+    }
+    fun startOfflineTracking() = attempt {
+        val route=checkNotNull(offlineWalkingRoute) { "먼저 오프라인 경로를 계산하세요." }
+        check(hostVisible && !walkingCourseBusy && !offlineProgressBusy && !offlineTracking) { "현재 경로 상태를 확인하세요." }
+        val ticket=++offlineTrackingGeneration
+        offlineProgress=null
+        offlineLiveMini=null
+        offlineTracking=true
+        try {
+            offlineWatch=OfflineRouteLocation.watch(context) { fix ->
+                if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
+                    ++fixRevision
+                    latestFix=fix
+                    if(fix==null) {
+                        offlineProgress=null
+                        offlineLiveMini=null
+                    } else processOfflineFix(route,ticket)
+                }
+            }
+        } catch(failure: Exception) {
+            stopOfflineTracking()
+            throw failure
+        }
+    }
+    private fun processOfflineFix(route: OfflineWalkingRoute.Route,ticket: Long) {
+        if(trackingWorkerBusy || !offlineTracking || ticket!=offlineTrackingGeneration) return
+        val fix=latestFix ?: return
+        val revision=fixRevision
+        latestFix=null
+        trackingWorkerBusy=true
+        offlineRouteWorker.execute {
+            val result=runCatching {
+                val progress=OfflineRouteProgress.match(route,fix,android.os.SystemClock.elapsedRealtime()) ?: return@runCatching null
+                progress to NativeCourseRaster.render(route.course,NativeRasterFrame.View.MINI,fix.point)
+            }.getOrNull()
+            main.post {
+                trackingWorkerBusy=false
+                if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
+                    val age=android.os.SystemClock.elapsedRealtime()-fix.observedAtMs
+                    if(revision==fixRevision && result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS) {
+                        offlineProgress=result.first
+                        offlineLiveMini=result.second
+                        trackingExpiry?.let(main::removeCallbacks)
+                        val expiry=Runnable {
+                            if(ticket==offlineTrackingGeneration && offlineProgress===result.first) {
+                                offlineProgress=null
+                                offlineLiveMini=null
+                            }
+                        }
+                        trackingExpiry=expiry
+                        main.postDelayed(expiry,NativePhoneGuidance.VALID_FOR_MS-age)
+                    } else {
+                        offlineProgress=null
+                        offlineLiveMini=null
+                    }
+                }
+                if(offlineTracking) offlineWalkingRoute?.let { processOfflineFix(it,offlineTrackingGeneration) }
+            }
+        }
+    }
+    fun checkOfflineRoutePosition() = attempt {
+        val route = checkNotNull(offlineWalkingRoute) { "먼저 오프라인 경로를 계산하세요." }
+        check(hostVisible && !walkingCourseBusy && !offlineProgressBusy && !offlineTracking) { "앱 화면에서 경로 계산 종료 후 실행하세요." }
+        val ticket = ++offlineProgressGeneration
+        offlineProgress = null
+        offlineProgressBusy = true
+        offlineRouteWorker.execute {
+            val progress = runCatching {
+                OfflineRouteLocation.current(context)?.let {
+                    OfflineRouteProgress.match(route,it,android.os.SystemClock.elapsedRealtime())
+                }
+            }.getOrNull()
+            main.post {
+                if(ticket == offlineProgressGeneration) {
+                    offlineProgressBusy = false
+                    if(hostVisible && offlineWalkingRoute === route && !walkingCourseBusy) {
+                        offlineProgress = progress
+                        if(progress == null) error = "경로 위 위치를 확인하지 못했습니다. 정확한 위치 권한, GPS 수신, 경로 이탈 여부를 확인하세요."
+                    }
+                }
+            }
+        }
+    }
     var walkingCourseRaster by mutableStateOf<NativeCourseRaster.Preview?>(null)
         private set
     var walkingCourseBusy by mutableStateOf(false)
@@ -297,6 +409,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private var walkingCourseGeneration = 0L
     fun importWalkingCourse(uri: android.net.Uri) {
         if (walkingCourseBusy) return
+        stopOfflineTracking()
         val generation = ++walkingCourseGeneration
         walkingCourseBusy = true
         files.execute {
@@ -309,6 +422,10 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if (generation == walkingCourseGeneration) {
                     walkingCourseBusy = false
                     result.fold({ (course, preview) ->
+                        ++offlineProgressGeneration
+                        offlineProgress = null
+                        offlineProgressBusy = false
+                        offlineWalkingRoute = null
                         walkingCourse = course
                         walkingCourseRaster = preview
                     }, { error = "GPX를 가져오지 못했습니다. UTF-8, 1MB 이하의 연속 코스 파일을 확인하세요." })
@@ -316,11 +433,43 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+    fun calculateOfflineWalkingRoute(startText: String, endText: String) = attempt {
+        check(!walkingCourseBusy) { "경로 계산 또는 파일 가져오기 진행 중입니다." }
+        val start = OfflineWalkingRoute.coordinate(startText)
+        val end = OfflineWalkingRoute.coordinate(endText)
+        stopOfflineTracking()
+        val generation = ++walkingCourseGeneration
+        walkingCourseBusy = true
+        offlineRouteWorker.execute {
+            val result = runCatching {
+                val route = OfflineWalkingRoute.calculate(context, start, end)
+                route to runCatching { NativeCourseRaster.preview(route.course) }.getOrNull()
+            }
+            main.post {
+                if (generation == walkingCourseGeneration) {
+                    walkingCourseBusy = false
+                    result.fold({ (route, preview) ->
+                        ++offlineProgressGeneration
+                        offlineProgress = null
+                        offlineProgressBusy = false
+                        offlineWalkingRoute = route
+                        walkingCourse = route.course
+                        walkingCourseRaster = preview
+                    }, { error = "오프라인 경로를 계산하지 못했습니다. BRouter 설치, 지역 데이터, 도보 프로필 및 좌표를 확인하세요." })
+                }
+            }
+        }
+    }
     fun clearWalkingCourse() {
+        stopOfflineTracking()
         ++walkingCourseGeneration
         walkingCourseBusy = false
         walkingCourse = null
         walkingCourseRaster = null
+        offlineWalkingRoute = null
+        ++offlineProgressGeneration
+        offlineProgress = null
+        offlineProgressBusy = false
     }
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
@@ -654,6 +803,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         bridge?.observers?.remove(observer)
         if (bound) context.unbindService(connection)
         files.shutdown()
+        offlineRouteWorker.shutdown()
         bridge = null
         bound = false
     }

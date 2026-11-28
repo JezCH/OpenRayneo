@@ -35,6 +35,8 @@ class NaverNavigationRegressionTest {
         assertEquals("인천시청", c.parse("인천시청까지 걸어서 안내해 줘")?.destination)
         assertEquals(false, c.parse("인천시청까지 걸어서 안내해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.naverRequested)
+        assertEquals(false, c.parse("집까지 길찾기 해 줘")?.naverRequested)
         assertEquals(true, c.parse("휴대폰에서 네이버지도 인천시청까지 걸어서 안내해 줘")?.phoneApp)
         assertEquals(true, c.parse("네이버지도에서 강남역 검색해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 강남역 검색해 줘")?.routeRequested)
@@ -438,4 +440,61 @@ class NaverNavigationRegressionTest {
         assertEquals(0L, closeMessage.mode)
         assertEquals(sid, org.json.JSONObject(closeMessage.json!!).getString("sid"))
     }
+
+    @Test fun offlineRouteProgressUsesFreshFixAndRejectsAmbiguousCrossing() {
+        fun pt(lat: Double, lon: Double) = NaverWalkingCourse.Point(lat,lon)
+        val points = listOf(pt(37.0,127.0),pt(37.001,127.0),pt(37.001,127.001))
+        val route = OfflineWalkingRoute.Route(NaverWalkingCourse.Course(points),
+            listOf(OfflineWalkingRoute.Turn(1,5,0,89.0,90)), listOf(0.0,100.0,180.0),180.0)
+        val fix = OfflineRouteProgress.Fix(pt(37.0005,127.0),5.0,1000L)
+        val progress = requireNotNull(OfflineRouteProgress.match(route,fix,1200L))
+        assertTrue(progress.remainingMeters in 140..150)
+        assertTrue(requireNotNull(progress.nextTurnMeters) in 54..57)
+        assertEquals(5, progress.nextTurn?.sourceCode)
+        assertEquals(130, progress.remainingEstimateSeconds)
+        // Real production mapping, not fixture-only values.
+        val wire=checkNotNull(OfflineNativeRoute.verifiedWire())
+        assertEquals(2,wire.travelMode)
+        assertEquals(1,wire.guidingState)
+        assertEquals(1,wire.unitSystem)
+        assertEquals(1,wire.drivingSide)
+        assertEquals(0,wire.noManeuver)
+        val profile=NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            wire.travelMode,"ko-KR","KR",wire.unitSystem,wire.drivingSide,"overseas","선택한 경로")
+        val startJson=profile.json()
+        assertEquals(2,startJson.getInt("travel_mode"))
+        assertEquals(1,startJson.getInt("unit_system"))
+        assertEquals(1,startJson.getInt("driving_side"))
+        assertEquals(2,wire.maneuver(1))
+        assertEquals(4,wire.maneuver(2))
+        assertEquals(7,wire.maneuver(5))
+        assertEquals(19,wire.maneuver(14))
+        assertNull(wire.maneuver(15))
+        assertNull(wire.maneuver(17))
+        assertNull(wire.maneuver(18))
+        val guidance=checkNotNull(OfflineNativeRoute.snapshot(progress,wire,123))
+        assertEquals(7,guidance.maneuver)
+        assertEquals(123,guidance.speedMpsX100)
+        assertEquals("우회전",guidance.instruction)
+        assertNull(OfflineNativeRoute.snapshot(progress.copy(nextTurn=progress.nextTurn?.copy(sourceCode=15)),wire))
+        val circle=progress.copy(nextTurn=OfflineWalkingRoute.Turn(1,13,2,89.0,90))
+        assertEquals(2,checkNotNull(OfflineNativeRoute.snapshot(circle,wire)).roundaboutExit)
+        assertNull(OfflineNativeRoute.snapshot(circle.copy(nextTurn=circle.nextTurn?.copy(exit=0)),wire))
+        val finalLeg=checkNotNull(OfflineNativeRoute.snapshot(progress.copy(nextTurn=null,nextTurnMeters=null),wire))
+        assertEquals(0,finalLeg.maneuver)
+        assertEquals(-1,finalLeg.nextActionDistanceM)
+        assertFalse(finalLeg.arrival)
+        assertNull(OfflineRouteProgress.match(route,fix,4000L))
+        assertNull(OfflineRouteProgress.match(route,fix.copy(accuracyMeters=40.0),1200L))
+        assertNull(OfflineRouteProgress.match(route,fix.copy(point=pt(37.0005,127.01)),1200L))
+        // Out and back over the same geometry: proximity alone cannot
+        // distinguish two different progress positions.
+        val crossing = OfflineWalkingRoute.Route(
+            NaverWalkingCourse.Course(listOf(points[0],points[1],points[0])),
+            emptyList(),null,null)
+        assertNull(OfflineRouteProgress.match(crossing,fix,1200L))
+        val noEstimate = OfflineWalkingRoute.Route(route.course,emptyList(),null,null)
+        assertNull(requireNotNull(OfflineRouteProgress.match(noEstimate,fix,1200L)).remainingEstimateSeconds)
+    }
+
 }
