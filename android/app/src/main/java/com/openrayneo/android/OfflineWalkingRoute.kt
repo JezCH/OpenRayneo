@@ -22,7 +22,8 @@ internal object OfflineWalkingRoute {
     data class Turn(val pointIndex: Int, val sourceCode: Int, val exit: Int,
                     val nextDistanceMeters: Double, val angleDegrees: Int)
     class Route(val course: NaverWalkingCourse.Course, val turns: List<Turn>,
-                val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?) {
+                val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?,
+                val requestedEnd: NaverWalkingCourse.Point? = null) {
         override fun toString() = "OfflineWalkingRoute(points=${course.points.size})"
     }
 
@@ -138,6 +139,6 @@ internal object OfflineWalkingRoute {
             (0 until seq.length()).map { i -> requireNotNull(number(seq.opt(i))).also { require(it in 0.0..604800.0) } }
                 .also { require(it.zipWithNext().all { (x,y) -> x <= y }) }
         }
-        return Route(course,turns,times,total)
+        return Route(course,turns,times,total,end)
     }
 }

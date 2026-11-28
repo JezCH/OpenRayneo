@@ -762,6 +762,7 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
     val course = model.walkingCourse
     val offline = model.offlineWalkingRoute
     var offlineExpanded by remember { mutableStateOf(false) }
+    var autoReroute by remember { mutableStateOf(false) }
     // Coordinates are not rememberSaveable or stored in app settings.
     var start by remember { mutableStateOf("") }
     var end by remember { mutableStateOf("") }
@@ -788,10 +789,17 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                 ToolOutlinedButton(onClick = { model.checkOfflineRoutePosition() },
                     enabled = !model.walkingCourseBusy && !model.offlineProgressBusy && !model.offlineTracking,
                     modifier = Modifier.fillMaxWidth()) { Text("현재 위치로 경로 진행 확인 (1회)") }
-                ToolButton(onClick = { if(model.offlineTracking) model.stopOfflineTracking() else model.startOfflineTracking() },
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked=autoReroute,onCheckedChange={autoReroute=it},
+                        enabled=!model.offlineTracking && !model.walkingCourseBusy && offline.requestedEnd!=null)
+                    Text("확인된 경로 이탈 시 BRouter 자동 재탐색")
+                }
+                ToolButton(onClick = { if(model.offlineTracking) model.stopOfflineTracking() else model.startOfflineTracking(autoReroute) },
                     enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
                     modifier = Modifier.fillMaxWidth()) { Text(if(model.offlineTracking) "실시간 위치 갱신 종료" else "실시간 위치 갱신 시작") }
-                Note("이 화면에서 사용자가 시작한 동안만 GPS를 사용합니다. 안경 전송·자동 재탐색은 아직 연결되지 않습니다.")
+                Note("이 화면에서 시작한 동안만 GPS를 사용합니다. 재탐색을 선택하면 확인된 이탈 시 현재 위치를 기기의 BRouter에 전달합니다. 안경 전송은 아직 연결되지 않습니다.")
+                if(model.offlineRerouting) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                if(model.offlineRerouteStatus.isNotBlank()) Note(model.offlineRerouteStatus)
                 if(model.offlineTracking && model.offlineLiveMini==null) Note("유효한 경로상 GPS 위치 대기 중")
                 model.offlineLiveMini?.let { bytes ->
                     val live = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)?.asImageBitmap() }

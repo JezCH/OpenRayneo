@@ -308,6 +308,17 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private var trackingWorkerBusy=false
     private var latestFix: OfflineRouteProgress.Fix?=null
     private var fixRevision=0L
+    private var lastFixObservedAt=-1L
+    private var lastDeviationAt=-1L
+    private var firstDeviationAt=-1L
+    private var deviationCount=0
+    private var lastRerouteAt=-1L
+    private var autoOfflineReroute=false
+    var offlineRerouting by mutableStateOf(false)
+        private set
+    var offlineRerouteStatus by mutableStateOf("")
+        private set
+    private fun resetDeviation() { deviationCount=0; firstDeviationAt=-1L; lastDeviationAt=-1L }
     private var trackingExpiry: Runnable?=null
     fun stopOfflineTracking() {
         ++offlineTrackingGeneration
@@ -315,27 +326,42 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         offlineWatch=null
         offlineTracking=false
         latestFix=null
+        ++fixRevision
+        lastFixObservedAt=-1L
+        lastRerouteAt=-1L
+        autoOfflineReroute=false
+        offlineRerouting=false
+        offlineRerouteStatus=""
+        resetDeviation()
         trackingExpiry?.let(main::removeCallbacks)
         trackingExpiry=null
         offlineLiveMini=null
         offlineProgress=null
     }
-    fun startOfflineTracking() = attempt {
+    fun startOfflineTracking(autoReroute: Boolean = false) = attempt {
         val route=checkNotNull(offlineWalkingRoute) { "먼저 오프라인 경로를 계산하세요." }
         check(hostVisible && !walkingCourseBusy && !offlineProgressBusy && !offlineTracking) { "현재 경로 상태를 확인하세요." }
         val ticket=++offlineTrackingGeneration
         offlineProgress=null
         offlineLiveMini=null
         offlineTracking=true
+        autoOfflineReroute=autoReroute && route.requestedEnd!=null
+        offlineRerouteStatus=""
+        resetDeviation()
         try {
             offlineWatch=OfflineRouteLocation.watch(context) { fix ->
-                if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
-                    ++fixRevision
-                    latestFix=fix
+                if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible) {
                     if(fix==null) {
+                        ++fixRevision
+                        latestFix=null
+                        resetDeviation()
                         offlineProgress=null
                         offlineLiveMini=null
-                    } else processOfflineFix(route,ticket)
+                    } else if(fix.observedAtMs>lastFixObservedAt) {
+                        lastFixObservedAt=fix.observedAtMs
+                        latestFix=fix
+                        offlineWalkingRoute?.let { processOfflineFix(it,ticket) }
+                    }
                 }
             }
         } catch(failure: Exception) {
@@ -351,19 +377,23 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         trackingWorkerBusy=true
         offlineRouteWorker.execute {
             val result=runCatching {
-                val progress=OfflineRouteProgress.match(route,fix,android.os.SystemClock.elapsedRealtime()) ?: return@runCatching null
-                progress to NativeCourseRaster.render(route.course,NativeRasterFrame.View.MINI,fix.point)
+                val assessment=OfflineRouteProgress.assess(route,fix,android.os.SystemClock.elapsedRealtime())
+                assessment to assessment.progress?.let { NativeCourseRaster.render(route.course,NativeRasterFrame.View.MINI,fix.point) }
             }.getOrNull()
             main.post {
                 trackingWorkerBusy=false
                 if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
                     val age=android.os.SystemClock.elapsedRealtime()-fix.observedAtMs
-                    if(revision==fixRevision && result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS) {
-                        offlineProgress=result.first
+                    val fresh=revision==fixRevision && result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS
+                    val progress=if(fresh) result?.first?.progress else null
+                    if(progress!=null && result?.second!=null) {
+                        resetDeviation()
+                        offlineRerouteStatus=""
+                        offlineProgress=progress
                         offlineLiveMini=result.second
                         trackingExpiry?.let(main::removeCallbacks)
                         val expiry=Runnable {
-                            if(ticket==offlineTrackingGeneration && offlineProgress===result.first) {
+                            if(ticket==offlineTrackingGeneration && offlineProgress===progress) {
                                 offlineProgress=null
                                 offlineLiveMini=null
                             }
@@ -373,7 +403,54 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                     } else {
                         offlineProgress=null
                         offlineLiveMini=null
+                        if(fresh && result?.first?.confidentlyOffRoute==true) {
+                            if(lastDeviationAt<0 || fix.observedAtMs-lastDeviationAt>4_000L) resetDeviation()
+                            if(deviationCount==0) firstDeviationAt=fix.observedAtMs
+                            lastDeviationAt=fix.observedAtMs
+                            deviationCount++
+                            offlineRerouteStatus="경로 이탈 확인 중"
+                            val now=android.os.SystemClock.elapsedRealtime()
+                            if(autoOfflineReroute && deviationCount>=3 && fix.observedAtMs-firstDeviationAt>=2_000L &&
+                                (lastRerouteAt<0 || now-lastRerouteAt>=30_000L)) {
+                                rerouteOffline(route,fix,ticket)
+                            }
+                        } else {
+                            resetDeviation()
+                            offlineRerouteStatus="경로 위 위치를 확인할 수 없음 · 안내 보류"
+                        }
                     }
+                }
+                if(offlineTracking) offlineWalkingRoute?.let { processOfflineFix(it,offlineTrackingGeneration) }
+            }
+        }
+    }
+    /** Explicitly enabled foreground tracking only. Reuse the same local provider
+     * and original requested destination; never reroute ambiguous GPS fixes. */
+    private fun rerouteOffline(route: OfflineWalkingRoute.Route, fix: OfflineRouteProgress.Fix, ticket: Long) {
+        val end=route.requestedEnd ?: return
+        if(trackingWorkerBusy || !offlineTracking || ticket!=offlineTrackingGeneration) return
+        lastRerouteAt=android.os.SystemClock.elapsedRealtime()
+        resetDeviation()
+        trackingWorkerBusy=true
+        offlineRerouting=true
+        offlineRerouteStatus="BRouter 경로 재계산 중"
+        offlineRouteWorker.execute {
+            val result=runCatching {
+                val updated=OfflineWalkingRoute.calculate(context,fix.point,end)
+                updated to NativeCourseRaster.preview(updated.course)
+            }
+            main.post {
+                trackingWorkerBusy=false
+                if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
+                    offlineRerouting=false
+                    result.fold({ (updated,preview) ->
+                        offlineWalkingRoute=updated
+                        walkingCourse=updated.course
+                        walkingCourseRaster=preview
+                        offlineRerouteStatus="새 경로 확보 · 유효한 GPS 위치 대기"
+                    }, {
+                        offlineRerouteStatus="재탐색 실패 · 기존 경로 유지, 안내 보류"
+                    })
                 }
                 if(offlineTracking) offlineWalkingRoute?.let { processOfflineFix(it,offlineTrackingGeneration) }
             }
