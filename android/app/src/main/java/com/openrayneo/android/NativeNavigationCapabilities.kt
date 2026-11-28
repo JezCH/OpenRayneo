@@ -34,7 +34,8 @@ internal data class NativeNavigationCapabilities(
             if (body.opt("map_supported") != true || body.opt("map_frame_codec") != "PNG" ||
                 body.opt("single_frame_in_flight") != true) return null
             val fragment = body.opt("map_frame_fragment_size") as? Int ?: return null
-            if (fragment !in 1..4096) return null
+            // Stock assembler uses fixed 4096-byte slots, not arbitrary smaller chunks.
+            if (fragment != 4096) return null
             fun view(prefix: String, w: Int, h: Int, max: Int, count: Int): ViewLimits? {
                 if (body.opt("${prefix}_map_width") != w || body.opt("${prefix}_map_height") != h) return null
                 val bytes = body.opt("${prefix}_max_png_bytes") as? Int ?: return null

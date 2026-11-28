@@ -7,9 +7,10 @@ import org.json.JSONObject
  * Stock 1.0.6.11 raster wire contract, not a live navigation session.
  * Parser 0x1076073C, envelope 0x105C4038, reply builder 0x105C55B4,
  * runtime 0x10751F78 (Rayneo-Original runs 46126673732/46126706170).
- * The checksum algorithm/scope for the raster assembler has not been independently
- * established. The caller must supply a verified whole-frame checksum; do not
- * send a candidate CRC or invent a route/view identity on the production link.
+ * Assembly 0x10763A32..0x10763CB6 requires fixed 4096-byte slots and
+ * computes CRC32 over the complete PNG buffer via 0x105CA2D4 (reflected
+ * polynomial 0xEDB88320, initial/final XOR all ones). Evidence runs
+ * 46127164590 / 46127202707. No invented route/view identity.
  */
 internal object NativeRasterFrame {
     enum class View { MINI, OVERVIEW }
@@ -44,6 +45,14 @@ internal object NativeRasterFrame {
     internal class Encoded(
         val fragments: List<Fragment>, private val key: Key, private val crc: Long
     ) {
+        /** Stock status query 0x3A: no binary, mode=0, inner sequence=0.
+         * Use only on an active matching session after uncertain delivery. */
+        fun statusQuery(transportSequence: Int): ByteArray {
+            require(transportSequence in 0..65535)
+            return ProtocolCodec.display(0x20, transportSequence, 0x3a,
+                key.json().put("crc32", crc).toString())
+        }
+
         // No success inferred from transport ACK or GLASS_READY. A correlated
         // 0x36/code0 is an assembly/decode commit, not physical HUD visibility.
         fun reply(message: ProtocolCodec.Message): Reply? {
@@ -89,31 +98,34 @@ internal object NativeRasterFrame {
     }
 
     /** Wire-only construction. Requires positively negotiated limits, caller
-     * supplied route/view identity and a separately verified frame checksum.
+     * supplied route/view identity. Compute the checksum from the exact bytes.
      * No queue, retry or device writes occur here. */
     fun encode(limits: NativeNavigationCapabilities.RasterLimits, key: Key, view: View,
-               png: ByteArray, verifiedCrc32: Long): Encoded {
+               png: ByteArray): Encoded {
         val size = if (view == View.MINI) limits.mini else limits.overview
         val maxBytes = if (view == View.MINI) 65536 else 262144
         val maxFragments = if (view == View.MINI) 16 else 64
-        require(limits.fragmentBytes in 1..4096 && size.maxBytes in 1..maxBytes &&
+        require(limits.fragmentBytes == 4096 && size.maxBytes in 1..maxBytes &&
             size.maxFragments in 1..maxFragments)
         require(size.width == (if (view == View.MINI) 184 else 540) &&
             size.height == (if (view == View.MINI) 90 else 220))
-        require(verifiedCrc32 in 0..0xffffffffL && png.size in 1..size.maxBytes)
-        require(dimensionsMatch(png, size.width, size.height))
-        val count = (png.size + limits.fragmentBytes - 1) / limits.fragmentBytes
+        require(png.size in 1..size.maxBytes)
+        // Snapshot before hashing/fragmenting so the payload cannot change between operations.
+        val snapshot = png.copyOf()
+        require(dimensionsMatch(snapshot, size.width, size.height))
+        val crc = NativeRouteScene.crc32(snapshot)
+        val count = (snapshot.size + limits.fragmentBytes - 1) / limits.fragmentBytes
         require(count in 1..size.maxFragments)
         val fragments = (0 until count).map { index ->
             val offset = index * limits.fragmentBytes
-            val bytes = png.copyOfRange(offset, minOf(offset + limits.fragmentBytes, png.size))
+            val bytes = snapshot.copyOfRange(offset, minOf(offset + limits.fragmentBytes, snapshot.size))
             val header = key.json().put("view_mode", view.name).put("codec", "PNG")
                 .put("width", size.width).put("height", size.height)
-                .put("total_len", png.size).put("fragment_index", index)
+                .put("total_len", snapshot.size).put("fragment_index", index)
                 .put("fragment_count", count).put("fragment_offset", offset)
-                .put("fragment_len", bytes.size).put("crc32", verifiedCrc32).toString()
+                .put("fragment_len", bytes.size).put("crc32", crc).toString()
             Fragment(header, bytes)
         }
-        return Encoded(fragments, key, verifiedCrc32)
+        return Encoded(fragments, key, crc)
     }
 }
