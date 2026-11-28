@@ -96,6 +96,12 @@ internal class OfflineNativeRoute(
                 0, speedMpsX100 ?: -1, -1, progress.remainingMeters, -1, "", "",
                 "목적지 도착 범위 확인", false, true)
     }
+    // At most one automatic replacement per explicitly selected journey.
+    // A replacement route inherits a zero budget; no endless restart loop.
+    var remainingAutomaticReroutes = 1
+        internal set
+    val requestedEnd get() = course.requestedEnd
+    val confirmedDeviation get() = failureReason != null
     private val terminalTracker = OfflineRouteProgress.TerminalTracker()
     override var failureReason: String? = null
         private set
