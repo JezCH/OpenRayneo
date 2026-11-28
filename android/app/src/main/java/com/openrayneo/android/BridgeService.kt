@@ -821,6 +821,12 @@ internal class BridgeService : Service() {
             { id, signal -> dispatch(GlassesEvent.SessionSignal(id, signal)) },
             { id, packet -> if (audioOwner == id && state.session?.id == id) audio.accept(packet) },
             { dispatch(GlassesEvent.ExternalPage(it)) })
+        display.phonePromptLanguages = {
+            val cfg = settings.read()
+            val answer = KoreanLanguage.answerLanguage(cfg.optString("answerLanguage"))
+            if (translator.active) translator.promptLanguages(answer)
+            else NativeSpeechLanguage.source(cfg) to answer
+        }
         display.mayResumeNativeAudio = { id ->
             val current = state.session
             !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&

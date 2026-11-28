@@ -26,6 +26,9 @@ internal class GlassesDisplay(
     private var nativePaused = false
     // Called only on the same owned SID after a real peer resume event.
     var mayResumeNativeAudio: (Long) -> Boolean = { false }
+    // Phone-owned prompt metadata follows the actual active speech settings.
+    // Keep the separately tested legacy navigation layout unchanged.
+    var phonePromptLanguages: () -> Pair<String, String> = { "ko-KR" to "ko-KR" }
     private data class EarlyAudio(val packet: ByteArray, val sequence: Long, val source: String)
     private val earlyAudio = ArrayDeque<EarlyAudio>()
     private var earlyAudioBytes = 0
@@ -77,9 +80,10 @@ internal class GlassesDisplay(
             }
             return
         }
+        val (source, target) = if (next.mode == PageMode.NAVIGATION) "zh-CN" to "zh-CN" else phonePromptLanguages()
         val body = JSONObject().put("sid", id).put("trigger", 1).put("force", false).put("code", 0)
             .put("settings", JSONObject().put("mode", if (next.mode == PageMode.NAVIGATION) "translation" else "conversation")
-                .put("source_language", "zh-CN").put("target_language", "zh-CN")
+                .put("source_language", source).put("target_language", target)
                 .put("save_audio", false).put("direction", "ahead"))
         schedule(timeout, 8_000)
         send(protocol(next), 1, body) { if (sid == id && it.isFailure) fail("표시 시작 전송 실패") }

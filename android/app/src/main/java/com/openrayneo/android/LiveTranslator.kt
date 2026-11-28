@@ -37,6 +37,17 @@ internal class LiveTranslator(
     private var wakeAction: ((String) -> Unit)? = null
     private var keywordWakeOptions: KoreanWakeOptions? = null
     val wakeActive get() = active && wakeWindow != null
+    // Speech configuration is assigned before opening the page; expose
+    // metadata only, not credentials or mutable model settings.
+    fun promptLanguages(answerLocale: String): Pair<String, String> {
+        check(active)
+        val source = NativeSpeechLanguage.source(config)
+        return source to when {
+            mediaSessionId != null && mediaTranslate -> "ko-KR"
+            captionOnly -> source
+            else -> answerLocale
+        }
+    }
     val offline = OfflineTranslation(main, changed)
     val mediaTranslation = MediaLocalTranslation(context, main, changed)
     private var conversationTranslationId: String? = null
@@ -114,7 +125,7 @@ internal class LiveTranslator(
             return
         }
         val language = request.languageHint?.takeUnless { it == "auto" }
-            ?: SpeechRounds.languageHints(settings).takeIf { it in setOf("ko", "en", "zh", "ja") }.orEmpty()
+            ?: SpeechRounds.languageHints(settings)
         val preferred = JSONObject(settings.toString()).put("asrLanguage", language)
         val engine = SpeechRounds.engine(preferred)
         // The installed multilingual SenseVoice already supports these
