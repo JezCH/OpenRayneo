@@ -43,12 +43,14 @@ internal class BridgeService : Service() {
     // Actual peer capabilities belong to this authenticated connection only.
     private var nativeNavCapabilities: NativeNavigationCapabilities? = null
     private var nativeNavAutoQuerySent = false
+    private var nativeNavCoreReadbackFinished = false
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     private fun resetNativeNavigationProbe() {
         navProbeRevision++
         pendingNavProbe = null
         nativeNavCapabilities = null
         nativeNavAutoQuerySent = false
+        nativeNavCoreReadbackFinished = false
         nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     }
     /** Read-only peer negotiation, once automatically after core readback and
@@ -59,7 +61,7 @@ internal class BridgeService : Service() {
             !conversations.state.stopping && !translator.active && !voiceTransport.nativeActive &&
             !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null
     private fun negotiateNativeNavigation() {
-        if (nativeNavAutoQuerySent || !canQueryNativeNavigation()) return
+        if (!nativeNavCoreReadbackFinished || nativeNavAutoQuerySent || !canQueryNativeNavigation()) return
         probeNativeNavigation()
     }
     fun probeNativeNavigation() {
@@ -431,6 +433,9 @@ internal class BridgeService : Service() {
             pollVoiceNavigation()
             pollNavigationVoiceHandoff()
             pollEndedNavigation()
+            // A recovered capture or other busy mode can defer the initial query.
+            // Reconsider eligibility on the existing tick, not by retransmitting a sent query.
+            negotiateNativeNavigation()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
             updateNotification()
             main.postDelayed(this, 1_000)
@@ -696,6 +701,7 @@ internal class BridgeService : Service() {
                         // Negotiate the real stock navigation profile without
                         // making the user run a diagnostic command. A queued
                         // callback must not cross an authenticated link change.
+                        nativeNavCoreReadbackFinished = true
                         negotiateNativeNavigation()
                     } }.onFailure { onLog("연결 초기화 시작 실패") }
                 }
