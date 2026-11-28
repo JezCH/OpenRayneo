@@ -722,7 +722,7 @@ private fun NativeNavigationPresetSettings(model: AppModel) {
     var saved by remember { mutableStateOf(runCatching { NativeNavigationPresets.read(context) }.getOrNull()) }
     var home by remember { mutableStateOf(saved?.home?.destination.orEmpty()) }
     var company by remember { mutableStateOf(saved?.company?.destination.orEmpty()) }
-    var confirm by remember { mutableStateOf(false) }
+    var confirmEpoch by remember { mutableStateOf<Long?>(null) }
     val s = model.state
     val unchanged = saved != null && home.trim() == saved?.home?.destination.orEmpty() &&
         company.trim() == saved?.company?.destination.orEmpty()
@@ -743,25 +743,25 @@ private fun NativeNavigationPresetSettings(model: AppModel) {
         Note("빈 칸을 저장하면 휴대폰에서만 해당 목적지를 지웁니다. 안경 저장값은 자동 변경하지 않습니다.")
         HorizontalDivider()
         Text("순정 목적지 동기화 (개발 검증)", style = MaterialTheme.typography.titleMedium)
-        Note("안경의 집·회사 슬롯을 모두 교체합니다. 주소 대신 목적지 ID만 보냅니다. 순정 경로 공급과 안경 내비 화면 실행은 아직 미완성입니다.")
+        Note("안경의 집·회사 슬롯을 모두 교체합니다. 주소 대신 목적지 ID만 보냅니다. 저장 실패 시 일부 값이 변경되었을 수 있으므로 자동 재전송하지 않습니다. 순정 경로 공급과 안경 내비 화면 실행은 아직 미완성입니다.")
         Note(if (s.nativePresetSyncedRevision != null && s.nativePresetSyncedRevision != saved?.revision)
             "휴대폰 목적지 변경 · 다시 동기화 필요" else s.nativePresetStatus.ifBlank { "안경 연결 후 동기화 가능" })
-        ToolOutlinedButton(onClick = { confirm = true },
+        ToolOutlinedButton(onClick = { confirmEpoch = s.nativePresetConsentEpoch },
             enabled = s.nativePresetCanSync && !s.nativePresetPending && unchanged && saved?.complete == true,
             modifier = Modifier.fillMaxWidth()) { Text("두 목적지 안경 동기화") }
         if (s.nativePresetPending) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     }
-    if (confirm) AlertDialog(
-        onDismissRequest = { confirm = false },
+    confirmEpoch?.let { epoch -> AlertDialog(
+        onDismissRequest = { confirmEpoch = null },
         title = { Text("안경의 두 목적지를 교체할까요?") },
         text = { Text("집: " + saved?.home?.destination.orEmpty() + "\n회사: " + saved?.company?.destination.orEmpty() +
             "\n\n기존 안경의 집·회사 저장값을 교체하는 개발 검증입니다. 순정 화면 길 안내가 아직 작동한다는 뜻은 아닙니다.") },
         confirmButton = { TextButton(onClick = {
-            confirm = false
-            model.attempt { model.service().syncNativeNavigationPresets(checkNotNull(saved).revision) }
+            confirmEpoch = null
+            model.attempt { model.service().syncNativeNavigationPresets(checkNotNull(saved).revision, epoch) }
         }) { Text("교체 및 동기화") } },
-        dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } }
-    )
+        dismissButton = { TextButton(onClick = { confirmEpoch = null }) { Text("취소") } }
+    ) }
 }
 
 @Composable

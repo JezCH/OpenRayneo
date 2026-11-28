@@ -44,10 +44,12 @@ internal class BridgeService : Service() {
     var nativePresetStatus = "안경 목적지 동기화 미실행"; private set
     var nativePresetSyncedRevision: Int? = null; private set
     val nativePresetPending get() = pendingNativePreset != null
+    val nativePresetConsentEpoch get() = navProbeRevision
     val nativePresetCanSync get() = nativeNavCoreReadbackFinished &&
         nativeNavCapabilities?.let { it.phoneGuidance && it.guidance } == true &&
         canQueryNativeNavigation() && state.ownership == DisplayOwnership.APP &&
-        !deviceSettings.state.busy && !mediaCaptionState.busy && !wakePending &&
+        !deviceSettings.state.busy && deviceSettings.state.initialization.recorder == NativeRecorderState.IDLE &&
+        !mediaCaptionState.busy && !wakePending &&
         !speechOutput.speaking && !agent.running && !codex.running && !navigation.enabled
     // Actual peer capabilities belong to this authenticated connection only.
     private var nativeNavCapabilities: NativeNavigationCapabilities? = null
@@ -114,7 +116,8 @@ internal class BridgeService : Service() {
     }
     /** Explicit UI-confirmed two-slot replacement only. No automatic writes or
      * retransmits. Successful transport write is not a saved preset. */
-    fun syncNativeNavigationPresets(expectedRevision: Int) {
+    fun syncNativeNavigationPresets(expectedRevision: Int, expectedEpoch: Long) {
+        check(expectedEpoch == nativePresetConsentEpoch) { "안경 연결 또는 기능 조회 상태가 바뀌었습니다. 다시 확인하세요." }
         check(nativePresetCanSync) { "순정 내비 기능 회신 및 유휴 연결 상태를 먼저 확인하세요." }
         val config = NativeNavigationPresets.read(this)
         check(config.complete && config.revision == expectedRevision) { "두 목적지 설정을 저장하고 다시 확인하세요." }
