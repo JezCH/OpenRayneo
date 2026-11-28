@@ -497,6 +497,20 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text("최근 연결 종료 및 복구", style = MaterialTheme.typography.titleMedium)
             OfficialAppConnectionControls()
+            if (s.available) {
+                Note("장애 재현 전 실제 연결 조건, 재현 직후 안경에 나타난 결과를 눌러 기록하세요. 버튼은 연결을 변경하지 않습니다.")
+                listOf(
+                    "official-only" to "공식 앱만 연결한 상태 기록",
+                    "own-only" to "자체 앱만 연결한 상태 기록",
+                    "coexistence-observed" to "두 앱 연결 상태 관찰 기록",
+                    "official-app-required-on-hud" to "안경에 공식 앱 연결 안내가 나타남",
+                    "native-feature-worked-on-hud" to "안경 순정 기능이 실제 작동함"
+                ).forEach { (key, label) ->
+                    TextButton(onClick = {
+                        model.attempt { model.service().markLinkDiagnostic(key); model.notice = "실기 관찰 기록 완료" }
+                    }) { Text(label) }
+                }
+            }
             val health = if (s.available) runCatching { model.service().connectionHealth }.getOrDefault("진단 준비 중") else "진단 준비 중"
             Note(health)
             if (s.available) {
