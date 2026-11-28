@@ -35,6 +35,8 @@ class NaverNavigationRegressionTest {
         assertEquals("인천시청", c.parse("인천시청까지 걸어서 안내해 줘")?.destination)
         assertEquals(false, c.parse("인천시청까지 걸어서 안내해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.naverRequested)
+        assertEquals(false, c.parse("집까지 길찾기 해 줘")?.naverRequested)
         assertEquals(true, c.parse("휴대폰에서 네이버지도 인천시청까지 걸어서 안내해 줘")?.phoneApp)
         assertEquals(true, c.parse("네이버지도에서 강남역 검색해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 강남역 검색해 줘")?.routeRequested)

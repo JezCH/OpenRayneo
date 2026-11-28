@@ -704,6 +704,7 @@ private fun NavigationScreen(
         }
         item { NativeNavigationStartTest(model) }
         item { NativeNavigationPresetSettings(model) }
+        item { OfflineNativeRoutingSettings(model) }
         item { NaverWalkingCourseSettings(model) }
         item { NaverPlaceLookupSettings(model) }
         item {
@@ -752,6 +753,39 @@ private fun NativeNavigationStartTest(model: AppModel) {
         }) { Text("정지 상태에서 시험") } },
         dismissButton = { TextButton(onClick = { consentEpoch = null }) { Text("취소") } }
     ) }
+}
+
+@Composable
+private fun OfflineNativeRoutingSettings(model: AppModel) {
+    val context = model.getApplication<android.app.Application>()
+    var saved by remember { mutableStateOf(runCatching { OfflineNativeRouteSettings.read(context) }.getOrNull()) }
+    var enabled by remember { mutableStateOf(saved?.enabled == true) }
+    var home by remember { mutableStateOf(saved?.home.orEmpty()) }
+    var company by remember { mutableStateOf(saved?.company.orEmpty()) }
+    val wireReady = runCatching { model.service().nativeOfflineWireAvailable }.getOrDefault(false)
+    ContentCard {
+        Text("BRouter 순정 도보 내비 (별도 선택)", style = MaterialTheme.typography.titleMedium)
+        Note("네이버가 아닌 오픈스트리트맵 기반 로컬 계산입니다. BRouter 및 지역 데이터를 직접 준비해야 합니다. 사용자가 이 공급자를 선택한 경우에만 목적지 좌표와 실측 GPS를 BRouter에 전달합니다. 네이버 요청은 자동 전환하지 않습니다.")
+        if (saved == null) Note("기존 설정 읽기 실패 · 덮어쓰지 않음")
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("오프라인 도보 경로 선택", modifier = Modifier.weight(1f))
+            Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = saved != null && wireReady)
+        }
+        OutlinedTextField(home, { home = it }, singleLine = true, label = { Text("집 위도, 경도") },
+            modifier = Modifier.fillMaxWidth(), enabled = saved != null && wireReady)
+        OutlinedTextField(company, { company = it }, singleLine = true, label = { Text("회사 위도, 경도") },
+            modifier = Modifier.fillMaxWidth(), enabled = saved != null && wireReady)
+        ToolButton(onClick = { model.attempt {
+            check(!model.state.nativeStartTestPending)
+            val next = OfflineNativeRouteSettings.Config(enabled, home, company)
+            OfflineNativeRouteSettings.save(context, next)
+            saved = OfflineNativeRouteSettings.read(context)
+        } }, enabled = saved != null && wireReady && !model.state.nativeStartTestPending,
+            modifier = Modifier.fillMaxWidth()) { Text("선택 및 좌표 저장") }
+        Note(if (wireReady)
+            "안경의 집·회사 메뉴를 사용하려면 위의 순정 목적지 동기화도 완료해야 합니다. 도보 경로만 계산하며 기존 네이버 목적지와 설정은 그대로 유지됩니다."
+            else "순정 이동수단·안내 상태의 정확한 통신값이 확인되기 전에는 활성화할 수 없습니다.")
+    }
 }
 
 @Composable

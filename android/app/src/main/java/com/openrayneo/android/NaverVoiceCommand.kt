@@ -29,7 +29,7 @@ internal object NaverVoiceCommand {
         }
     }
     data class Request(val destination: String, val mode: Mode, val routeRequested: Boolean = true,
-                       val phoneApp: Boolean = false)
+                       val phoneApp: Boolean = false, val naverRequested: Boolean = false)
     private val prefix = Regex("^(?:네이버\\s*지도(?:에서|로)?\\s+)")
     private val route = Regex("^(.+?)(?:까지|으로|로)\\s*(?:(걸어서|도보로|차로|자동차로|대중교통으로)\\s*)?(?:길\\s*(?:찾기|안내)(?:를)?\\s*(?:해\\s*줘|해\\s*주세요|시작해\\s*줘|시작해\\s*주세요|해)|안내\\s*(?:해\\s*줘|해\\s*주세요|해)|데려다\\s*줘)$")
     private val search = Regex("^(.+?)\\s+(?:검색|찾아)\\s*(?:해\\s*)?(?:줘|주세요)$")
@@ -56,6 +56,6 @@ internal object NaverVoiceCommand {
             else -> Mode.UNSPECIFIED
         }
         return Request(place, mode, routeRequested = match != null,
-            phoneApp = (phone && explicitMap) || (explicitMap && match == null))
+            phoneApp = (phone && explicitMap) || (explicitMap && match == null), naverRequested = explicitMap)
     }
 }

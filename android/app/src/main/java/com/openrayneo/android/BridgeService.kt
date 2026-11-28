@@ -58,8 +58,12 @@ internal class BridgeService : Service() {
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
-        val destination = config.resolve(request.alias) ?: return
-        val status = startPreparedNativeRoute(destination, request.sid)
+        if (nativePresetSyncedRevision != config.revision) {
+            noteNativeMenu(0x20, "현재 연결에서 목적지 동기화 확인 필요")
+            return
+        }
+        val status = requestOfflineNativeRoute(request.alias, NaverVoiceCommand.Mode.WALK, request.sid)
+            ?: "순정 경로 공급 미연동 · 네이버지도 자동 실행하지 않음"
         noteNativeMenu(0x20, request.alias + " · " + status)
     }
     val nativePresetPending get() = pendingNativePreset != null
@@ -85,7 +89,7 @@ internal class BridgeService : Service() {
     }
     private var nativeStartProbe: NativeStartProbe? = null
     var nativeStartTestStatus = "순정 시작·종료 시험 미실행"; private set
-    val nativeStartTestPending get() = nativeStartProbe != null || queuedNativeDestination != null
+    val nativeStartTestPending get() = nativeStartProbe != null || nativeRouteWaiting
     val nativeStartTestCanRun get() = nativePresetCanSync &&
         nativeNavCapabilities?.raster != null && nativeStartProbe == null &&
         state.error == null && pendingNativeHint == null && audioOwner == null &&
@@ -97,7 +101,71 @@ internal class BridgeService : Service() {
     private var preparedNativeRoute: NativeLiveNavigation.Route? = null
     private var queuedNativeDestination: String? = null
     private var queuedNativeDeadline = 0L
-    val nativeRouteWaiting get() = queuedNativeDestination != null
+    private var queuedNativePeerSid: String? = null
+    private class OfflinePreparation(val destination: String, val peerSid: String?, val epoch: String, val deadline: Long) {
+        var future: java.util.concurrent.Future<*>? = null
+    }
+    private var offlinePreparation: OfflinePreparation? = null
+    private val nativeRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    val nativeRouteWaiting get() = queuedNativeDestination != null || offlinePreparation != null
+    private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null): String? {
+        val config = runCatching { OfflineNativeRouteSettings.read(this) }.getOrNull() ?: return null
+        if (!config.enabled) return null
+        if (mode !in setOf(NaverVoiceCommand.Mode.WALK, NaverVoiceCommand.Mode.UNSPECIFIED))
+            return "선택한 오프라인 공급자는 도보 전용입니다."
+        val point = config.resolve(destination) ?: return "오프라인 집·회사 좌표 또는 실제 도착 좌표를 설정하세요."
+        val wire = OfflineNativeRoute.verifiedWire() ?: return "순정 도보 통신 규격 검증 필요 · 전송하지 않음"
+        if (destroyed || !foreground || state.link.phase != LinkPhase.FULL || state.disconnecting ||
+            nativeStartProbe != null || nativeRouteWaiting || nativeNavCapabilities?.raster == null)
+            return "순정 내비 연결과 기존 세션 상태를 확인하세요."
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return "정확한 위치 권한이 필요합니다."
+        if (hostVisible) runCatching { enableLocationWhileVisible() }
+        if ((foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) == 0)
+            return "앱에서 위치 전경 서비스를 먼저 시작하세요."
+        val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L)
+        offlinePreparation = pending
+        nativeStartTestStatus = "실제 현재 위치와 BRouter 도보 경로 계산 중"
+        pending.future = nativeRouteWorker.submit {
+            val result = runCatching {
+                val fix = checkNotNull(OfflineRouteLocation.current(this)) { "정확한 GPS 위치 미확인" }
+                check(fix.accuracyMeters <= 25.0) { "정확한 GPS 위치 미확인" }
+                OfflineWalkingRoute.calculate(this, fix.point, point)
+            }
+            main.post {
+                if (offlinePreparation !== pending) return@post
+                offlinePreparation = null
+                if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
+                    nativePresetConsentEpoch != pending.epoch || SystemClock.elapsedRealtime() >= pending.deadline) {
+                    nativeStartTestStatus = "순정 경로 요청 만료 또는 연결 변경"
+                    notifyUI()
+                    return@post
+                }
+                result.fold({ course ->
+                    runCatching { prepareCalculatedRoute(course, destination, wire, pending.peerSid) }
+                        .onFailure { nativeStartTestStatus = "순정 경로 준비 실패 · GPS/연결 상태 확인"; notifyUI() }
+                }, {
+                    nativeStartTestStatus = "오프라인 경로 계산 실패 · BRouter 설치·데이터·GPS 확인"
+                    notifyUI()
+                })
+            }
+        }
+        notifyUI()
+        return nativeStartTestStatus
+    }
+    private fun prepareCalculatedRoute(course: OfflineWalkingRoute.Route, destination: String,
+                                       wire: OfflineNativeRoute.Wire, peerSid: String? = null) {
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            wire.travelMode, "ko-KR", "KR", wire.unitSystem, wire.drivingSide, "overseas",
+            destination.takeIf { it.toByteArray(Charsets.UTF_8).size <= 96 } ?: "선택한 도보 경로")
+        val route = OfflineNativeRoute(this, course, params, wire) { pumpNativeNavigation() }
+        try { setPreparedNativeRoute(route) } catch (error: Exception) { route.close(); throw error }
+        queuedNativeDestination = params.destination
+        queuedNativePeerSid = peerSid
+        queuedNativeDeadline = SystemClock.elapsedRealtime() + 20_000L
+        nativeStartTestStatus = "실제 도보 경로 · 정확한 경로상 GPS 위치 대기"
+        notifyUI()
+    }
     val nativeOfflineWireAvailable get() = OfflineNativeRoute.verifiedWire() != null
     fun startCalculatedOfflineNativeRoute(course: OfflineWalkingRoute.Route) {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -111,18 +179,11 @@ internal class BridgeService : Service() {
         check(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED) { "정확한 위치 권한이 필요합니다." }
         enableLocationWhileVisible()
-        check(foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0) {
+        check((foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
             "위치 전경 서비스가 실행되어야 합니다."
         }
-        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
-            wire.travelMode, "ko-KR", "KR", wire.unitSystem, wire.drivingSide,
-            "overseas", "선택한 BRouter 도보 경로")
-        val route = OfflineNativeRoute(this, course, params, wire) { pumpNativeNavigation() }
-        setPreparedNativeRoute(route)
-        queuedNativeDestination = params.destination
-        queuedNativeDeadline = SystemClock.elapsedRealtime() + 20_000L
-        nativeStartTestStatus = "실제 도보 경로 · 정확한 경로상 GPS 위치 대기"
-        notifyUI()
+        check(!nativeRouteWaiting) { "기존 순정 경로 요청을 먼저 취소하세요." }
+        prepareCalculatedRoute(course, "선택한 BRouter 도보 경로", wire)
     }
     internal fun setPreparedNativeRoute(route: NativeLiveNavigation.Route) {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -131,9 +192,12 @@ internal class BridgeService : Service() {
         preparedNativeRoute = route
     }
     private fun clearPreparedNativeRoute() {
+        offlinePreparation?.future?.cancel(true)
+        offlinePreparation = null
         preparedNativeRoute?.let { runCatching { it.close() } }
         preparedNativeRoute = null
         queuedNativeDestination = null
+        queuedNativePeerSid = null
     }
     private fun startPreparedNativeRoute(destination: String, peerSid: String? = null): String {
         val route = preparedNativeRoute?.takeIf { it.parameters.destination == destination }
@@ -156,6 +220,7 @@ internal class BridgeService : Service() {
         val probe = NativeStartProbe(session, live)
         preparedNativeRoute = null
         queuedNativeDestination = null
+        queuedNativePeerSid = null
         nativeStartProbe = probe
         dispatch(GlassesEvent.ReserveNativeNavigation)
         if (state.intent != DisplayIntent.NativeNavigation) {
@@ -179,6 +244,11 @@ internal class BridgeService : Service() {
         return nativeStartTestStatus
     }
     private fun pumpNativeNavigation() {
+        if (offlinePreparation?.let { SystemClock.elapsedRealtime() >= it.deadline } == true) {
+            clearPreparedNativeRoute()
+            nativeStartTestStatus = "오프라인 경로 계산 대기 만료"
+            notifyUI()
+        }
         val destination = queuedNativeDestination
         if (destination != null) {
             if (SystemClock.elapsedRealtime() >= queuedNativeDeadline) {
@@ -188,8 +258,10 @@ internal class BridgeService : Service() {
                 notifyUI()
             } else if (nativeStartTestCanRun &&
                 preparedNativeRoute?.observation()?.guidance?.freshAt(SystemClock.elapsedRealtime()) == true) {
+                val peerSid = queuedNativePeerSid
                 queuedNativeDestination = null
-                navigationSwitchStatus = startPreparedNativeRoute(destination)
+                queuedNativePeerSid = null
+                navigationSwitchStatus = startPreparedNativeRoute(destination, peerSid)
                 notifyUI()
             }
         }
@@ -255,7 +327,7 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     fun cancelNativeStartTest() {
-        if (queuedNativeDestination != null || preparedNativeRoute != null) {
+        if (nativeRouteWaiting || preparedNativeRoute != null) {
             clearPreparedNativeRoute()
             nativeStartTestStatus = "순정 내비 시작 대기 취소"
             notifyUI()
@@ -485,6 +557,15 @@ internal class BridgeService : Service() {
                 if (matched != null && config != null) offerPresetHandoff(matched, config)
             }
             3 -> {
+                val sid = offlinePreparation?.peerSid ?: queuedNativePeerSid
+                if (sid != null && message.mode == 2L && message.sequence == 0L &&
+                    message.audio?.isNotEmpty() != true && message.json.orEmpty().length in 1..8192) {
+                    val body = runCatching { JSONObject(message.json!!) }.getOrNull()
+                    if (body?.opt("sid") == sid && (body.opt("reason_code") as? Int) in 1..7) {
+                        clearPreparedNativeRoute()
+                        nativeStartTestStatus = "안경에서 순정 경로 요청 취소"
+                    }
+                }
                 val pending = pendingPresetHandoff
                 if (pending != null && message.mode == 2L && message.sequence == 0L &&
                     message.audio?.isNotEmpty() != true && message.json.orEmpty().length in 1..8192) {
@@ -1027,7 +1108,7 @@ internal class BridgeService : Service() {
         try {
             while (events.isNotEmpty()) {
                 val currentEvent = events.removeFirst()
-                if (queuedNativeDestination != null &&
+                if (nativeRouteWaiting &&
                     (currentEvent == GlassesEvent.StopNavigation || currentEvent == GlassesEvent.PauseDisplay ||
                         currentEvent == GlassesEvent.Disconnect || currentEvent == GlassesEvent.BeginConnection ||
                         currentEvent is GlassesEvent.ExternalPage ||
@@ -1292,7 +1373,7 @@ internal class BridgeService : Service() {
         NaverVoiceCommand.Control.START_NATIVE -> requestNativeNavigation(null)
         NaverVoiceCommand.Control.STOP_NATIVE -> {
             val active = nativeStartProbe != null
-            val queued = queuedNativeDestination != null
+            val queued = nativeRouteWaiting
             clearPreparedNativeRoute()
             if (active) { cancelNativeStartTest(); "순정 내비 종료 요청을 전송합니다." }
             else if (queued) "순정 내비 시작 대기를 취소했습니다."
@@ -1383,15 +1464,12 @@ internal class BridgeService : Service() {
             }
             nativeNavCapabilities?.raster == null ->
                 "현재 연결에서 순정 PNG 내비 프로필을 확인하지 못했습니다."
+            nativeRouteWaiting -> nativeStartTestStatus
             request == null -> preparedNativeRoute?.let { startPreparedNativeRoute(it.parameters.destination) }
-                ?: "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
-            else -> {
-                val destination = if (request.destination in setOf("집", "회사"))
-                    runCatching { NativeNavigationPresets.read(this).resolve(request.destination) }.getOrNull()
-                    else request.destination
-                if (destination == null) "길 안내 화면에서 해당 목적지를 먼저 등록하세요."
-                else startPreparedNativeRoute(destination)
-            }
+                ?: "순정 내비 목적지를 지정하세요. 휴대폰 지도 앱은 열지 않았습니다."
+            request.naverRequested -> "네이버 실시간 순정 경로 공급 미연동 · 다른 공급자로 자동 전환하지 않음"
+            else -> requestOfflineNativeRoute(request.destination, request.mode)
+                ?: "네이버 실시간 순정 경로 공급 미연동 · 다른 공급자로 자동 전환하지 않음"
         }
         navigationSwitchStatus = status
         notifyUI()
@@ -3184,7 +3262,7 @@ internal class BridgeService : Service() {
         when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
                 .put("notificationPresent", navigation.selected != null)
-                .put("nativeSessionPending", nativeStartProbe != null || queuedNativeDestination != null)
+                .put("nativeSessionPending", nativeStartProbe != null || nativeRouteWaiting)
                 .put("nativeStatus", nativeStartTestStatus)
                 .put("status", if (nativeStartProbe != null) nativeStartTestStatus else navigation.status)))
             "native_navigation_start" -> {
@@ -3197,7 +3275,7 @@ internal class BridgeService : Service() {
                 val status = requestNativeNavigation(request)
                 completion(Result.success(JSONObject()
                     .put("started", nativeStartProbe?.let { it.live != null && it.readyObserved && !it.closing } == true)
-                    .put("pending", queuedNativeDestination != null || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
+                    .put("pending", nativeRouteWaiting || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
                     .put("status", status)))
             }
             "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("mapNavigationChanged", false).put("provider", "naver").put("gaodeNavigationChanged", false))) }
@@ -3346,6 +3424,7 @@ internal class BridgeService : Service() {
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         nativeStartProbe?.live?.close()
         clearPreparedNativeRoute()
+        nativeRouteWorker.shutdownNow()
         nativeStartProbe = null
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         clearVoiceNavigation()
