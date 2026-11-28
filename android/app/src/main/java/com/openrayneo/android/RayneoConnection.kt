@@ -412,7 +412,18 @@ internal class RayneoConnection(private val context: Context, private val listen
                         if (bleOnly) log("BLE 전송 확인 수신: seq=${frame.sequence}")
                     } else {
                         if (frame.requiresAcknowledgement) {
-                            enqueueBleFrame(ProtocolCodec.acknowledgement(frame), null)
+                            val ack = ProtocolCodec.acknowledgement(frame)
+                            // Stock Android SDK x0.b chooses an available SPP path
+                            // for automatic transport responses, otherwise BLE.
+                            // Before authenticated SPP readiness (or while repairing
+                            // it), preserve the BLE path. Never replay an ambiguous ACK.
+                            if (authenticationHandled && ready && !bleOnly && socket != null) {
+                                sendFrame(ack) { result ->
+                                    result.onFailure { log("자동 확인 응답 SPP 전송 실패: ${it.javaClass.simpleName}") }
+                                }
+                            } else {
+                                enqueueBleFrame(ack, null)
+                            }
                         }
                         if (frame.protocol == 0x10) processPairing(frame)
                         else if (frame.protocol == 0x06 && !bleOnly &&
