@@ -121,7 +121,10 @@ internal class BridgeService : Service() {
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     // One explicitly consented, stationary START/READY/END round trip. It is
     // a real stock session, but never sends 0x34/0x35/0x3F or a fabricated route.
+    private data class OfflineReroute(val destination: String, val point: NaverWalkingCourse.Point,
+                                      val epoch: String)
     private class NativeStartProbe(val session: NativeNavigationStartup.Session, val live: NativeLiveNavigation? = null) {
+        var reroute: OfflineReroute? = null
         var closing = false
         var readyObserved = false
         var closeWriteCompleted = false
@@ -157,12 +160,18 @@ internal class BridgeService : Service() {
     private var offlinePreparation: OfflinePreparation? = null
     private val nativeRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     val nativeRouteWaiting get() = queuedNativeDestination != null || offlinePreparation != null
-    private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null): String? {
+    private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null,
+                                          reroute: OfflineReroute? = null): String? {
         val config = runCatching { OfflineNativeRouteSettings.read(this) }.getOrNull() ?: return null
         if (!config.enabled) return null
         if (mode !in setOf(NaverVoiceCommand.Mode.WALK, NaverVoiceCommand.Mode.UNSPECIFIED))
             return "선택한 오프라인 공급자는 도보 전용입니다."
-        val point = config.resolve(destination) ?: return "오프라인 집·회사 좌표 또는 실제 도착 좌표를 설정하세요."
+        if (reroute != null && (peerSid != null || reroute.epoch != nativePresetConsentEpoch))
+            return "재탐색 취소 · 연결 변경"
+        // Keep the original destination coordinate, not a changed preset
+        // or a provider-snapped endpoint. Only the selected provider is used.
+        val point = reroute?.point ?: config.resolve(destination)
+            ?: return "오프라인 집·회사 좌표 또는 실제 도착 좌표를 설정하세요."
         val wire = OfflineNativeRoute.verifiedWire() ?: return "순정 도보 통신 규격 검증 필요 · 전송하지 않음"
         if (destroyed || !foreground || state.link.phase != LinkPhase.FULL || state.disconnecting ||
             nativeStartProbe != null || nativeRouteWaiting || nativeNavCapabilities?.raster == null)
@@ -174,7 +183,8 @@ internal class BridgeService : Service() {
             return "앱에서 위치 전경 서비스를 먼저 시작하세요."
         val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L)
         offlinePreparation = pending
-        nativeStartTestStatus = "실제 현재 위치와 BRouter 도보 경로 계산 중"
+        nativeStartTestStatus = if (reroute == null) "실제 현재 위치와 BRouter 도보 경로 계산 중"
+            else "실제 현재 위치에서 원래 목적지까지 BRouter 재탐색 중"
         pending.future = nativeRouteWorker.submit {
             val result = runCatching {
                 val fix = checkNotNull(OfflineRouteLocation.current(this)) { "정확한 GPS 위치 미확인" }
@@ -191,7 +201,13 @@ internal class BridgeService : Service() {
                     return@post
                 }
                 result.fold({ course ->
-                    runCatching { prepareCalculatedRoute(course, destination, wire, pending.peerSid) }
+                    runCatching {
+                        // Recheck explicit provider consent after the AIDL calculation.
+                        check(OfflineNativeRouteSettings.read(this).enabled)
+                        prepareCalculatedRoute(course, destination, wire, pending.peerSid)
+                        if (reroute != null)
+                            (preparedNativeRoute as? OfflineNativeRoute)?.remainingAutomaticReroutes = 0
+                    }
                         .onFailure {
                             nativeStartTestStatus = "순정 경로 준비 실패 · GPS/연결 상태 확인"
                             pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
@@ -344,7 +360,18 @@ internal class BridgeService : Service() {
             closeNativeStartTest(probe, "순정 내비 경로 데이터 규격 오류")
             return
         }
-        live.failure?.let { closeNativeStartTest(probe, it); return }
+        live.failure?.let { failure ->
+            val source = live.route as? OfflineNativeRoute
+            val end = source?.requestedEnd
+            if (source != null && end != null && source.confirmedDeviation &&
+                failure == source.failureReason && source.remainingAutomaticReroutes > 0 &&
+                runCatching { OfflineNativeRouteSettings.read(this).enabled }.getOrDefault(false)) {
+                source.remainingAutomaticReroutes--
+                probe.reroute = OfflineReroute(source.parameters.destination, end, nativePresetConsentEpoch)
+                closeNativeStartTest(probe, "실제 경로 이탈 · 기존 순정 세션 종료 후 재탐색")
+            } else closeNativeStartTest(probe, failure)
+            return
+        }
         if (live.arrived) { closeNativeStartTest(probe, "경로 공급자 도착 확인"); return }
         if (write == null) return
         runCatching {
@@ -400,7 +427,10 @@ internal class BridgeService : Service() {
             nativeStartTestStatus = "순정 내비 시작 대기 취소"
             notifyUI()
         }
-        nativeStartProbe?.let { closeNativeStartTest(it, "사용자 종료 요청") }
+        nativeStartProbe?.let {
+            it.reroute = null
+            closeNativeStartTest(it, "사용자 종료 요청")
+        }
     }
     private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
         val probe = nativeStartProbe ?: return false
@@ -409,8 +439,21 @@ internal class BridgeService : Service() {
         if (probe.closing) {
             val reason = probe.session.peerEndReason(message)
             if (reason != null) {
+                // reason 2 is MOBILE_APP_CLOSE, the same reason used by
+                // phoneCloseFrame. Do not restart after a different peer
+                // termination reason, lost connection, or explicit cancel.
+                val replacement = probe.reroute
+                probe.reroute = null
                 finishNativeStartTest(probe, probe.closeReason +
                     " · 안경 END_REQUEST 확인($reason) · 실제 화면 종료/지도 미검증", false)
+                if (replacement != null && OfflineNativeRoute.mayRestartAfterEnd(reason,
+                    replacement.epoch == nativePresetConsentEpoch,
+                    !destroyed && !state.disconnecting && state.link.phase == LinkPhase.FULL)) {
+                    nativeStartTestStatus = requestOfflineNativeRoute(replacement.destination,
+                        NaverVoiceCommand.Mode.WALK, reroute = replacement)
+                        ?: "재탐색 취소 · 선택한 공급자 해제"
+                    notifyUI()
+                }
                 return true
             }
             return message.type in setOf(2, 4)
@@ -1584,6 +1627,7 @@ internal class BridgeService : Service() {
         NaverVoiceLaunch.clear(this)
     }
     fun cancelVoiceNavigationRequest() {
+        nativeStartProbe?.reroute = null
         clearVoiceNavigation()
         if (nativeRouteWaiting) cancelNativeStartTest()
         notifyUI()

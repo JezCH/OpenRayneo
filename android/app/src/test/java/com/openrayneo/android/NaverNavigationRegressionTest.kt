@@ -563,4 +563,22 @@ class NaverNavigationRegressionTest {
             tracker.observe(assess(far,8000L),8000L,8100L))
     }
 
+    @Test fun nativeRerouteRequiresMobileCloseInSameConnectedEpoch() {
+        assertTrue(OfflineNativeRoute.mayRestartAfterEnd(2,true,true))
+        for (reason in 0..8) if (reason != 2)
+            assertFalse(OfflineNativeRoute.mayRestartAfterEnd(reason,true,true))
+        assertFalse(OfflineNativeRoute.mayRestartAfterEnd(2,false,true))
+        assertFalse(OfflineNativeRoute.mayRestartAfterEnd(2,true,false))
+        val sid = "0123456789abcdef0123456789abcdef"
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            2,"ko-KR","KR",1,1,"overseas","fixture")
+        val session = NativeNavigationStartup.Session(params,sid)
+        fun end(id: String, reason: Int) = ProtocolCodec.Message(3,
+            org.json.JSONObject().put("sid",id).put("reason_code",reason).toString(),null,1,0,2)
+        assertEquals(2,session.peerEndReason(end(sid,2)))
+        assertNull(session.peerEndReason(end("other",2)))
+        assertNull(session.peerEndReason(end(sid,2).copy(mode=1)))
+        assertNull(session.peerEndReason(end(sid,8)))
+    }
+
 }
