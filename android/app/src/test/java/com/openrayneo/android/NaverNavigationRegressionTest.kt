@@ -118,5 +118,48 @@ class NaverNavigationRegressionTest {
         assertEquals("route/walk", p.path(NaverVoiceCommand.Mode.WALK))
         assertEquals("route/public", p.path(NaverVoiceCommand.Mode.PUBLIC))
         assertNull(p.path(NaverVoiceCommand.Mode.UNSPECIFIED))
+        // Synthetic JVM fixtures only; never sent to a device or used as guidance.
+        val points = (0..1200).map { i -> NaverWalkingCourse.Point(37.0 + i * 0.0001, 126.0 + i * 0.0001) }
+        val geometry = checkNotNull(NativeRouteScene.geometry(points))
+        val local = checkNotNull(NativeRouteScene.geometry(points.take(20)))
+        assertEquals(120000, geometry.bounds.north - geometry.bounds.south)
+        assertEquals(0xcbf43926L, NativeRouteScene.crc32("123456789".toByteArray()))
+        assertNull(NativeRouteScene.geometry(List(4097) { points[it % points.size] }))
+        assertNull(NativeRouteScene.geometry(listOf(points[0], points[0])))
+        val identity = NativeRouteScene.Identity("0123456789abcdef0123456789abcdef", 1, 2, "jvm-only")
+        val scene = NativeRouteScene.encode(identity, "fixture", 1, geometry, local)
+        assertTrue(scene.fragments.size > 1)
+        val body = scene.fragments.flatMap { it.binary.toList() }.toByteArray()
+        val decoded = org.json.JSONObject(body.toString(Charsets.UTF_8))
+        assertEquals("ROUTE_SCENE_V1", decoded.getString("profile"))
+        assertEquals(geometry.polyline6, decoded.getString("overview_polyline6"))
+        assertEquals(local.polyline6, decoded.getString("local_polyline6"))
+        assertEquals(geometry.bounds.north, decoded.getJSONObject("overview_bounds").getInt("north_e6"))
+        var offset = 0
+        scene.fragments.forEachIndexed { index, fragment ->
+            val frame = ProtocolCodec.StreamDecoder().append(fragment.frame(index)).single()
+            val message = ProtocolCodec.message(frame.payload)
+            assertEquals(0x20, frame.protocol)
+            assertEquals(0x3c, message.type)
+            assertEquals(0L, message.mode)
+            assertEquals(0L, message.sequence)
+            assertArrayEquals(fragment.binary, message.audio)
+            val header = org.json.JSONObject(message.json!!)
+            assertEquals(index, header.getInt("fragment_index"))
+            assertEquals(scene.fragments.size, header.getInt("fragment_count"))
+            assertEquals(offset, header.getInt("fragment_offset"))
+            assertEquals(fragment.binary.size, header.getInt("fragment_len"))
+            assertEquals(body.size, header.getInt("total_len"))
+            assertEquals(NativeRouteScene.crc32(body), header.getLong("crc32"))
+            offset += fragment.binary.size
+        }
+        val first = org.json.JSONObject(scene.fragments.first().header)
+        val response = identity.json().put("scene_id", "fixture")
+            .put("route_hash", first.getString("route_hash")).put("total_len", body.size)
+            .put("crc32", NativeRouteScene.crc32(body)).put("code", 0)
+        val ack = ProtocolCodec.Message(0x3d, response.toString(), null, 1, 0, 1)
+        assertTrue(scene.committed(ack))
+        assertFalse(scene.committed(ack.copy(type = 0x3e)))
+        assertFalse(scene.committed(ack.copy(json = response.put("route_generation", 3).toString())))
     }
 }
