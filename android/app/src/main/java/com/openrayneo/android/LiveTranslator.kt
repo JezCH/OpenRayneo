@@ -59,6 +59,7 @@ internal class LiveTranslator(
     var mediaFinalCount = 0L; private set
     var diagnosticPartialSeen = false; private set
     var diagnosticFinalSeen = false; private set
+    var diagnosticRoundStarted = false; private set
     val diagnosticFailures get() = failures
 
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
@@ -174,7 +175,7 @@ internal class LiveTranslator(
         mediaLanguage = mediaSourceLanguage
         mediaFinalSource = ""; mediaFinalTarget = ""; mediaRenderedSequence = 0
         if (mediaId != null) mediaFinalCount = 0
-        diagnosticPartialSeen = false; diagnosticFinalSeen = false
+        diagnosticPartialSeen = false; diagnosticFinalSeen = false; diagnosticRoundStarted = false
         synchronized(this) {
             mediaSessionId = mediaId
             captionOnly = captions
@@ -286,6 +287,8 @@ internal class LiveTranslator(
                 next
             }
             round.start()
+            diagnosticRoundStarted = true
+            changed()
         } catch (error: Exception) { asrEnded(token, epoch, error.message ?: "ASR 시작 실패") }
     }
 

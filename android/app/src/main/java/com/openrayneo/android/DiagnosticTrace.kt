@@ -25,13 +25,19 @@ internal class DiagnosticTrace(context: Context) {
     private val prefs = context.getSharedPreferences("diagnostic-metadata-v1", Context.MODE_PRIVATE)
     private val timeline = DiagnosticTimeline(runCatching {
         val saved = JSONArray(prefs.getString("events", "[]"))
-        (0 until saved.length()).takeLast(300).map { saved.getString(it) }
+        (maxOf(0, saved.length() - 300) until saved.length()).map { saved.getString(it) }
     }.getOrDefault(emptyList()))
-    // Call from main. apply() writes asynchronously; no disk wait on audio or BLE.
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pending = false
+    private val write = Runnable { pending = false; save() }
+    private fun save() { prefs.edit().putString("events", JSONArray(timeline.entries()).toString()).apply() }
+    // Coalesce bursts of state changes into one private metadata write.
     fun event(category: String, detail: String, snapshot: Boolean = false) {
-        if (timeline.add(System.currentTimeMillis(), category, detail, snapshot))
-            prefs.edit().putString("events", JSONArray(timeline.entries()).toString()).apply()
+        if (timeline.add(System.currentTimeMillis(), category, detail, snapshot) && !pending) {
+            pending = true; main.postDelayed(write, 500L)
+        }
     }
+    fun flush() { main.removeCallbacks(write); pending = false; save() }
     fun export() = timeline.entries().joinToString("\n")
-    fun clear() { timeline.clear(); prefs.edit().remove("events").apply() }
+    fun clear() { main.removeCallbacks(write); pending = false; timeline.clear(); prefs.edit().remove("events").apply() }
 }

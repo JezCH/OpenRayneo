@@ -15,6 +15,7 @@ internal class GlassesVoiceTransport(
     private val failure: (String) -> Unit,
     /** App log for assistant control messages we send (live partials excluded). */
     private val trace: (String) -> Unit = {},
+    private val diagnostic: (String) -> Unit = {},
 ) {
     var source: ConversationSource? = null; private set
     var wakeId: String? = null; private set
@@ -77,6 +78,7 @@ internal class GlassesVoiceTransport(
             val message = ProtocolCodec.message(frame.payload); val body = message.json?.let(::JSONObject) ?: return
             if (message.type == 21 && source == ConversationSource.ALWAYS_ON && body.optString("cmd") == "life_log_switch_result") {
                 val code = body.optJSONObject("payload")?.optInt("value", -1) ?: -1
+                diagnostic("rx life_log_switch_result code=$code")
                 if (code != 0) failure("안경이 종일 기록을 거부함: " + when (code) { 1 -> "마이크 권한 꺼짐"; 2 -> "안경 접힘"; 3 -> "배터리 부족"; else -> "기기 코드 $code" })
             }
             return
@@ -84,6 +86,7 @@ internal class GlassesVoiceTransport(
         if (frame.protocol != 0x0d) return
         val message = ProtocolCodec.message(frame.payload)
         val body = message.json?.let(::JSONObject) ?: JSONObject()
+        if (message.type in setOf(1, 8, 11, 161, 165)) diagnostic("rx 0x0d type=${message.type} rc=${body.optInt("rc", -1)}")
         when (message.type) {
             1 -> {
                 val code = body.optInt("rc")
@@ -187,10 +190,13 @@ internal class GlassesVoiceTransport(
         return true
     }
     private fun send(protocol: Int, type: Int, body: JSONObject) {
-        if (protocol == 0x0d && !(type == 5 && !body.optBoolean("final"))) trace("음성 이벤트 송신 type=$type ${body.toString().take(160)}")
+        val control = !(protocol == 0x0d && type == 5 && !body.optBoolean("final"))
+        val meta = "0x${protocol.toString(16)} type=$type rc=${body.optInt("rc", -1)}"
+        if (control) { trace("음성 이벤트 송신 $meta"); diagnostic("tx $meta") }
         try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, body.toString())) { result ->
+            if (control) diagnostic("write $meta success=${result.isSuccess}")
             result.onFailure { failure("안경 음성 제어 전송 실패: ${it.message}") }
-        } } catch (error: Exception) { failure("안경 음성 제어 전송 실패: ${error.message}") }
+        } } catch (error: Exception) { diagnostic("write $meta failed"); failure("안경 음성 제어 전송 실패: ${error.message}") }
     }
 }
 

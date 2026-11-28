@@ -22,8 +22,17 @@ internal class BridgeService : Service() {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { diagnosticEvent(category, detail, snapshot) }; return }
         runCatching { diagnosticTrace.event(category, detail, snapshot) }
     }
-    fun diagnosticUiFailure(error: Exception) = diagnosticEvent("UI", "action rejected: " + error.javaClass.simpleName)
-    fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear() }
+    private val diagnosticErrors = ArrayDeque<String>()
+    private fun diagnosticFailure(category: String, error: Throwable) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { diagnosticFailure(category, error) }; return }
+        diagnosticEvent(category, "failure=" + error.javaClass.simpleName)
+        // Exact exception messages can contain private provider details. Keep
+        // only a small volatile buffer for explicitly selected preview/export.
+        diagnosticErrors.addLast("$category: " + error.message.orEmpty().take(500))
+        while (diagnosticErrors.size > 30) diagnosticErrors.removeFirst()
+    }
+    fun diagnosticUiFailure(error: Exception) = diagnosticFailure("UI", error)
+    fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear(); diagnosticErrors.clear() }
     lateinit var settings: AppSettings; private set
     lateinit var conversations: ConversationController; private set
     lateinit var voiceTransport: GlassesVoiceTransport; private set
@@ -220,11 +229,13 @@ internal class BridgeService : Service() {
                 result.fold({ course ->
                     runCatching { prepareCalculatedRoute(course, destination, wire, pending.peerSid, requiresProviderSelection = true) }
                         .onFailure {
+                            diagnosticFailure("navigation-prepare", it)
                             nativeStartTestStatus = "순정 경로 준비 실패 · GPS/연결 상태 확인"
                             pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
                             notifyUI()
                         }
                 }, {
+                    diagnosticFailure("navigation-calculate", it)
                     nativeStartTestStatus = "오프라인 경로 계산 실패 · BRouter 설치·데이터·GPS 확인"
                     pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
                     notifyUI()
@@ -746,7 +757,9 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun noteNativeMenu(protocol: Int, status: String) {
-        diagnosticEvent("native-menu", "protocol=0x" + protocol.toString(16) + " " + status, snapshot = true)
+        // Malformed peer tokens/JSON keys are not safe persistent metadata.
+        val safe = if (" · 거부:" in status) status.substringBefore(" · 거부:") + " · 규격 거부" else status
+        diagnosticEvent("native-menu-" + protocol.toString(16), safe, snapshot = true)
         nativeMenuEvidence[protocol] = status
         notifyUI()
     }
@@ -1112,7 +1125,7 @@ internal class BridgeService : Service() {
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {
-                traceIncomingFeature(frame, source)
+                runCatching { traceIncomingFeature(frame, source) }
                 if (frame.protocol == 0x06) {
                     handleCapability(frame)
                     return@runCatching
@@ -1128,7 +1141,7 @@ internal class BridgeService : Service() {
                 requests.receive(frame)
                 // Assistant control events (not audio) go to the app log, to see how the firmware behaves around barge-in.
                 if (frame.protocol == 0x0d) ProtocolCodec.message(frame.payload).let { m ->
-                    if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} ${m.json.orEmpty().take(160)}")
+                    if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} · binary=${m.audio?.size ?: 0}")
                 }
                 voiceTransport.receive(frame)
                 if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
@@ -1184,7 +1197,8 @@ internal class BridgeService : Service() {
                 voiceAlwaysOnStart.nativeEnded(conversations.state.activeRecord?.id)
                 conversations.stop()
             } else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
-        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
+        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog,
+            { stage -> diagnosticEvent("voice-wire", stage, true) })
         // Only when the posted next turn will really start (auto answer on, native session running); otherwise capture closes as before.
         voiceTransport.answeringChanged = { on ->
             val cfg = settings.read()
@@ -2666,6 +2680,7 @@ internal class BridgeService : Service() {
             if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
             noteNativeMenu(0x13, "세션 시작 · 요청 언어 ${request.source} → 적용 ${negotiated.source} · 안경 표시 확인 필요")
         }.onFailure { error ->
+            diagnosticFailure("native-caption-start", error)
             if (state.session?.nativeSubtitle?.sid == request.sid) {
                 translator.stop(); dispatch(GlassesEvent.PauseDisplay)
             } else if (starting && translator.active) translator.stop()
@@ -2718,6 +2733,7 @@ internal class BridgeService : Service() {
                 }
             }, 3_000)
         }.onFailure { error ->
+            diagnosticFailure("native-hint-start", error)
             if (pendingNativeHint?.sid == request.sid) pendingNativeHint = null
             if (starting && conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
             noteNativeMenu(0x17, "시작 보류 · 연결/마이크/AI 준비 확인")
@@ -3478,8 +3494,15 @@ internal class BridgeService : Service() {
         FollowUpRecords.dismiss(conversations.repository, recordId, row.item.id, row.item.revision)
         conversations.refreshRecords()
     }
-    private fun executeTool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
-        when (name) {
+    private fun executeTool(name: String, args: JSONObject, done: (Result<JSONObject>) -> Unit) {
+        val known = name.takeIf { it in setOf("navigation_status", "native_navigation_start", "stop_navigation_mirroring", "show_notification", "record_query", "record_annotate", "about_you_read", "memory_reference", "memory_search", "teleprompter_start", "teleprompter_control", "display_clear", "device_read") } ?: "other"
+        diagnosticEvent("ai-tool", "request=$known")
+        val completion: (Result<JSONObject>) -> Unit = { result ->
+            diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess}")
+            result.exceptionOrNull()?.let { diagnosticFailure("ai-tool", it) }
+            done(result)
+        }
+        try { when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
                 .put("notificationPresent", navigation.selected != null)
                 .put("nativeSessionPending", nativeStartProbe != null || nativeRouteWaiting)
@@ -3547,12 +3570,12 @@ internal class BridgeService : Service() {
             "device_read" -> requests.perform({ deviceSettings.readForTool() }, completion)
             else -> if (name.startsWith("device_")) deviceSettings.tool(name, args, completion)
                 else content.execute(name, args, completion)
-        }
+        } } catch (error: Exception) { diagnosticFailure("ai-tool", error); throw error }
     }
     /** Inspect only protocol type/mode/version and known integer result codes.
      * Voice data, JSON payloads and identifiers are never recorded. */
     private fun traceIncomingFeature(frame: ProtocolCodec.Frame, source: String) {
-        if (frame.acknowledgement || frame.protocol !in setOf(0x06, 0x20, 0x13, 0x17, 0x0d)) return
+        if (frame.acknowledgement || frame.protocol !in setOf(0x06, 0x20, 0x13, 0x17)) return
         if (frame.payload.size > 65531) return
         if (frame.protocol == 0x06) {
             val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
@@ -3566,7 +3589,6 @@ internal class BridgeService : Service() {
             return
         }
         val message = runCatching { ProtocolCodec.message(frame.payload) }.getOrNull() ?: return
-        if (frame.protocol == 0x0d && message.type !in setOf(1, 2, 4, 5, 6, 7, 8, 9)) return
         if (frame.protocol in setOf(0x13, 0x17) && message.type !in 1..5) return
         if (message.audio?.isNotEmpty() == true) return
         val body = message.json?.takeIf { it.length <= 8192 }?.let { runCatching { JSONObject(it) }.getOrNull() }
@@ -3584,14 +3606,16 @@ internal class BridgeService : Service() {
             val a = audioLevels
             val page = state.session
             diagnosticEvent("connection", "link=${state.link.phase} disconnecting=${state.disconnecting} foreground=$foreground readback=${deviceSettings.state.readback} mic=${deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")} ", true)
+            diagnosticEvent("link-negotiation", connection.linkEvidence, true)
+            diagnosticEvent("host-capability", capabilityStatus, true)
             diagnosticEvent("display", "intent=${state.intent.javaClass.simpleName} owner=${state.ownership} mode=${page?.mode} phase=${page?.phase} written=${page != null && page.writtenContent == page.content} error=${state.error != null}", true)
             diagnosticEvent("audio", "phase=${a.coordinatorState().phase} channels=${a.channels} firstPacket=${a.firstPacketAt > 0} firstPCM=${a.firstPcmAt > 0} dropped=${a.dropped > 0} error=${a.error != null}", true)
             val probe = nativeStartProbe
-            diagnosticEvent("navigation", "queryAttempts=$nativeNavQueryAttempts settled=$nativeNavQuerySettled raster=${nativeNavCapabilities?.raster != null} hostWrite=$nativeHostCapabilitySent hostPending=$nativeHostCapabilityPending prepared=${preparedNativeRoute != null} calculating=${offlinePreparation != null} waiting=$nativeRouteWaiting phase=${probe?.session?.phase} accepted=${probe?.session?.startAccepted} ready=${probe?.session?.glassReady} reject=${probe?.session?.rejectionCode} closing=${probe?.closing}", true)
+            diagnosticEvent("navigation", "queryAttempts=$nativeNavQueryAttempts settled=$nativeNavQuerySettled raster=${nativeNavCapabilities?.raster != null} hostWrite=$nativeHostCapabilitySent hostPending=$nativeHostCapabilityPending prepared=${preparedNativeRoute != null} calculating=${offlinePreparation != null} waiting=$nativeRouteWaiting phase=${probe?.session?.phase} accepted=${probe?.session?.startAccepted} ready=${probe?.session?.glassReady} reject=${probe?.session?.rejectionCode} rasterState=${probe?.session?.rasterState} closing=${probe?.closing}", true)
             diagnosticEvent("navigation-status", nativeStartTestStatus, true)
             diagnosticEvent("navigation-capability", nativeNavCapabilityStatus, true)
             diagnosticEvent("recording", "source=${c.source} mode=${c.mode} running=${c.running} stopping=${c.stopping} modelReady=${c.modelReady} firstFinalMs=${firstLiveFinalMs ?: -1} decoded=${c.decodedSeconds > 0} activeRecord=${c.activeRecord != null} transcriptOnly=${c.liveTranscriptOnly} error=${c.error != null}", true)
-            diagnosticEvent("caption", "active=${translator.active} caption=${translator.captionOnly} partial=${translator.diagnosticPartialSeen} final=${translator.diagnosticFinalSeen} retries=${translator.diagnosticFailures} media=${mediaCaptionState.phase} mediaPCM=${mediaCaptionState.samples > 0} mediaFinal=${translator.mediaFinalCount > 0}", true)
+            diagnosticEvent("caption", "active=${translator.active} caption=${translator.captionOnly} partial=${translator.diagnosticPartialSeen} final=${translator.diagnosticFinalSeen} asrStarted=${translator.diagnosticRoundStarted} retries=${translator.diagnosticFailures} media=${mediaCaptionState.phase} mediaPCM=${mediaCaptionState.samples > 0} mediaFinal=${translator.mediaFinalCount > 0}", true)
             diagnosticEvent("ai", "phoneRunning=${agent.running} computerRunning=${codex.running} voicePending=$voiceAiPending hintPending=${pendingNativeHint != null} stream=${realtimeStreamId != null} preview=${realtimePreviewRequest != 0L} answerPresent=${state.answer != null}", true)
         }
     }
@@ -3617,6 +3641,7 @@ internal class BridgeService : Service() {
                 appendLine(audioLevels.summary()); appendLine(audioLevels.timingSummary()); appendLine(captureTimingStatus)
                 appendLine(translator.status); appendLine(mediaCaptionState.detail)
                 appendLine(agent.status); appendLine(codex.status)
+                appendLine(diagnosticErrors.joinToString("\n"))
                 appendLine(logs.takeLast(120).joinToString("\n"))
             }
             if (includeAi) {
@@ -3725,6 +3750,7 @@ internal class BridgeService : Service() {
     }
     override fun onDestroy() {
         diagnosticEvent("service", "stop")
+        if (::diagnosticTrace.isInitialized) runCatching { diagnosticTrace.flush() }
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         nativeStartProbe?.live?.close()

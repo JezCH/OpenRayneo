@@ -296,8 +296,9 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         if (!includeText) rows.joinToString("\n") { r ->
             "at=${r.createdAt} kind=${r.kind} state=${r.state} direct=${r.direct} delivered=${r.delivered}"
         } else rows.filter { r ->
-            (r.kind == "task" && (r.input == null || r.input.optString("source") == "NATIVE") && r.input?.optBoolean("backfill") != true) ||
-                (r.input?.optString("purpose") == "explicit_question" && r.input.optJSONArray("history") != null)
+            val input = r.input
+            (r.kind == "task" && (input == null || input.optString("source") == "NATIVE") && input?.optBoolean("backfill") != true) ||
+                (input?.optString("purpose") == "explicit_question" && input.optJSONArray("history") != null)
         }.joinToString("\n\n") { r ->
             "at=${r.createdAt} kind=${r.kind} state=${r.state}\nQ: ${r.text.take(4000)}\nA: ${r.answer.orEmpty().take(6000)}"
         }

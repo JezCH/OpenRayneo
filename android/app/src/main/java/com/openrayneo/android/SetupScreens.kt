@@ -635,7 +635,7 @@ private fun DiagnosticExportPanel(model: AppModel) {
             Checkbox(includeAi, { includeAi = it })
             Text("기존 AI 지시·답변 원문 포함")
         }
-        Note("선택 항목에는 개인 정보가 있을 수 있으므로 미리보기를 확인한 뒤 직접 저장하거나 복사하세요. 기록하지 않도록 설정한 질문과 원본 녹음은 새로 저장하지 않습니다.")
+        Note("선택 항목에는 개인 정보가 있을 수 있으므로 미리보기를 확인한 뒤 직접 저장하거나 복사하세요. 기존 로그의 오류 내용에 민감 정보가 남아 있을 수 있습니다. 기록하지 않도록 설정한 질문과 원본 녹음은 새로 저장하지 않습니다.")
         ToolButton(enabled = model.state.available, onClick = {
             model.attempt { preview = model.diagnosticReport(includeDetails, includeAi) }
         }) { Text("진단 보고서 미리보기") }
