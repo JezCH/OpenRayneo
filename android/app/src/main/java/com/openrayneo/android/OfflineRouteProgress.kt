@@ -7,10 +7,11 @@ import kotlin.math.*
  * match (parallel paths, loops, crossing) is not a usable navigation fix.
  * Never reinterpret BRouter turn codes as stock RayNeo maneuver codes. */
 internal object OfflineRouteProgress {
-    data class Fix(val point: NaverWalkingCourse.Point, val accuracyMeters: Double, val observedAtMs: Long)
+    data class Fix(val point: NaverWalkingCourse.Point, val accuracyMeters: Double, val observedAtMs: Long, val speedMpsX100: Int? = null)
     data class Progress(val observedAtMs: Long, val remainingMeters: Int,
                         val nextTurn: OfflineWalkingRoute.Turn?, val nextTurnMeters: Int?,
-                        val remainingEstimateSeconds: Int?, val lateralMeters: Int)
+                        val remainingEstimateSeconds: Int?, val lateralMeters: Int,
+                        val followingTurn: OfflineWalkingRoute.Turn? = null)
     private data class Candidate(val segment: Int, val fraction: Double, val lateral: Double, val along: Double)
     private const val R = 6_371_000.0
     private fun longitudeDelta(a: Double, b: Double): Double {
@@ -68,15 +69,19 @@ internal object OfflineRouteProgress {
         val remaining=(prefix.last()-best.along).coerceAtLeast(0.0)
         // If a fix is near a turn, retain it until the measured progress
         // exceeds its location by the uncertainty margin; never declare arrival.
-        val next=route.turns.firstOrNull {
+        val nextIndex=route.turns.indexOfFirst {
             it.pointIndex in prefix.indices && prefix[it.pointIndex]>=best.along-fix.accuracyMeters
         }
+        val next=route.turns.getOrNull(nextIndex)
+        val following=if(next!=null) route.turns.drop(nextIndex+1).firstOrNull {
+            it.pointIndex>next.pointIndex
+        } else null
         val nextDistance=next?.let { (prefix[it.pointIndex]-best.along).coerceAtLeast(0.0).roundToInt() }
         val times=route.pointTimesSeconds
         val estimate=if(times!=null && times.size==points.size && times.last()>times.first()) {
             val elapsed=times[best.segment]+best.fraction*(times[best.segment+1]-times[best.segment])
             (times.last()-elapsed).takeIf { it.isFinite() && it in 0.0..604800.0 }?.roundToInt()
         } else null
-        return Assessment(Progress(fix.observedAtMs,remaining.roundToInt(),next,nextDistance,estimate,best.lateral.roundToInt()))
+        return Assessment(Progress(fix.observedAtMs,remaining.roundToInt(),next,nextDistance,estimate,best.lateral.roundToInt(),following))
     }
 }

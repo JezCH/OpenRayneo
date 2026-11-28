@@ -37,7 +37,9 @@ internal object OfflineRouteLocation {
         val stamp=value.elapsedRealtimeNanos/1_000_000L
         val now=SystemClock.elapsedRealtime()
         if(stamp<0 || now<stamp || now-stamp>=NativePhoneGuidance.VALID_FOR_MS) return null
-        return OfflineRouteProgress.Fix(NaverWalkingCourse.Point(value.latitude,value.longitude),value.accuracy.toDouble(),stamp)
+        val speed=if(value.hasSpeed() && value.speed.isFinite() && value.speed in 0f..200f)
+            kotlin.math.round(value.speed*100f).toInt() else null
+        return OfflineRouteProgress.Fix(NaverWalkingCourse.Point(value.latitude,value.longitude),value.accuracy.toDouble(),stamp,speed)
     }
     @SuppressLint("MissingPermission")
     fun current(context: Context): OfflineRouteProgress.Fix? {

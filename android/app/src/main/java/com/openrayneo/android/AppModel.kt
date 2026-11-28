@@ -303,6 +303,15 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         private set
     var offlineLiveMini by mutableStateOf<ByteArray?>(null)
         private set
+    private var offlineNativeSample: OfflineNativeRoute.Sample? = null
+    /** Only a caller with verified canonical wire values may construct a native
+     * producer. The foreground GPS preview does not implicitly start the HUD. */
+    internal fun prepareOfflineNativeRoute(parameters: NativeNavigationStartup.Parameters,
+                                           wire: OfflineNativeRoute.WireMapping): OfflineNativeRoute {
+        val route=checkNotNull(offlineWalkingRoute)
+        check(offlineTracking && hostVisible)
+        return OfflineNativeRoute(route,parameters,wire) { offlineNativeSample }
+    }
     private var offlineWatch: AutoCloseable? = null
     private var offlineTrackingGeneration=0L
     private var trackingWorkerBusy=false
@@ -336,6 +345,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         trackingExpiry?.let(main::removeCallbacks)
         trackingExpiry=null
         offlineLiveMini=null
+        offlineNativeSample=null
         offlineProgress=null
     }
     fun startOfflineTracking(autoReroute: Boolean = false) = attempt {
@@ -357,6 +367,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                         resetDeviation()
                         offlineProgress=null
                         offlineLiveMini=null
+                        offlineNativeSample=null
                     } else if(fix.observedAtMs>lastFixObservedAt) {
                         lastFixObservedAt=fix.observedAtMs
                         latestFix=fix
@@ -378,7 +389,11 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         offlineRouteWorker.execute {
             val result=runCatching {
                 val assessment=OfflineRouteProgress.assess(route,fix,android.os.SystemClock.elapsedRealtime())
-                assessment to assessment.progress?.let { NativeCourseRaster.render(route.course,NativeRasterFrame.View.MINI,fix.point) }
+                assessment to assessment.progress?.let {
+                    OfflineNativeRoute.Sample(route,it,fix,
+                        NativeCourseRaster.render(route.course,NativeRasterFrame.View.MINI,fix.point),
+                        NativeCourseRaster.render(route.course,NativeRasterFrame.View.OVERVIEW,fix.point))
+                }
             }.getOrNull()
             main.post {
                 trackingWorkerBusy=false
@@ -386,16 +401,19 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                     val age=android.os.SystemClock.elapsedRealtime()-fix.observedAtMs
                     val fresh=revision==fixRevision && result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS
                     val progress=if(fresh) result?.first?.progress else null
-                    if(progress!=null && result?.second!=null) {
+                    val sample=if(fresh) result?.second else null
+                    if(progress!=null && sample!=null) {
                         resetDeviation()
                         offlineRerouteStatus=""
                         offlineProgress=progress
-                        offlineLiveMini=result.second
+                        offlineLiveMini=sample.miniPng
+                        offlineNativeSample=sample
                         trackingExpiry?.let(main::removeCallbacks)
                         val expiry=Runnable {
                             if(ticket==offlineTrackingGeneration && offlineProgress===progress) {
                                 offlineProgress=null
                                 offlineLiveMini=null
+                                offlineNativeSample=null
                             }
                         }
                         trackingExpiry=expiry
@@ -403,6 +421,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                     } else {
                         offlineProgress=null
                         offlineLiveMini=null
+                        offlineNativeSample=null
                         if(fresh && result?.first?.confidentlyOffRoute==true) {
                             if(lastDeviationAt<0 || fix.observedAtMs-lastDeviationAt>4_000L) resetDeviation()
                             if(deviationCount==0) firstDeviationAt=fix.observedAtMs
@@ -444,6 +463,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
                     offlineRerouting=false
                     result.fold({ (updated,preview) ->
+                        offlineNativeSample=null
                         offlineWalkingRoute=updated
                         walkingCourse=updated.course
                         walkingCourseRaster=preview

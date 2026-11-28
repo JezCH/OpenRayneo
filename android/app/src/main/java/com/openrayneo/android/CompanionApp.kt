@@ -816,7 +816,11 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                         current=false
                     }
                     Note("측정 결과${if(current) "" else " (이전 위치)"} · 경로 남은 거리 ${progress.remainingMeters}m")
-                    progress.nextTurnMeters?.let { Note("다음 엔진 회전 지점까지 ${it}m") }
+                    progress.nextTurnMeters?.let { distance ->
+                        val instruction=progress.nextTurn?.instruction
+                        Note(if(instruction!=null) "${distance}m 앞 · $instruction" else "다음 회전 지점까지 ${distance}m · 방향 미확인")
+                    }
+                    progress.followingTurn?.instruction?.let { Note("그다음 안내 · $it") }
                     progress.remainingEstimateSeconds?.let { Note("경로 시간 자료 기준 남은 예상 시간 ${kotlin.math.ceil(it / 60.0).toInt()}분") }
                 }
             } else Note("사용자가 가져온 GPX 파일")

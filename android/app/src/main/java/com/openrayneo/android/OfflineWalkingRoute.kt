@@ -19,8 +19,34 @@ import kotlin.math.*
  * background location or automatic provider switch in OpenRayneo. */
 internal object OfflineWalkingRoute {
     private val component = ComponentName("btools.routingapp", "btools.routingapp.BRouterService")
+    // BRouter Formatter.getJsonCommandIndex(timode=2), pinned ff7b616d.
+    // These are semantic instructions, NOT RayNeo wire integers.
+    enum class Maneuver(val label: String) {
+        STRAIGHT("직진"), LEFT("좌회전"), SLIGHT_LEFT("왼쪽 방향"), SHARP_LEFT("급좌회전"),
+        RIGHT("우회전"), SLIGHT_RIGHT("오른쪽 방향"), SHARP_RIGHT("급우회전"),
+        KEEP_LEFT("왼쪽 길 유지"), KEEP_RIGHT("오른쪽 길 유지"),
+        UTURN_LEFT("왼쪽 유턴"), UTURN_RIGHT("오른쪽 유턴"), UTURN("유턴"),
+        ROUNDABOUT("회전교차로"), ROUNDABOUT_LEFT("회전교차로(반대 방향)"),
+        EXIT_LEFT("왼쪽 출구"), EXIT_RIGHT("오른쪽 출구")
+    }
     data class Turn(val pointIndex: Int, val sourceCode: Int, val exit: Int,
-                    val nextDistanceMeters: Double, val angleDegrees: Int)
+                    val nextDistanceMeters: Double, val angleDegrees: Int) {
+        val maneuver: Maneuver? get() = when(sourceCode) {
+            1 -> Maneuver.STRAIGHT; 2 -> Maneuver.LEFT; 3 -> Maneuver.SLIGHT_LEFT
+            4 -> Maneuver.SHARP_LEFT; 5 -> Maneuver.RIGHT; 6 -> Maneuver.SLIGHT_RIGHT
+            7 -> Maneuver.SHARP_RIGHT; 8 -> Maneuver.KEEP_LEFT; 9 -> Maneuver.KEEP_RIGHT
+            10 -> Maneuver.UTURN_LEFT; 11 -> Maneuver.UTURN_RIGHT
+            13 -> Maneuver.ROUNDABOUT; 14 -> Maneuver.ROUNDABOUT_LEFT
+            15 -> Maneuver.UTURN; 17 -> Maneuver.EXIT_LEFT; 18 -> Maneuver.EXIT_RIGHT
+            else -> null
+        }
+        val instruction: String? get() = maneuver?.let {
+            if(sourceCode==13 || sourceCode==14) {
+                if((sourceCode==13 && exit in 1..32) || (sourceCode==14 && exit in -32..-1))
+                    "회전교차로 ${kotlin.math.abs(exit)}번 출구" else null
+            } else if(exit==0) it.label else null
+        }
+    }
     class Route(val course: NaverWalkingCourse.Course, val turns: List<Turn>,
                 val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?,
                 val requestedEnd: NaverWalkingCourse.Point? = null) {
