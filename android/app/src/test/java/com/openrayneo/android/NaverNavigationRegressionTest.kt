@@ -161,12 +161,17 @@ class NaverNavigationRegressionTest {
         live.written(fragment1, true, 1460)
         assertNull(live.next(7, 5000)) // stale observation cannot start or advance a map
         observedAt = 5100
+        val resumedGuidance = checkNotNull(live.next(8, 5150))
+        assertEquals(0x34, message(resumedGuidance).type)
+        live.written(resumedGuidance, true, 5160)
+        // The scheduler now prefers raster, but a new real arrival wins.
+        observedAt = 5200
         arrival = true
-        val end = checkNotNull(live.next(8, 5150))
+        val end = checkNotNull(live.next(9, 5250))
         assertEquals(0x34, message(end).type)
         assertTrue(org.json.JSONObject(message(end).json!!).getBoolean("arrival"))
         assertFalse(live.arrived)
-        live.written(end, true, 5160)
+        live.written(end, true, 5260)
         assertTrue(live.arrived)
         live.close()
     }
