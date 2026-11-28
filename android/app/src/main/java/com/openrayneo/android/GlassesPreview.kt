@@ -66,15 +66,15 @@ internal fun NavigationGrid(frame: String, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun GridPreview(frame: String, label: String) {
-    Surface(
-        color = LensBlack,
-        contentColor = SignalGreen,
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium)
-            NavigationGrid(frame)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Note(label)
+        Surface(
+            color = LensBlack,
+            contentColor = SignalGreen,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Box(Modifier.padding(16.dp)) { NavigationGrid(frame) }
         }
     }
 }
@@ -83,57 +83,66 @@ internal fun GridPreview(frame: String, label: String) {
 internal fun GlassesOutputPreview(state: GlassesState) {
     val session = state.session
     val content = session?.writtenContent
-    val available =
-        state.link.phase == LinkPhase.FULL &&
-            state.ownership == DisplayOwnership.APP &&
-            content != null
-    val title =
-        when {
-            state.ownership == DisplayOwnership.YIELDED -> "표시를 양보함"
-            state.link.phase != LinkPhase.FULL -> "아직 안경에 동기화되지 않음"
-            session == null -> "앱 표시가 켜져 있지 않음"
-            session.phase == PagePhase.CLOSING ->
-                if (state.intent == DisplayIntent.Idle) "화면 닫는 중" else "화면 전환 중"
-            content == null -> "첫 화면 전송 대기"
-            session.content != content -> "업데이트 중 · 아래는 마지막으로 전송된 내용"
-            session.mode == PageMode.NAVIGATION -> "내비게이션 · 전송된 내용"
-            state.mediaCaptionMode -> "미디어 자막 · 전송된 내용 (실제 안경 확인 필요)"
-            state.captionMode -> "주변 대화 자막 · 전송된 내용"
-            state.intent == DisplayIntent.Translation -> "실시간 번역 · 전송된 내용"
-            else -> "실시간 힌트 · 전송된 내용"
-        }
-    Surface(
-        color = LensBlack,
-        contentColor = SignalGreen,
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium)
-            if (available) {
-                if (session.mode == PageMode.NAVIGATION) NavigationGrid(content.text)
-                else
-                    Column(
+    val available = state.link.phase == LinkPhase.FULL &&
+        !state.disconnecting && state.ownership == DisplayOwnership.APP && content != null
+    val title = when {
+        state.disconnecting -> "연결 종료 중"
+        state.ownership == DisplayOwnership.YIELDED -> "표시를 양보함"
+        state.link.phase != LinkPhase.FULL -> "안경 표시 미확인"
+        state.error != null -> "표시 세션 오류"
+        session == null -> "앱 표시 유휴"
+        session.phase == PagePhase.CLOSING -> if (state.intent == DisplayIntent.Idle) "화면 닫는 중" else "화면 전환 중"
+        session.nativePaused -> "순정 세션 일시정지"
+        content == null -> "첫 화면 전송 대기"
+        session.content != content -> "내용 업데이트 중"
+        session.mode == PageMode.NAVIGATION -> "길 안내"
+        state.mediaCaptionMode -> "미디어 자막"
+        state.captionMode -> "주변 대화 자막"
+        state.intent is DisplayIntent.Answer -> "AI 답변"
+        state.intent == DisplayIntent.Translation -> "실시간 번역"
+        state.intent == DisplayIntent.BlankPrompt -> "화면 지우기"
+        else -> "실시간 힌트"
+    }
+    // The green optical plane is reserved for the exact written payload.
+    // Phone-side connection/status text is never presented as HUD content.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall,
+            color = if (state.error != null && state.link.phase == LinkPhase.FULL) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface)
+        Note(state.displayDescription)
+        if (available && session != null && content != null) {
+            Note("마지막 전송 내용 · 실제 안경 표시 미확인")
+            Surface(
+                color = LensBlack,
+                contentColor = SignalGreen,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (session.mode == PageMode.NAVIGATION) NavigationGrid(content.text)
+                    else Column(
                         Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(content.text, style = MaterialTheme.typography.titleMedium)
-                        HorizontalDivider(color = SignalGreen.copy(alpha = .2f))
-                        Text(content.answer.orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                        if (content.text.isNotEmpty()) Text(content.text, style = MaterialTheme.typography.titleMedium)
+                        if (!content.answer.isNullOrEmpty()) {
+                            if (content.text.isNotEmpty()) HorizontalDivider(color = SignalGreen.copy(alpha = .2f))
+                            Text(content.answer.orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                        }
+                        if (content.text.isEmpty() && content.answer.isNullOrEmpty()) Spacer(Modifier.height(40.dp))
                     }
-            } else {
-                Text(
-                    when {
-                        state.ownership == DisplayOwnership.YIELDED -> "안경의 현재 페이지는 기기가 제어하므로 휴대폰에서 읽을 수 없습니다."
-                        state.link.phase != LinkPhase.FULL -> "완전히 연결되면 이번 세션에서 전송한 내용을 표시합니다."
-                        session != null -> state.displayDescription
-                        else -> "내비게이션을 선택하거나 실시간 힌트를 여세요."
-                    },
-                    Modifier.padding(vertical = 20.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                }
             }
+            if (content.text.isEmpty() && content.answer.isNullOrEmpty()) Note("전송된 텍스트 없음")
+        } else {
+            Note(when {
+                state.disconnecting -> "연결 종료 중에는 현재 출력 내용을 확인할 수 없습니다."
+                state.ownership == DisplayOwnership.YIELDED -> "기기가 제어하는 페이지는 휴대폰에서 읽을 수 없습니다."
+                state.link.phase != LinkPhase.FULL -> "완전히 연결되면 이번 세션에서 전송한 내용을 표시합니다."
+                session != null -> "아직 확인된 전송 내용이 없습니다."
+                else -> "현재 앱에서 전송한 표시 세션이 없습니다."
+            })
         }
+        Note("전송 기록 미리보기이며 실시간 화면 캡처가 아닙니다.")
     }
-    Note("전송 기록 미리보기이며 실시간 화면 캡처가 아닙니다.", Modifier.padding(top = 8.dp))
 }

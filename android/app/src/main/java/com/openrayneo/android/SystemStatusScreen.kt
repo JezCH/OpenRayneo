@@ -141,8 +141,10 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         addRow("업무", "PC 작업", active(s.computerRunning), "PC 작업 처리", "ai")
         val pending = s.approvals.size + s.agentReviews.size
         addRow("업무", "작업 승인", if(pending > 0) status(Phase.WAITING,"${pending}건 대기") else off, "명시적 확인 필요", "ai", needsAction = pending > 0)
-        addRow("번역·도구", "주변 통역", active(s.translationActive && !s.captionActive && !s.mediaCaption.busy && !s.wakeActive && !s.wakePending), "통역 세션 · HUD 실표시는 별도", "translation")
-        addRow("번역·도구", "주변 자막", active(s.captionActive), "안경 음성 자막 세션", "captions")
+        val surroundingTranslation = s.translationActive && !s.captionActive && !s.mediaCaption.busy && !s.wakeActive && !s.wakePending
+        val nativePaused = s.glasses.session?.nativePaused == true
+        addRow("번역·도구", "주변 통역", if (surroundingTranslation && nativePaused) status(Phase.WAITING, "일시정지") else active(surroundingTranslation), "통역 세션 · HUD 실표시는 별도", "translation")
+        addRow("번역·도구", "주변 자막", if (s.captionActive && nativePaused) status(Phase.WAITING, "일시정지") else active(s.captionActive), "안경 음성 자막 세션", "captions")
         addRow("번역·도구", "영상 자막", when(s.mediaCaption.phase) {
             MediaCapturePhase.IDLE -> off
             MediaCapturePhase.STARTING -> status(Phase.BUSY,"준비 중")
@@ -193,11 +195,12 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
 @Composable private fun statusColor(phase: Phase): Color = when(phase) {
     Phase.ERROR -> MaterialTheme.colorScheme.error
     Phase.BLOCKED -> MaterialTheme.colorScheme.tertiary
-    Phase.ACTIVE, Phase.READY -> MaterialTheme.colorScheme.primary
+    Phase.ACTIVE -> OpticalActiveInk()
+    Phase.READY -> MaterialTheme.colorScheme.primary
     Phase.BUSY -> MaterialTheme.colorScheme.secondary
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
-@Composable internal fun SystemStatusStrip(model: AppModel, phoneInput: String?, open: () -> Unit) {
+@Composable internal fun SystemStatusStrip(model: AppModel, phoneInput: String?, compact: Boolean = false, open: () -> Unit) {
     val s = model.state
     val rec = recording(s)
     val capture = when {
@@ -206,6 +209,8 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
         s.mediaCaption.busy -> "영상 자막"
         s.wakeActive || s.wakePending -> "호출 대기"
         s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending -> rec.label
+        s.captionActive && s.glasses.session?.nativePaused == true -> "주변 자막 일시정지"
+        s.translationActive && s.glasses.session?.nativePaused == true -> "통역 일시정지"
         s.captionActive -> "주변 자막"
         s.translationActive -> "통역 세션"
         s.audioLevels.active -> "음성 수신 세션"
@@ -221,12 +226,27 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusStripItem("안경", link.label, statusColor(link.phase), Modifier.weight(1f))
-                    StatusStripItem("기록·입력", capture,
-                        if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase),
-                        Modifier.weight(1.25f))
-                    StatusStripItem("AI", ai.label, statusColor(ai.phase), Modifier.weight(1f))
+                val captureColor = if (capture == "녹음 중" || capture == "마이크 입력 중") MaterialTheme.colorScheme.error else statusColor(rec.phase)
+                if (compact) {
+                    // The keyboard consumes the viewport, but recording/input and
+                    // approval indicators must remain visible and accessible.
+                    Text("기록·입력 · $capture", style = MaterialTheme.typography.labelMedium, color = captureColor)
+                    if (link.phase == Phase.ERROR || link.phase == Phase.BLOCKED || link.phase == Phase.UNKNOWN)
+                        Text("안경 · ${link.label}", style = MaterialTheme.typography.labelSmall, color = statusColor(link.phase))
+                } else BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth < 240.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("안경 · ${link.label}", style = MaterialTheme.typography.labelMedium, color = statusColor(link.phase))
+                            Text("기록·입력 · $capture", style = MaterialTheme.typography.labelMedium, color = captureColor)
+                            Text("AI · ${ai.label}", style = MaterialTheme.typography.labelMedium, color = statusColor(ai.phase))
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StatusStripItem("안경", link.label, statusColor(link.phase), Modifier.weight(1f))
+                            StatusStripItem("기록·입력", capture, captureColor, Modifier.weight(1.25f))
+                            StatusStripItem("AI", ai.label, statusColor(ai.phase), Modifier.weight(1f))
+                        }
+                    }
                 }
                 if (pending > 0) Text("승인 대기 ${pending}건", style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.tertiary)
@@ -263,12 +283,20 @@ private fun StatusStripItem(title: String, value: String, color: Color, modifier
     } }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            ContentCard {
+            OpticalPanel {
                 Text("현재 시스템 상태", style = MaterialTheme.typography.titleLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("작동·처리 $active", color = MaterialTheme.colorScheme.primary)
-                    Text("확인 필요 $attention", color = if(attention > 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                OpticalQuickPair(first = { metric ->
+                    Column(metric, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("작동·처리", style = MaterialTheme.typography.labelMedium)
+                        Text(active.toString(), style = MaterialTheme.typography.headlineLarge, color = OpticalActiveInk())
+                    }
+                }, second = { metric ->
+                    Column(metric, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("확인 필요", style = MaterialTheme.typography.labelMedium)
+                        Text(attention.toString(), style = MaterialTheme.typography.headlineLarge,
+                            color = if (attention > 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                })
                 Note("켜짐은 사용 허용 또는 연결 설정, 작동 중은 관측된 세션입니다. 꺼짐은 오류가 아닙니다.")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("전체","작동 중","확인 필요").forEach { FilterChip(filter == it, { filter = it }, label = { Text(it) }) }
@@ -287,7 +315,8 @@ private fun StatusStripItem(title: String, value: String, color: Color, modifier
         sections.forEach { (group, entries) ->
             item(key = "group:"+group) { SectionLabel(group) }
             items(entries, key = { it.title }) { row ->
-                OutlinedCard(onClick = { go(row.route) }, modifier = Modifier.fillMaxWidth()) {
+                Card(onClick = { go(row.route) }, modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                     ListItem(headlineContent = { Text(row.title) }, supportingContent = {
                         Column {
                             Text(row.status.label, color = statusColor(row.status.phase), style = MaterialTheme.typography.labelLarge)

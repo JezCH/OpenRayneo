@@ -39,6 +39,7 @@ internal fun rememberTopicState(): TopicUiState {
     return remember(context) { TopicUiState(TopicStore(context)) }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TopicPanel(state: TopicUiState, selected: String?, select: (String?) -> Unit) {
     SectionLabel("주제별 기록 · Topics")
@@ -58,7 +59,7 @@ internal fun TopicPanel(state: TopicUiState, selected: String?, select: (String?
             FilterChip(current?.id == topic.id, { select(topic.id) }, label = { Text(topic.title) })
         }
     }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = { editingId = null; title = ""; edit = true },
             enabled = state.topics.size < TopicPolicy.MAX_TOPICS) { Text("새 주제") }
         if (current != null) {
@@ -87,7 +88,7 @@ internal fun TopicPanel(state: TopicUiState, selected: String?, select: (String?
     delete?.let { topic ->
         AlertDialog(onDismissRequest = { delete = null },
             title = { Text("주제를 삭제할까요?") },
-            text = { Text("'${topic.title}' 주제의 연결만 지웁니다. 원래 기록과 음성, 다른 주제는 유지됩니다.") },
+            text = { Text("'${topic.title}' 주제의 연결 ${topic.recordIds.size}개만 지웁니다. 원래 기록과 음성, 다른 주제는 유지됩니다.") },
             confirmButton = { TextButton(onClick = {
                 if (state.update { TopicPolicy.remove(it, topic.id) }) { select(null); delete = null }
             }) { Text("주제 삭제") } },
