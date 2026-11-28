@@ -44,6 +44,55 @@ internal class BridgeService : Service() {
     private var pendingNativePreset: NativeNavigationPresets.Pending? = null
     var nativePresetStatus = "안경 목적지 동기화 미실행"; private set
     var nativePresetSyncedRevision: Int? = null; private set
+    var nativePresetHandoffEnabled = false; private set
+    private data class PresetHandoff(val request: NativeNavigationPresets.InitialRequest, val config: NativeNavigationPresets.Config,
+                                     val epoch: String)
+    private var pendingPresetHandoff: PresetHandoff? = null
+    // Never evict and replay an old SID in the same connection.
+    private val handledPresetSids = linkedSetOf<String>()
+    fun setNativePresetHandoffEnabled(enabled: Boolean) {
+        NativeNavigationPresets.saveHandoffEnabled(this, enabled)
+        nativePresetHandoffEnabled = enabled
+        if (!enabled) pendingPresetHandoff = null
+        notifyUI()
+    }
+    private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
+        if (!nativePresetHandoffEnabled || nativePresetSyncedRevision != config.revision ||
+            !nativePresetCanSync || pendingPresetHandoff != null || handledPresetSids.size >= 128 ||
+            request.sid in handledPresetSids || voiceNavigation != null || voiceNavigationLookup != null ||
+            voiceNavigationBlock() != null) return
+        val transaction = PresetHandoff(request, config, nativePresetConsentEpoch)
+        handledPresetSids.add(request.sid)
+        pendingPresetHandoff = transaction
+        noteNativeMenu(0x20, request.alias + " 요청 · 순정 세션 종료 전송 후 네이버지도 연결")
+        fun complete(result: Result<Unit>) {
+            if (pendingPresetHandoff !== transaction) return
+            pendingPresetHandoff = null
+            if (result.isFailure || destroyed || !nativePresetHandoffEnabled ||
+                nativePresetConsentEpoch != transaction.epoch || !nativePresetCanSync ||
+                nativePresetSyncedRevision != config.revision ||
+                runCatching { NativeNavigationPresets.read(this) }.getOrNull() != config ||
+                voiceNavigation != null || voiceNavigationLookup != null || voiceNavigationBlock() != null) {
+                noteNativeMenu(0x20, "네이버지도 전환 취소 · 연결/목적지/기능 상태 변경 또는 전송 실패")
+                return
+            }
+            // Reuse the existing authorized Naver handoff and fresh notification policy.
+            // Transport success does not prove stock UI closure or active map guidance.
+            val resultText = runCatching {
+                requestVoiceNavigation(NaverVoiceCommand.Request(request.alias, NaverVoiceCommand.Mode.UNSPECIFIED))
+            }.getOrElse { "네이버지도 연결 요청 실패 · 휴대폰에서 확인하세요." }
+            noteNativeMenu(0x20, "기존 알림 HUD 전환 · 순정 화면 종료 미확인 · " + resultText)
+        }
+        runCatching {
+            connection.sendFrame(NativeNavigationStartup.phoneCloseFrame(navProbeTransportSequence++ and 65535, request.sid), ::complete)
+        }.onFailure { complete(Result.failure(it)) }
+        main.postDelayed({
+            if (pendingPresetHandoff === transaction) {
+                pendingPresetHandoff = null
+                noteNativeMenu(0x20, "네이버지도 전환 시간 초과 · 자동 재전송하지 않음")
+            }
+        }, 5_000L)
+    }
     val nativePresetPending get() = pendingNativePreset != null
     val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
     val nativePresetCanSync get() = nativeNavCoreReadbackFinished &&
@@ -61,6 +110,8 @@ internal class BridgeService : Service() {
         navProbeRevision++
         pendingNavProbe = null
         pendingNativePreset = null
+        pendingPresetHandoff = null
+        handledPresetSids.clear()
         nativePresetSyncedRevision = null
         nativePresetStatus = "안경 목적지 동기화 미실행"
         nativeNavCapabilities = null
@@ -74,7 +125,7 @@ internal class BridgeService : Service() {
         !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
             state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
             !conversations.state.stopping && !translator.active && !voiceTransport.nativeActive &&
-            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null && pendingNativePreset == null
+            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null && pendingNativePreset == null && pendingPresetHandoff == null
     private fun negotiateNativeNavigation() {
         if (!nativeNavCoreReadbackFinished || nativeNavAutoQuerySent || !canQueryNativeNavigation()) return
         probeNativeNavigation()
@@ -172,11 +223,22 @@ internal class BridgeService : Service() {
         when (message.type) {
             1 -> {
                 val config = runCatching { NativeNavigationPresets.read(this) }.getOrNull()
-                val matched = config?.let { NativeNavigationPresets.initialPreset(message, it) }
+                val matched = config?.let { NativeNavigationPresets.initialRequest(message, it) }
+                if (matched != null && matched.sid in handledPresetSids) return
                 noteNativeMenu(0x20, if (matched == null) "시작 요청 수신 ($source) · 순정 시작 계약 미완성"
-                    else "$matched 목적지 요청 확인 ($source) · 순정 경로 공급 미연동")
+                    else "${matched.alias} 목적지 요청 확인 ($source) · 순정 경로 공급 미연동")
+                if (matched != null && config != null) offerPresetHandoff(matched, config)
             }
-            3 -> noteNativeMenu(0x20, "종료 요청 수신 ($source)")
+            3 -> {
+                val pending = pendingPresetHandoff
+                if (pending != null && message.mode == 2L && message.sequence == 0L &&
+                    message.audio?.isNotEmpty() != true && message.json.orEmpty().length in 1..8192) {
+                    val body = runCatching { JSONObject(message.json!!) }.getOrNull()
+                    if (body?.opt("sid") == pending.request.sid && body.opt("reason_code") == 1)
+                        pendingPresetHandoff = null
+                }
+                noteNativeMenu(0x20, "종료 요청 수신 ($source)")
+            }
             0x31, 0x40 -> Unit // capability response or correlated protocol error
             else -> return
         }
@@ -511,6 +573,7 @@ internal class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         settings = AppSettings(this)
+        nativePresetHandoffEnabled = runCatching { NativeNavigationPresets.handoffEnabled(this) }.getOrDefault(false)
         runCatching { ChatGptSubscription.initialize(this) }
         chatContinuity = ChatContinuityStore.open(this)
         speechOutput = KoreanSpeechOutput(this, main, ::notifyUI)
@@ -980,6 +1043,7 @@ internal class BridgeService : Service() {
     private var voiceNavigationLookup: okhttp3.Call? = null
     private var voiceNavigationGeneration = 0L
     private fun clearVoiceNavigation() {
+        pendingPresetHandoff = null
         voiceNavigationGeneration++
         voiceNavigationLookup?.cancel(); voiceNavigationLookup = null
         voiceNavigation = null

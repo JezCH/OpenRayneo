@@ -26,6 +26,11 @@ internal object NativeNavigationPresets {
     private fun validDestination(value: String) = value.length in 2..120 &&
         value.none(Char::isISOControl) && value !in setOf("집", "회사", "여기", "거기", "저기", "어디", "이전 목적지")
     private fun store(context: Context) = AppSettings(context, "native_navigation_presets")
+    // Separate opt-in; a saved destination or sync consent is NOT consent to launch.
+    private fun handoffSettings(context: Context) = AppSettings(context, "native_preset_handoff")
+    fun handoffEnabled(context: Context) = handoffSettings(context).readStored().opt("enabled") == true
+    fun saveHandoffEnabled(context: Context, enabled: Boolean) =
+        handoffSettings(context).save(JSONObject().put("enabled", enabled))
     fun read(context: Context): Config {
         val json = store(context).readStored()
         if (json.length() == 0) return Config()
@@ -78,16 +83,24 @@ internal object NativeNavigationPresets {
 
     /** Only the recovered initial stock preset request, not other start variants.
      * A matching slot still does not prove that a live Naver route is available. */
-    fun initialPreset(message: ProtocolCodec.Message, config: Config): String? {
+    data class InitialRequest(val sid: String, val alias: String) {
+        override fun toString() = "InitialRequest(redacted)"
+    }
+    fun initialPreset(message: ProtocolCodec.Message, config: Config): String? = initialRequest(message, config)?.alias
+    fun initialRequest(message: ProtocolCodec.Message, config: Config): InitialRequest? {
         if (message.type != 1 || message.mode != 2L || message.sequence != 0L) return null
         val json = body(message) ?: return null
         val sid = json.opt("sid") as? String ?: return null
         if (!sid.matches(Regex("(?i)([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"))) return null
         if (json.opt("trigger") != 2 || json.opt("code") != 0) return null
-        return when (json.opt("preset")) {
+        // Stock initial preset request uses AUTO profiles; other requests are not this handoff.
+        if (listOf("engine_profile", "map_profile", "route_scene_profile").any { json.opt(it) != "AUTO" } ||
+            json.has("search_id") || json.has("poi_id")) return null
+        val alias = when (json.opt("preset")) {
             "HOME" -> "집".takeIf { config.home != null && json.opt("preset_id") == config.home.id }
             "COMPANY" -> "회사".takeIf { config.company != null && json.opt("preset_id") == config.company.id }
             else -> null
-        }
+        } ?: return null
+        return InitialRequest(sid, alias)
     }
 }

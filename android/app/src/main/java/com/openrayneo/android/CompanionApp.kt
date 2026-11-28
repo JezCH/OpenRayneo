@@ -797,6 +797,14 @@ private fun NativeNavigationPresetSettings(model: AppModel) {
             enabled = s.nativePresetCanSync && !s.nativePresetPending && unchanged && saved?.complete == true,
             modifier = Modifier.fillMaxWidth()) { Text("두 목적지 안경 동기화") }
         if (s.nativePresetPending) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        HorizontalDivider()
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("안경 집·회사 요청을 네이버지도로 연결", modifier = Modifier.weight(1f))
+            Switch(checked = s.nativePresetHandoffEnabled, onCheckedChange = { enabled ->
+                model.attempt { model.service().setNativePresetHandoffEnabled(enabled) }
+            })
+        }
+        Note("선택 기능 · 현재 연결에서 목적지 동기화 성공 회신을 받은 경우에만 동작합니다. 안경 순정 시작을 종료 요청하고 네이버지도를 여는 기존 알림 HUD 경로이며, 순정 내비 지도 표시나 종료 확인을 보장하지 않습니다. 기존에 설정한 지역 검색 API만 사용하며 새 API를 추가하지 않습니다.")
     }
     confirmEpoch?.let { epoch -> AlertDialog(
         onDismissRequest = { confirmEpoch = null },
