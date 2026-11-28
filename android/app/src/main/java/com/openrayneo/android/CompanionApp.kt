@@ -21,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -766,32 +767,29 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
         if (model.walkingCourseBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         if (course != null) {
             Text("${course.points.size}개 좌표 · ${"%.2f".format(java.util.Locale.KOREA, course.lengthMeters / 1000.0)} km", style = MaterialTheme.typography.titleLarge)
-            val color = MaterialTheme.colorScheme.primary
-            val pointColor = MaterialTheme.colorScheme.tertiary
-            val coordinates = remember(course) {
-                val center = course.points.map { it.latitude }.average()
-                val longitudeScale = kotlin.math.cos(Math.toRadians(center))
-                val xy = course.points.map { (it.longitude * longitudeScale) to it.latitude }
-                val minX = xy.minOf { it.first }; val maxX = xy.maxOf { it.first }
-                val minY = xy.minOf { it.second }; val maxY = xy.maxOf { it.second }
-                val span = maxOf(maxX - minX, maxY - minY).coerceAtLeast(0.000001)
-                xy.map { ((it.first - (minX + maxX) / 2.0) / span).toFloat() to (((minY + maxY) / 2.0 - it.second) / span).toFloat() }
-            }
-            Canvas(Modifier.fillMaxWidth().height(160.dp)) {
-                val scale = minOf(size.width, size.height) * 0.8f
-                val path = androidx.compose.ui.graphics.Path()
-                coordinates.forEachIndexed { index, (x, y) ->
-                    val px = size.width / 2f + x * scale
-                    val py = size.height / 2f + y * scale
-                    if (index == 0) path.moveTo(px, py) else path.lineTo(px, py)
+            val preview = model.walkingCourseRaster
+            if (preview != null) {
+                // Display the actual bytes prepared for the stock view sizes.
+                // The phone preview is not a claim of device acceptance.
+                val overview = remember(preview) {
+                    android.graphics.BitmapFactory.decodeByteArray(preview.overview, 0, preview.overview.size)?.asImageBitmap()
                 }
-                drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
-                val (x, y) = coordinates.first()
-                drawCircle(pointColor, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width / 2f + x * scale, size.height / 2f + y * scale))
-            }
+                val mini = remember(preview) {
+                    android.graphics.BitmapFactory.decodeByteArray(preview.mini, 0, preview.mini.size)?.asImageBitmap()
+                }
+                Text("전체 코스 PNG · 540 × 220", style = MaterialTheme.typography.titleSmall)
+                overview?.let {
+                    Image(it, contentDescription = "불러온 코스 전체 경로", modifier = Modifier.fillMaxWidth().aspectRatio(540f / 220f))
+                }
+                Text("소형 화면 크기 PNG · 184 × 90", style = MaterialTheme.typography.titleSmall)
+                mini?.let {
+                    Image(it, contentDescription = "불러온 코스 소형 화면 미리보기", modifier = Modifier.width(184.dp).aspectRatio(184f / 90f))
+                }
+                Note("원형은 시작점, 사각형은 끝점. 전체 코스의 실제 좌표 연결선만 그렸습니다. 소형 화면은 실시간 이동 지도나 현재 위치 표시가 아닙니다.")
+            } else Note("순정 크기 PNG를 생성하지 못했습니다. 원본 코스 좌표는 유지됩니다.")
             val geometry = remember(course) { course.nativeGeometry() }
             Note(if (geometry == null) "순정 장면 규격에 맞지 않는 좌표 수 또는 범위 · 원본 코스는 보존됩니다." else "순정 장면용 경로 형상 준비 · 세션 및 실제 안내 연동 필요")
-            Note("파일 좌표의 연결선과 시작점 · 직선 구간 합계이며 지도, 도로 검증, 실시간 위치, ETA가 아닙니다. 앱 메모리에만 유지하며 안경으로 전송하지 않습니다.")
+            Note("파일 좌표의 연결선과 거리 합계입니다. 배경지도, 도로 검증, 실시간 위치, ETA는 포함하지 않습니다. 앱 메모리에만 유지하며 안경으로 전송하지 않습니다.")
             ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }
     }
