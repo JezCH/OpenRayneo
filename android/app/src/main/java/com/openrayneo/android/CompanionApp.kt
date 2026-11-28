@@ -71,9 +71,9 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         }
     }
     val snackbars = remember { SnackbarHostState() }
-    // Unsaved manuscript stays only in this live composition, not Bundle/disk.
-    val manuscript = remember { TeleprompterDraft() }
-    val contentDrafts = remember { ContentEditorDrafts() }
+    // ViewModel-owned drafts survive configuration changes, not process death.
+    val manuscript = model.teleprompterDraft
+    val contentDrafts = model.contentEditorDrafts
     val s = model.state
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     BackHandler(

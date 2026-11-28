@@ -255,6 +255,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
 
     // Form drafts survive activity recreation without writing secrets into saved instance state.
     val formDrafts = mutableStateMapOf<String, String>()
+    val teleprompterDraft = TeleprompterDraft()
+    val contentEditorDrafts = ContentEditorDrafts()
     private val formBaseline = mutableMapOf<String, String>()
     val recommendedPending get() = FeatureDefaults.recommendedChanges { config.optString(it) }.isNotEmpty()
     val recommendedEditable get() = state.available && !state.migration.busy &&

@@ -27,6 +27,7 @@ internal data class ContentEditDraft(
     val id: Long? = null, val device: String? = null,
     val originalTitle: String = "", val originalStart: String = "", val originalEnd: String = "",
     val requestId: String? = null, val submittedDevice: String? = null,
+    val submittedStart: Long? = null, val submittedEnd: Long? = null,
 ) {
     val dirty: Boolean get() = title != originalTitle || start != originalStart || end != originalEnd
     val unresolved: Boolean get() = requestId != null
@@ -64,7 +65,9 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
     val formatter = remember { DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withResolverStyle(ResolverStyle.STRICT) }
     val scheduleStart = remember(start) { runCatching { LocalDateTime.parse(start, formatter) }.getOrNull() }
     val scheduleEnd = remember(end) { runCatching { LocalDateTime.parse(end, formatter) }.getOrNull() }
-    val validSchedule = scheduleStart != null && scheduleEnd != null && scheduleEnd.isAfter(scheduleStart)
+    val validSchedule = if (draft.unresolved) {
+        draft.submittedStart != null && draft.submittedEnd != null && draft.submittedEnd > draft.submittedStart
+    } else scheduleStart != null && scheduleEnd != null && scheduleEnd.isAfter(scheduleStart)
     val editor = remember { BringIntoViewRequester() }
     var editRequest by remember { mutableIntStateOf(0) }
     fun chooseDraft(next: ContentEditDraft) {
@@ -117,14 +120,20 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
         val targetPage = page
         val targetDevice = device ?: return
         if (!editReady) return
+        // Freeze the actual epoch values once; a timezone change cannot alter a retry.
+        val zone = ZoneId.systemDefault()
         val submitted = draft.copy(title = title.trim(),
             requestId = draft.requestId ?: java.util.UUID.randomUUID().toString(),
-            submittedDevice = targetDevice)
+            submittedDevice = targetDevice,
+            submittedStart = if (targetPage == 2) draft.submittedStart ?: LocalDateTime.parse(start, formatter).atZone(zone).toEpochSecond() else null,
+            submittedEnd = if (targetPage == 2) draft.submittedEnd ?: LocalDateTime.parse(end, formatter).atZone(zone).toEpochSecond() else null)
         val args = JSONObject().put("title", submitted.title).put("request_id", submitted.requestId)
         submitted.id?.let { args.put("event_id", it) }
         if (targetPage == 2) {
-            args.put("start_time", LocalDateTime.parse(submitted.start, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
-                .put("end_time", LocalDateTime.parse(submitted.end, formatter).atZone(ZoneId.systemDefault()).toEpochSecond())
+            val from = checkNotNull(submitted.submittedStart)
+            val to = checkNotNull(submitted.submittedEnd)
+            require(to > from) { "실제 종료 시간은 시작 시간보다 뒤여야 합니다." }
+            args.put("start_time", from).put("end_time", to)
         }
         val service = model.service()
         check(service.authenticatedNavigationDevice == targetDevice) { "안경 연결이 변경되었습니다" }
@@ -136,10 +145,15 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
         }) { result ->
             if (currentDraft(targetPage) != submitted) return@runWithResult
             result.onSuccess { response ->
-                if (response.optBoolean("readBack") && response.has("eventID")) {
-                    setDraft(submitted.copy(id = response.getLong("eventID"), device = targetDevice,
+                val sameDevice = runCatching { model.service() === service && service.authenticatedNavigationDevice == targetDevice }.getOrDefault(false)
+                val verifiedId = if (sameDevice) ContentDraftReadback.verifiedId(
+                    response, submitted.id, submitted.title, submitted.submittedStart, submitted.submittedEnd
+                ) else null
+                if (verifiedId != null) {
+                    setDraft(submitted.copy(id = verifiedId, device = targetDevice,
                         originalTitle = submitted.title, originalStart = submitted.start, originalEnd = submitted.end,
-                        requestId = null, submittedDevice = null), targetPage)
+                        requestId = null, submittedDevice = null, submittedStart = null, submittedEnd = null), targetPage)
+                    if (response.optBoolean("duplicate")) model.notice = "기존 요청의 항목을 기기 재조회로 확인했습니다. 새로 전송하지 않았습니다."
                 }
             }
         }
@@ -190,8 +204,8 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
                 OpticalPanel {
                         SectionLabel(if (editId == null) "새 할 일" else "할 일 편집")
                         if (editId != null && draft.device != device) Note("이 편집은 다른 연결의 항목입니다. 원래 안경을 연결하거나 새 항목을 작성하세요.")
-                        if (draft.unresolved) Note("이전 요청 결과 미확인. 목록을 다시 읽어 확인하거나 같은 요청 ID로 확인을 재시도하세요. 새 항목을 만들기 전 중복 여부를 확인하세요.")
-                        else if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
+                        if (draft.unresolved) Note("이전 요청 결과 미확인. 같은 요청 확인을 재시도하면 기기 목록에서 기존 항목을 확인합니다. 새 항목을 만들기 전 중복 여부를 확인하세요.")
+                        else if (draft.dirty) Note("편집 내용은 앱이 실행 중인 동안 유지됩니다. 앱 종료 후 복구되지 않습니다. 저장 후 기기 재조회 결과를 확인하세요.")
                         OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("할 일 제목") }, enabled = inputsEnabled)
                 ToolButton(onClick = { model.attempt { submitDraft() } }, enabled = editReady && title.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                     Text(if (draft.unresolved) "같은 요청 확인 재시도" else if (editId == null) "안경에 추가" else "할 일 저장")
@@ -222,8 +236,8 @@ internal fun CompanionContentScreen(model: AppModel, drafts: ContentEditorDrafts
                 OpticalPanel {
                         SectionLabel(if (editId == null) "새 일정" else "일정 편집")
                         if (editId != null && draft.device != device) Note("이 편집은 다른 연결의 항목입니다. 원래 안경을 연결하거나 새 항목을 작성하세요.")
-                        if (draft.unresolved) Note("이전 요청 결과 미확인. 목록을 다시 읽어 확인하거나 같은 요청 ID로 확인을 재시도하세요. 새 항목을 만들기 전 중복 여부를 확인하세요.")
-                        else if (draft.dirty) Note("편집 내용은 앱의 현재 화면 세션에만 유지됩니다. 저장 후 기기 재조회 결과를 확인하세요.")
+                        if (draft.unresolved) Note("이전 요청 결과 미확인. 같은 요청 확인을 재시도하면 기기 목록에서 기존 항목을 확인합니다. 새 항목을 만들기 전 중복 여부를 확인하세요.")
+                        else if (draft.dirty) Note("편집 내용은 앱이 실행 중인 동안 유지됩니다. 앱 종료 후 복구되지 않습니다. 저장 후 기기 재조회 결과를 확인하세요.")
                         OutlinedTextField(title, { setDraft(draft.copy(title = it)) }, Modifier.fillMaxWidth().bringIntoViewRequester(editor), label = { Text("일정 제목") }, enabled = inputsEnabled)
                 OutlinedTextField(start, { setDraft(draft.copy(start = it)) }, Modifier.fillMaxWidth(), label = { Text("시작: yyyy-MM-dd HH:mm") }, singleLine = true, enabled = inputsEnabled, isError = start.isNotBlank() && scheduleStart == null)
                 OutlinedTextField(end, { setDraft(draft.copy(end = it)) }, Modifier.fillMaxWidth(), label = { Text("종료: yyyy-MM-dd HH:mm") }, singleLine = true, enabled = inputsEnabled, isError = end.isNotBlank() && (scheduleEnd == null || scheduleStart != null && !validSchedule))

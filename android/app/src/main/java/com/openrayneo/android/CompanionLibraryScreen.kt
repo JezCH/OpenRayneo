@@ -175,7 +175,7 @@ internal fun TeleprompterScreen(model: AppModel, draft: TeleprompterDraft) {
         SectionLabel("저장된 원고")
         if (dirty) OpticalPanel {
             Text("미저장 원고", style = MaterialTheme.typography.titleMedium)
-            Note("화면을 이동해도 앱이 열려 있는 동안 편집 내용은 유지됩니다. 앱 종료 시에는 유지되지 않으니 원고를 저장하세요.")
+            Note("화면 이동이나 화면 회전 후에도 편집 내용은 유지됩니다. 앱 종료 후에는 복구되지 않으니 원고를 저장하세요.")
             TextButton(onClick = { editRequest++ }) { Text("편집 중인 원고로 이동") }
         }
         ToolOutlinedButton(onClick = { choose() }, modifier = Modifier.fillMaxWidth()) { Text("새 원고 작성") }
