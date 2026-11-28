@@ -21,7 +21,8 @@ internal object NavigationFeed {
     val sources = mapOf(PACKAGE to SOURCE_NAME)
     fun isNavigationSource(pkg: String) = pkg == PACKAGE
     fun sourceLabel(pkg: String) = sources[pkg] ?: "지원하지 않는 지도 앱"
-    enum class Observation { NON_NAVIGATION, UNRECOGNIZED, RECOGNIZED }
+    // A lifecycle-only notification does not supply a maneuver, route ID or map.
+    enum class Observation { NON_NAVIGATION, STATUS_ONLY, UNRECOGNIZED, RECOGNIZED }
     data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int)
     // Active notification metadata only; never retain rejected notification content.
     private val observations = linkedMapOf<String, Pair<String, Observation>>()
@@ -38,7 +39,7 @@ internal object NavigationFeed {
     val evidence get() = sources.keys.map { pkg ->
         val seen = observations.values.filter { it.first == pkg }
         SourceEvidence(pkg, seen.size, seen.count { it.second == Observation.RECOGNIZED },
-            seen.count { it.second == Observation.UNRECOGNIZED })
+            seen.count { it.second == Observation.UNRECOGNIZED || it.second == Observation.STATUS_ONLY })
     }
 
     data class Entry(
@@ -200,7 +201,7 @@ internal class NavigationNotifications : NotificationListenerService() {
         val entry = parseSafely(notification)
         if (entry != null) NavigationFeed.update(entry) else {
             // Normal Naver notifications remain eligible for the existing opt-in phone forwarding.
-            if (notification.notification.category != Notification.CATEGORY_NAVIGATION)
+            if (!NavigationFeed.activeNavigationKey(notification.key))
                 PhoneNotificationForwarding.onPosted(this, notification)
             NavigationFeed.reject(notification.key)
         }
@@ -226,14 +227,23 @@ internal class NavigationNotifications : NotificationListenerService() {
 
     private fun parse(item: StatusBarNotification): NavigationFeed.Entry? {
         val notification = item.notification
-        val eligible = NavigationFeed.isNavigationSource(item.packageName) &&
-            notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 &&
-            notification.category == Notification.CATEGORY_NAVIGATION
-        if (!eligible) {
+        val eligibleSource = NavigationFeed.isNavigationSource(item.packageName) &&
+            notification.flags and Notification.FLAG_GROUP_SUMMARY == 0
+        if (!eligibleSource) {
             NavigationFeed.observe(item.key, item.packageName, NavigationFeed.Observation.NON_NAVIGATION)
             return null
         }
         val extras = notification.extras ?: Bundle.EMPTY
+        // Existing NAVER interop evidence: NaviToTesla's NaverPoiFinder observes
+        // this exact active-guidance text independently of notification category.
+        // It is NOT a direction, a distance, or a complete native route.
+        val statusOnly = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ==
+            "내비게이션 - 안내 중"
+        if (notification.category != Notification.CATEGORY_NAVIGATION) {
+            NavigationFeed.observe(item.key, item.packageName, if (statusOnly)
+                NavigationFeed.Observation.STATUS_ONLY else NavigationFeed.Observation.NON_NAVIGATION)
+            return null
+        }
         val texts =
             buildList {
                     for (key in
@@ -243,6 +253,8 @@ internal class NavigationNotifications : NotificationListenerService() {
                             Notification.EXTRA_BIG_TEXT,
                             Notification.EXTRA_SUB_TEXT,
                             Notification.EXTRA_SUMMARY_TEXT,
+                            // Public Android 16 Live Updates short text; no private payloads.
+                            "android.shortCriticalText",
                         )) {
                         extras
                             .getCharSequence(key)
@@ -258,7 +270,11 @@ internal class NavigationNotifications : NotificationListenerService() {
                 }
                 .distinct()
         val recognized = KoreanNavigationText.parse(texts) != null
-        NavigationFeed.observe(item.key, item.packageName, if (recognized) NavigationFeed.Observation.RECOGNIZED else NavigationFeed.Observation.UNRECOGNIZED)
+        NavigationFeed.observe(item.key, item.packageName, when {
+            recognized -> NavigationFeed.Observation.RECOGNIZED
+            statusOnly -> NavigationFeed.Observation.STATUS_ONLY
+            else -> NavigationFeed.Observation.UNRECOGNIZED
+        })
         if (!recognized) return null
         return NavigationFeed.Entry(
             item.key,
