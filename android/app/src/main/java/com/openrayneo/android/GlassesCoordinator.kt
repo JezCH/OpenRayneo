@@ -5,6 +5,13 @@ package com.openrayneo.android
 /** Pure decision logic. The service commits the state before executing effects or accepting callbacks. */
 internal object GlassesCoordinator {
     fun reduce(previous: GlassesState, event: GlassesEvent): GlassesTransition {
+        // The service owns the stock 0x20 session until its bounded close.
+        // Never create a competing legacy page while that reservation is held.
+        if (previous.intent == DisplayIntent.NativeNavigation && event !is GlassesEvent.LinkChanged &&
+            event !is GlassesEvent.NavigationChanged && event !is GlassesEvent.ExternalPage &&
+            event != GlassesEvent.Disconnect && event != GlassesEvent.BeginConnection &&
+            event != GlassesEvent.ReleaseNativeNavigation)
+            return GlassesTransition(previous, emptyList())
         var state = previous
         val effects = mutableListOf<GlassesEffect>()
         var nativeSubtitle: NativeSubtitleStart? = null
@@ -38,7 +45,7 @@ internal object GlassesCoordinator {
                 DisplayIntent.Navigation -> ReturnTarget.NAVIGATION
                 DisplayIntent.PromptStandby, DisplayIntent.BlankPrompt -> ReturnTarget.PROMPT_STANDBY
                 is DisplayIntent.Answer -> intent.returnTo
-                DisplayIntent.Idle, DisplayIntent.Translation -> ReturnTarget.IDLE
+                DisplayIntent.Idle, DisplayIntent.Translation, DisplayIntent.NativeNavigation -> ReturnTarget.IDLE
             }
             setIntent(DisplayIntent.Answer(content.ref, target))
             state = state.copy(answer = content)
@@ -81,6 +88,14 @@ internal object GlassesCoordinator {
                     state.navigation.key == event.key && state.navigation.frame != null)
                     setIntent(DisplayIntent.Navigation)
             }
+            GlassesEvent.ReserveNativeNavigation -> {
+                if (state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                    state.intent == DisplayIntent.Idle && state.session == null && !state.navigation.enabled &&
+                    state.ownership == DisplayOwnership.APP && state.error == null)
+                    setIntent(DisplayIntent.NativeNavigation)
+            }
+            GlassesEvent.ReleaseNativeNavigation -> if (state.intent == DisplayIntent.NativeNavigation)
+                setIntent(DisplayIntent.Idle)
             GlassesEvent.StopNavigation -> {
                 val current = state.intent
                 val next = if (current is DisplayIntent.Answer && current.returnTo == ReturnTarget.NAVIGATION)
@@ -265,7 +280,7 @@ internal object GlassesCoordinator {
     private fun target(state: GlassesState, native: NativeSubtitleStart?, hint: NativeHintStart?): Pair<PageMode, PageContent>? {
         if (state.disconnecting || state.ownership != DisplayOwnership.APP) return null
         return when (val intent = state.intent) {
-            DisplayIntent.Idle -> null
+            DisplayIntent.Idle, DisplayIntent.NativeNavigation -> null
             DisplayIntent.BlankPrompt -> PageMode.PROMPT to PageContent("blank", "　", "　")
             DisplayIntent.PromptStandby -> if (hint != null) PageMode.PROMPT to PageContent("standby", state.standby.source, state.standby.target)
                 else PageMode.PROMPT to PageContent("standby", state.standby.source.ifBlank { "OpenRayneo" }, state.standby.target.ifBlank { "실시간 힌트 준비됨" })

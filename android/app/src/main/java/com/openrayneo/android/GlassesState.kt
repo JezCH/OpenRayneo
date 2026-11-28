@@ -11,6 +11,8 @@ internal sealed interface DisplayIntent {
     data object PromptStandby : DisplayIntent
     data object BlankPrompt : DisplayIntent
     data object Navigation : DisplayIntent
+    /** Reserved stock 0x20 screen; never open the legacy 0x13 page. */
+    data object NativeNavigation : DisplayIntent
     data object Translation : DisplayIntent
     data class Answer(val ref: AnswerRef, val returnTo: ReturnTarget) : DisplayIntent
 }
@@ -62,6 +64,7 @@ internal data class GlassesState(
         session?.phase == PagePhase.CLOSING -> "이전 페이지 닫는 중"
         link.phase == LinkPhase.BLE_ONLY -> "BLE 진단 연결 전용, 표시나 음성 수신은 시작하지 않음"
         link.phase != LinkPhase.FULL -> link.detail
+        intent == DisplayIntent.NativeNavigation -> "순정 내비 시작·종료 시험 중"
         session == null -> "연결됨, 안경 표시 유휴"
         session.nativePaused -> "안경 순정 세션 일시정지 · 음성 수신 중지"
         session.phase == PagePhase.STARTING -> "안경의 시작 확인 대기"
@@ -95,6 +98,8 @@ internal sealed interface GlassesEvent {
     data class SelectNavigation(val state: NavigationState) : GlassesEvent
     data class ResumeNavigation(val key: String) : GlassesEvent
     data object StopNavigation : GlassesEvent
+    data object ReserveNativeNavigation : GlassesEvent
+    data object ReleaseNativeNavigation : GlassesEvent
     data object PauseDisplay : GlassesEvent
     data object OpenStandby : GlassesEvent
     data object StartTranslation : GlassesEvent
