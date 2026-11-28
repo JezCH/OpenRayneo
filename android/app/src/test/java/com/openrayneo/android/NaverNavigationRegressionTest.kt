@@ -229,4 +229,29 @@ class NaverNavigationRegressionTest {
         assertEquals(0L, closeMessage.mode)
         assertEquals(sid, org.json.JSONObject(closeMessage.json!!).getString("sid"))
     }
+
+    @Test fun offlineRouteProgressUsesFreshFixAndRejectsAmbiguousCrossing() {
+        fun pt(lat: Double, lon: Double) = NaverWalkingCourse.Point(lat,lon)
+        val points = listOf(pt(37.0,127.0),pt(37.001,127.0),pt(37.001,127.001))
+        val route = OfflineWalkingRoute.Route(NaverWalkingCourse.Course(points),
+            listOf(OfflineWalkingRoute.Turn(1,5,0,89.0,90)), listOf(0.0,100.0,180.0),180.0)
+        val fix = OfflineRouteProgress.Fix(pt(37.0005,127.0),5.0,1000L)
+        val progress = requireNotNull(OfflineRouteProgress.match(route,fix,1200L))
+        assertTrue(progress.remainingMeters in 140..150)
+        assertTrue(requireNotNull(progress.nextTurnMeters) in 54..57)
+        assertEquals(5, progress.nextTurn?.sourceCode)
+        assertEquals(130, progress.remainingEstimateSeconds)
+        assertNull(OfflineRouteProgress.match(route,fix,4000L))
+        assertNull(OfflineRouteProgress.match(route,fix.copy(accuracyMeters=40.0),1200L))
+        assertNull(OfflineRouteProgress.match(route,fix.copy(point=pt(37.0005,127.01)),1200L))
+        // Out and back over the same geometry: proximity alone cannot
+        // distinguish two different progress positions.
+        val crossing = OfflineWalkingRoute.Route(
+            NaverWalkingCourse.Course(listOf(points[0],points[1],points[0])),
+            emptyList(),null,null)
+        assertNull(OfflineRouteProgress.match(crossing,fix,1200L))
+        val noEstimate = OfflineWalkingRoute.Route(route.course,emptyList(),null,null)
+        assertNull(requireNotNull(OfflineRouteProgress.match(noEstimate,fix,1200L)).remainingEstimateSeconds)
+    }
+
 }
