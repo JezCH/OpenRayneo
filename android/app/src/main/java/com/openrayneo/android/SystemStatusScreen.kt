@@ -219,9 +219,9 @@ private fun rows(model: AppModel, phoneInput: String?): List<SystemRow> {
     val link = deviceConnectionStatus(s)
     val ai = selectedAiStatus(model)
     val pending = s.approvals.size + s.agentReviews.size
-    Surface(onClick = open, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+    Surface(onClick = open, color = MaterialTheme.colorScheme.background) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 20.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {

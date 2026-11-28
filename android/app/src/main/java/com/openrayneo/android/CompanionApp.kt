@@ -97,76 +97,18 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         topBar = {
             if (!model.onboarding || route.isNotEmpty())
                 Column {
-                TopAppBar(
-                    title = {
-                        Text(
-                            CompanionRoutePolicy.title(route, AppUpdate.supported)
-                                ?: listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
-                        )
-                    },
-                    navigationIcon = {
-                        if (route.isNotEmpty())
-                            IconButton(
-                                onClick = {
-                                    backRoute()
-                                }
-                            ) {
-                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "뒤로")
-                            }
-                    },
-                    actions = {
-                        if (route.isEmpty()) {
-                            IconButton(onClick = { openRoute("settings") }) {
-                                Icon(Icons.Outlined.Settings, "설정")
-                            }
-                        }
-                    },
-                    colors =
-                        TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.background
-                        ),
+                OpticalFrameHeader(
+                    title = CompanionRoutePolicy.title(route, AppUpdate.supported)
+                        ?: listOf("홈", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)],
+                    isDetail = route.isNotEmpty(), compact = keyboardVisible,
+                    back = { backRoute() }, settings = { openRoute("settings") }
                 )
                 if (route != "system-status") SystemStatusStrip(model, phoneInput, compact = keyboardVisible) { openRoute("system-status") }
                 }
         },
         bottomBar = {
             if (route.isEmpty() && !model.onboarding && !keyboardVisible)
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-                    val icons =
-                        listOf(
-                            Icons.Outlined.Home,
-                            Icons.AutoMirrored.Outlined.Chat,
-                            Icons.Outlined.FolderOpen,
-                            Icons.Outlined.Dashboard,
-                            Icons.Outlined.Visibility,
-                        )
-                    listOf("홈", "AI", "기억", "도구", "기기").forEachIndexed { index, title ->
-                        NavigationBarItem(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            colors =
-                                NavigationBarItemDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                ),
-                            icon = {
-                                BadgedBox(
-                                    badge = {
-                                        val pending = s.approvals.size + s.agentReviews.size
-                                        if (index == 1 && pending > 0)
-                                            Badge { Text(pending.toString()) }
-                                    }
-                                ) {
-                                    Icon(icons[index], null)
-                                }
-                            },
-                            label = { Text(title, style = MaterialTheme.typography.labelMedium) },
-                        )
-                    }
-                }
+                OpticalFrameNavigation(tab, s.approvals.size + s.agentReviews.size) { tab = it }
         },
         snackbarHost = { SnackbarHost(snackbars) },
         containerColor = MaterialTheme.colorScheme.background,

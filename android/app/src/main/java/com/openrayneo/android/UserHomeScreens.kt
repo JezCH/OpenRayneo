@@ -52,7 +52,7 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            OpticalPanel {
+            OpticalHeroPanel {
                 OpticalActivityHeader(activity)
                 Note("음성 인식: " + when {
                     !s.available -> "서비스 준비 중"
@@ -226,31 +226,21 @@ private data class ToolDestination(
 private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel(title)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-            Column {
-            destinations.forEachIndexed { index, destination ->
-                if (index > 0) HorizontalDivider(
-                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-                ListItem(
-                    headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(destination.subtitle)
-                            destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
-                        }
-                    },
-                    leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
-                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
-                    modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
-            }
+        destinations.forEach { destination ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = destination.open)
+                .padding(vertical = 10.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp).size(25.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(destination.title, style = MaterialTheme.typography.titleMedium)
+                    Note(destination.subtitle)
+                    destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
+                }
+                Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -263,6 +253,7 @@ internal fun ToolsScreen(model: AppModel, open: (String) -> Unit, navigate: (Int
     val recordingStatus = if (visible && (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending)) recording(s).label else null
     val translationPreparing = visible && s.mediaTranslation.preparing && s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { OpticalWorkspaceHeading("기능 라이브러리", "안경과 휴대폰의 도구", 3) }
         item {
             ToolDestinationGroup("자막 및 번역", listOf(
                 ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate, status = when {
@@ -443,16 +434,9 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
     )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            OpticalPanel {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-                        Text(connection.label, style = MaterialTheme.typography.titleMedium,
-                            color = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurface)
-                    }
-                    GlassesArtwork(Modifier.width(92.dp).height(64.dp), MaterialTheme.colorScheme.primary)
-                }
+            OpticalHeroPanel {
+                OpticalWorkspaceHeading(model.deviceName, connection.label, 4)
+                GlassesArtwork(Modifier.fillMaxWidth().height(110.dp), MaterialTheme.colorScheme.primary)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
                 Note(when {
@@ -460,7 +444,8 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
                     linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
                     else -> s.glasses.link.detail
                 })
-                Text(battery?.let { "보고된 배터리 ${it}%" } ?: "배터리 미확인", style = MaterialTheme.typography.titleMedium)
+                Text(battery?.let { "${it}%" } ?: "배터리 미확인", style = if (battery != null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium)
+                if (battery != null) Note("기기가 보고한 배터리")
                 if (battery != null) {
                     LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
                 }

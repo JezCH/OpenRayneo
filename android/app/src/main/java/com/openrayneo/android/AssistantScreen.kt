@@ -5,6 +5,9 @@ package com.openrayneo.android
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -207,8 +210,8 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                 }
             else if (!configured)
                 item {
-                    OpticalPanel {
-                        if (mobile) OpticalSignature(Modifier.size(80.dp))
+                    OpticalHeroPanel {
+                        if (mobile) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OpticalSignature(Modifier.size(156.dp)) }
                         else Icon(Icons.Outlined.Computer, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(
                             if (mobile) "AI에 연결해야 질문할 수 있습니다" else "컴퓨터가 아직 설정되지 않음",
@@ -253,7 +256,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (mobile) OpticalSignature(Modifier.size(104.dp))
+                        if (mobile) OpticalSignature(Modifier.size(168.dp))
                         else Icon(Icons.Outlined.Computer, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(if (mobile) "무엇을 도와드릴까요?" else "새 PC 작업", style = MaterialTheme.typography.headlineSmall)
                         Note(if (mobile) "질문을 입력하거나 기억을 첨부해 대화를 시작하세요." else "작업을 입력하면 컴퓨터의 Codex가 처리합니다.")
@@ -349,7 +352,15 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                 }
             item(key = "conversation-end") { Spacer(Modifier.height(1.dp)) }
         }
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = OpticalFrameShape) {
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Row(Modifier.fillMaxWidth().height(2.dp)) {
+                    Box(Modifier.weight(.25f).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+                    Box(Modifier.weight(.75f).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                }
             Column(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -393,13 +404,19 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedTextField(
+                    TextField(
                         draft,
                         { if (mobile) model.phoneDraft = it else model.computerDraft = it },
                         Modifier.weight(1f),
                         placeholder = { Text(if (mobile) (if (executeTask) "실행할 업무를 입력하세요…" else "AI에게 질문하세요…") else "컴퓨터에 맡길 작업…") },
                         maxLines = if (keyboardVisible) 3 else 5,
-                        shape = MaterialTheme.shapes.large,
+                        shape = OpticalControlShape,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
                     )
                     if (running)
                         FilledIconButton(
@@ -445,6 +462,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                     )
                 }
             }
+        }
         }
     }
 }
@@ -555,7 +573,7 @@ private fun ConversationTurn(question: String, answer: String) {
         Surface(
             modifier = Modifier.align(Alignment.End).widthIn(max = 320.dp),
             color = MaterialTheme.colorScheme.primaryContainer,
-            shape = MaterialTheme.shapes.medium,
+            shape = OpticalFrameShape,
         ) {
             SelectionContainer {
                 Text(
@@ -567,11 +585,12 @@ private fun ConversationTurn(question: String, answer: String) {
         }
         if (answer.isNotBlank())
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "AI 답변",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    OpticalFrameGlyph(1, MaterialTheme.colorScheme.primary, Modifier.size(22.dp))
+                    Text("AI 답변", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+                }
                 SelectionContainer {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         answer.split("```").forEachIndexed { index, part ->

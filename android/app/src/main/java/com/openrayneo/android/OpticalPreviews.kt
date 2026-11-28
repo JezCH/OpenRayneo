@@ -21,7 +21,7 @@ private fun OpticalComponentSample(appearance: String) {
         Surface(color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OpticalPanel {
+                OpticalHeroPanel {
                     OpticalActivityHeader("대기 중")
                     Note("예시 · 실제 기기 연결과 기록 상태가 아님")
                     ToolButton(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("일상 기록 시작") }
@@ -78,6 +78,37 @@ private fun OpticalAiStatesLargePreview() {
                 OpticalAiPhase.entries.forEach { phase ->
                     OpticalPanel { OpticalAiStatus(phase, "상태 설명 예시") }
                 }
+            }
+        }
+    }
+}
+
+@Preview(name = "Optical frame / dark", widthDp = 390, heightDp = 840)
+@Composable private fun OpticalFrameDarkPreview() = OpticalFullFrameSample("dark")
+
+@Preview(name = "Optical frame / light", widthDp = 390, heightDp = 840)
+@Composable private fun OpticalFrameLightPreview() = OpticalFullFrameSample("light")
+
+@Composable
+private fun OpticalFullFrameSample(appearance: String) {
+    CompanionTheme(appearance) {
+        Scaffold(topBar = { OpticalFrameHeader("홈", false, false, {}, {}) },
+            bottomBar = { OpticalFrameNavigation(0, 0) {} },
+            containerColor = MaterialTheme.colorScheme.background) { padding ->
+            Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OpticalHeroPanel {
+                    OpticalActivityHeader("대기 중")
+                    Note("예시 · 실제 연결 상태가 아님")
+                    ToolButton(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("안경 연결") }
+                }
+                SectionLabel("바로 사용")
+                OpticalQuickPair({ OpticalQuickTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, it) {} },
+                    { OpticalQuickTile("회의 기록", "전사 · 요약", Icons.Outlined.GraphicEq, it) {} })
+                OpticalQuickPair({ OpticalQuickTile("실시간 힌트", "대화 중 도움", Icons.Outlined.AutoAwesome, it) {} },
+                    { OpticalQuickTile("한국어 호출", "내 호출어", Icons.Outlined.Mic, it) {} })
+                OpticalQuickPair({ OpticalQuickTile("영상 자막", "휴대폰 영상", Icons.Outlined.Translate, it) {} },
+                    { OpticalQuickTile("한영 통역", "내장 번역", Icons.Outlined.Translate, it) {} })
             }
         }
     }

@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -199,11 +200,14 @@ internal fun GlassesArtwork(modifier: Modifier = Modifier, color: Color = Materi
 
 @Composable
 internal fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp).semantics { heading() },
-    )
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.width(3.dp).height(18.dp).background(MaterialTheme.colorScheme.primary))
+        Text(text, style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f).semantics { heading() })
+        HorizontalDivider(Modifier.weight(.18f), color = MaterialTheme.colorScheme.outlineVariant)
+    }
 }
 
 @Composable
@@ -221,18 +225,12 @@ internal fun ContentCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    OutlinedCard(
-        modifier.fillMaxWidth(),
-        colors =
-            CardDefaults.outlinedCardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ),
-    ) {
-        Column(
-            Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            content = content,
-        )
+    Surface(modifier.fillMaxWidth(), shape = OpticalFrameShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        }
     }
 }
 
@@ -259,7 +257,7 @@ internal fun ToolButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Button(onClick, modifier.heightIn(min = 48.dp), enabled, shape = MaterialTheme.shapes.medium, content = content)
+    Button(onClick, modifier.heightIn(min = 50.dp), enabled, shape = OpticalControlShape, content = content)
 }
 
 @Composable
@@ -273,7 +271,7 @@ internal fun ToolOutlinedButton(
         onClick,
         modifier.heightIn(min = 48.dp),
         enabled,
-        shape = MaterialTheme.shapes.medium,
+        shape = OpticalControlShape,
         content = content,
     )
 }
