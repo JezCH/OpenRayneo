@@ -19,13 +19,13 @@ internal class OfflineNativeRoute(
     private val changed: () -> Unit
 ) : NativeLiveNavigation.Route {
     internal class Wire(val travelMode: Int, val guidingState: Int, val unitSystem: Int,
-                        val drivingSide: Int, private val maneuvers: Map<Int, Int>) {
+                        val drivingSide: Int, val noManeuver: Int, private val maneuvers: Map<Int, Int>) {
         init {
             require(travelMode in 1..3 && guidingState in 1..3 &&
                 unitSystem in 1..2 && drivingSide in 0..2)
-            require(maneuvers.values.all { it in 1..24 })
+            require(noManeuver in 0..24 && maneuvers.values.all { it in 0..24 && it != noManeuver })
         }
-        fun maneuver(code: Int?) = code?.let { maneuvers[it] } ?: 0
+        fun maneuver(code: Int?): Int? = if(code==null) noManeuver else maneuvers[code]
     }
     companion object {
         // Only a reviewed, evidence-backed stock walking mapping may enable
@@ -42,13 +42,30 @@ internal class OfflineNativeRoute(
             17 -> "왼쪽 출구"; 18 -> "오른쪽 출구"
             else -> ""
         }
-        fun snapshot(progress: OfflineRouteProgress.Progress, wire: Wire): NativePhoneGuidance.Snapshot {
+        fun snapshot(progress: OfflineRouteProgress.Progress, wire: Wire,
+                     speedMpsX100: Int? = null): NativePhoneGuidance.Snapshot? {
             val turn = progress.nextTurn
-            return NativePhoneGuidance.Snapshot(progress.observedAtMs, wire.guidingState,
-                wire.maneuver(turn?.sourceCode), 0, 0, -1,
-                progress.nextTurnMeters ?: -1, progress.remainingMeters,
-                progress.remainingEstimateSeconds ?: -1, "", "", turnLabel(turn?.sourceCode),
-                false, false)
+            // Unknown primary is not equivalent to "no maneuver". Do not
+            // send an unsupported direction or silently use a legacy code.
+            val primary = wire.maneuver(turn?.sourceCode) ?: return null
+            val following = wire.maneuver(progress.followingTurn?.sourceCode) ?: wire.noManeuver
+            val roundabout = turn?.sourceCode in 13..14
+            val exit = if(roundabout) {
+                val hint=checkNotNull(turn)
+                if((hint.sourceCode==13 && hint.exit !in 1..32) ||
+                    (hint.sourceCode==14 && hint.exit !in -32..-1)) return null
+                kotlin.math.abs(hint.exit)
+            } else {
+                if(turn!=null && turn.exit!=0) return null
+                0
+            }
+            val instruction=if(roundabout) "회전교차로 ${exit}번 출구" else turnLabel(turn?.sourceCode)
+            val distance=if(turn==null) -1 else progress.nextTurnMeters ?: return null
+            return runCatching {
+                NativePhoneGuidance.Snapshot(progress.observedAtMs, wire.guidingState,
+                    primary, following, exit, speedMpsX100 ?: -1, distance, progress.remainingMeters,
+                    progress.remainingEstimateSeconds ?: -1, "", "", instruction, false, false)
+            }.getOrNull()
         }
     }
     override val generation = 1L
@@ -61,17 +78,21 @@ internal class OfflineNativeRoute(
     private var latest: OfflineRouteProgress.Fix? = null
     private var current: NativeLiveNavigation.Observation? = null
     private var revision = 0L
-    private var overview: ByteArray? = null // worker only
+    private var lastSeenAt = -1L
     init {
         try {
             watch = OfflineRouteLocation.watch(context) { fix ->
                 if (!closed) {
-                    ++revision
-                    latest = fix
-                    if (fix == null) {
+                    if (fix == null || !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..25.0) {
+                        ++revision
+                        latest = null
                         current = null
                         changed()
-                    } else process()
+                    } else if (fix.observedAtMs > lastSeenAt) {
+                        lastSeenAt = fix.observedAtMs
+                        latest = fix
+                        process()
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -89,10 +110,10 @@ internal class OfflineNativeRoute(
             val result = runCatching {
                 val progress = OfflineRouteProgress.match(course, fix, SystemClock.elapsedRealtime())
                     ?: return@runCatching null
+                val guidance = snapshot(progress, wire, fix.speedMpsX100) ?: return@runCatching null
                 val mini = NativeCourseRaster.render(course.course, NativeRasterFrame.View.MINI, fix.point)
-                val full = overview ?: NativeCourseRaster.render(course.course, NativeRasterFrame.View.OVERVIEW)
-                    .also { overview = it }
-                NativeLiveNavigation.Observation(snapshot(progress, wire), mini, full)
+                val full = NativeCourseRaster.render(course.course, NativeRasterFrame.View.OVERVIEW, fix.point)
+                NativeLiveNavigation.Observation(guidance, mini, full)
             }.getOrNull()
             main.post {
                 busy = false
