@@ -1479,7 +1479,7 @@ internal class BridgeService : Service() {
         // An explicit phone-map request remains phone-only, including a
         // deferred launch. The notification HUD requires an explicit selection.
         NaverVoiceLaunch.onOpened = null
-        agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
+        agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> agentServer.selectedTool(name, args, allowed, completion) }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         agent.harness.diagnostic = { stage -> diagnosticEvent("agent-request", stage) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
@@ -2774,9 +2774,8 @@ internal class BridgeService : Service() {
             segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
         } == true
         val routeTools = unmixed && AiModelSelection.legacy(cfg)
-        val directNavigation = unmixed && !AiModelSelection.legacy(cfg) &&
-            NativeDirectNavigationPolicy.eligible(request.text)
-        diagnosticEvent("ai-routing", "explicit wake direct=${!AiModelSelection.legacy(cfg)} unmixed=$unmixed agentTools=$routeTools localNav=$directNavigation")
+        val directTools = unmixed && !AiModelSelection.legacy(cfg)
+        diagnosticEvent("ai-routing", "explicit wake direct=${!AiModelSelection.legacy(cfg)} unmixed=$unmixed agentTools=${routeTools || directTools} localNav=false")
         // Do not persist automatic context or ordinary chat history in a task.
         // Only the original current utterance can become an execution request.
         val taskInput = if (routeTools) JSONObject(input.toString()) else null
@@ -2786,10 +2785,41 @@ internal class BridgeService : Service() {
             .put("history", continuityTicket?.let { ChatContinuityStore.json(it.turns) } ?: org.json.JSONArray((if (!unmixed || chatContinuity.state.enabled) emptyList() else nativeChatHistory).map { (q, a) ->
                 JSONObject().put("question", q).put("answer", a)
             }))
+        if (directTools) {
+            try {
+                nativeChatRequest = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(
+                    "현재 명시적 요청에만 답하거나 필요한 앱 기능을 실행하세요. 이전 대화는 참고일 뿐입니다." +
+                        limit + (if (auto != null) "\n" + OrdinaryContextPolicy.INSTRUCTION else ""), cfg.optString("answerLanguage")),
+                    kind = "hint", input = input, hintLifetimeMs = MobileAgent.CHAT_TIMEOUT_MS, automaticContext = auto,
+                    toolPermission = { token == nativeChatGeneration && current() &&
+                        ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L }) { result ->
+                    if (token != nativeChatGeneration) return@submit
+                    nativeChatRequest = null
+                    if (!current()) return@submit
+                    val reply = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
+                    if (reply == null) {
+                        respond(result.exceptionOrNull()?.message?.take(180) ?: "AI 요청 실패 또는 만료")
+                        return@submit
+                    }
+                    if (!input.optBoolean("directUsedTools")) {
+                        chatContinuity.remember(continuityTicket, "glasses", request.text, reply)
+                        if (!chatContinuity.state.enabled) {
+                            nativeChatHistory.add(request.text.take(1000) to reply.take(1800))
+                            while (nativeChatHistory.size > 4) nativeChatHistory.removeAt(0)
+                        }
+                    }
+                    val handoff = if (input.optBoolean("nativeNavPending") && (nativeRouteWaiting || kakaoChoice != null))
+                        armNativeNavigationExit(wake) else null
+                    deliverExternalVoice(request.text, reply, input, handoff)
+                    notifyUI()
+                }
+                notifyUI()
+            } catch (error: Exception) { nativeChatRequest = null; respond("AI 요청 전송 실패"); notifyUI() }
+            return true
+        }
         try {
             nativeChatRequest = agent.harness.submit(request.text,
                 KoreanLanguage.withAnswerPolicy(NativeExplicitVoicePolicy.prompt(routeTools) + limit +
-                    (if (directNavigation) NativeDirectNavigationPolicy.instruction else "") +
                     (if (auto != null) "\n" + OrdinaryContextPolicy.INSTRUCTION else ""), cfg.optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS, automaticContext = auto) { result ->
                 if (token != nativeChatGeneration) return@submit
@@ -2797,25 +2827,6 @@ internal class BridgeService : Service() {
                 if (!current()) return@submit
                 val raw = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
                 if (raw == null) { respond("AI 응답 실패 또는 만료"); return@submit }
-                if (directNavigation && NativeDirectNavigationPolicy.isActionEnvelope(raw)) {
-                    val nav = NativeDirectNavigationPolicy.decode(raw, request.text)
-                    if (nav == null || !current() || AiModelSelection.legacy(settings.read()) ||
-                        !aiReady() || ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) == 0L) {
-                        respond("목적지 또는 길 안내 요청을 확인하지 못했습니다. 다시 요청해 주세요.")
-                        return@submit
-                    }
-                    val wasWaiting = nativeRouteWaiting
-                    val status = if (request.text.filterNot(Char::isWhitespace).contains("카카오") &&
-                        !nav.naverRequested && selectedNativeProvider() != "kakao")
-                        "카카오맵 경로 공급자를 먼저 선택하세요. 다른 공급자로 자동 전환하지 않았습니다."
-                    else requestNativeNavigation(nav)
-                    diagnosticEvent("ai-navigation", "direct local navigation; pending=$nativeRouteWaiting")
-                    input.put("derivedId", java.util.UUID.randomUUID().toString())
-                    val handoff = if (!wasWaiting && nativeRouteWaiting) armNativeNavigationExit(wake) else null
-                    deliverExternalVoice(request.text, status, input, handoff)
-                    notifyUI()
-                    return@submit
-                }
                 val decision = NativeExplicitVoicePolicy.decode(raw, routeTools)
                 if (decision == null) { respond("AI 응답 형식을 확인하지 못했습니다. 다시 질문해 주세요."); return@submit }
                 if (decision.agent) {
@@ -3523,7 +3534,6 @@ internal class BridgeService : Service() {
         check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(aiConfigured() && aiReady()) { "모델 선택에서 선택한 AI 연결을 설정하고 상태를 확인하세요" }
-            check(!allowTools || AiModelSelection.legacy(settings.read())) { "선택 모델의 업무 실행은 아직 지원되지 않습니다" }
         } else check(AiModelSelection.legacy(settings.read())) {
             "선택 모델과 별도의 Codex 실행은 기존 연결 모드에서만 가능합니다"
         }
@@ -3851,11 +3861,14 @@ internal class BridgeService : Service() {
         conversations.refreshRecords()
     }
     private fun executeTool(name: String, args: JSONObject, done: (Result<JSONObject>) -> Unit) {
-        val known = name.takeIf { it in setOf("navigation_status", "native_navigation_start", "stop_navigation_mirroring", "show_notification", "record_query", "record_annotate", "about_you_read", "memory_reference", "memory_search", "teleprompter_start", "teleprompter_control", "display_clear", "device_read") } ?: "other"
+        val registered = CompanionTools.definitions()
+        val known = name.takeIf { candidate -> (0 until registered.length()).any {
+            registered.getJSONObject(it).getJSONObject("function").getString("name") == candidate
+        } } ?: "other"
         diagnosticEvent("ai-tool", "request=$known")
         val completion: (Result<JSONObject>) -> Unit = { result ->
             val body = result.getOrNull()
-            val flags = listOf("started", "pending", "queued", "persisted", "following").mapNotNull { key ->
+            val flags = listOf("started", "pending", "acceptedNewRoute", "queued", "persisted", "following", "readBack").mapNotNull { key ->
                 (body?.opt(key) as? Boolean)?.let { "$key=$it" }
             }.joinToString(" ")
             diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess} $flags")
@@ -3867,6 +3880,12 @@ internal class BridgeService : Service() {
                 .put("notificationPresent", navigation.selected != null)
                 .put("nativeSessionPending", nativeStartProbe != null || nativeRouteWaiting)
                 .put("nativeStatus", nativeStartTestStatus)
+                .put("provider", selectedNativeProvider())
+                .put("providerConfigured", configuredNativeProvider())
+                .put("preciseLocation", checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                .put("locationAvailable", offlineLocationAvailable())
+                .put("stockRasterSupported", nativeNavCapabilities?.raster != null)
+                .put("readiness", nativeNavigationVoiceStatus())
                 .put("status", if (nativeStartProbe != null) nativeStartTestStatus else navigation.status)))
             "native_navigation_start" -> {
                 check(!destroyed && requests.permission()()) { "안경 내비 요청이 취소되었습니다." }
@@ -3875,10 +3894,16 @@ internal class BridgeService : Service() {
                     require(it.length <= 120 && it.none(Char::isISOControl))
                     NaverVoiceCommand.Request(it, NaverVoiceCommand.Mode.UNSPECIFIED)
                 }
+                val wasWaiting = nativeRouteWaiting
+                val previousChoice = kakaoChoice
+                val previousProbe = nativeStartProbe
                 val status = requestNativeNavigation(request)
+                val acceptedNewRoute = !wasWaiting && previousProbe == null &&
+                    (nativeRouteWaiting || (kakaoChoice != null && kakaoChoice !== previousChoice))
                 completion(Result.success(JSONObject()
+                    .put("acceptedNewRoute", acceptedNewRoute)
                     .put("started", nativeStartProbe?.let { it.live != null && it.readyObserved && !it.closing } == true)
-                    .put("pending", nativeRouteWaiting || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
+                    .put("pending", nativeRouteWaiting || kakaoChoice != null || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
                     .put("status", status)))
             }
             "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("mapNavigationChanged", false).put("provider", "naver").put("gaodeNavigationChanged", false))) }

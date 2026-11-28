@@ -43,6 +43,46 @@ class DirectModelInferenceTest {
         }
     }
 
+    @Test fun explicitToolProposalUsesActualExecutorAndReturnsObservedResult() {
+        val server = MockWebServer()
+        fun response(content: String) = MockResponse().setBody(JSONObject().put("model", "test-model").put("choices",
+            org.json.JSONArray().put(JSONObject().put("finish_reason", "stop").put("message", JSONObject().put("content", content)))).toString())
+        server.enqueue(response("""{"tool":"device_read","arguments":{}}"""))
+        server.enqueue(response("""{"answer":"배터리 73%"}"""))
+        val inference = DirectModelInference()
+        server.start()
+        try {
+            val profile = AiModelSelection.Profile("custom-12345678-1234-1234-1234-123456789abc", "Local", server.url("/v1").toString(), "test-model", "")
+            val done = CountDownLatch(1)
+            val answer = AtomicReference<DirectModelInference.Answer>()
+            val calls = java.util.concurrent.atomic.AtomicInteger()
+            inference.submit("tool-1", profile, "안경 배터리 확인해줘", "", null, null, { true },
+                toolExecutor = { name, args, allowed, completion ->
+                    assertEquals("device_read", name); assertEquals(0, args.length()); assertTrue(allowed())
+                    calls.incrementAndGet()
+                    completion(Result.success(JSONObject().put("battery", 73)))
+                    val cancel: () -> Unit = {}
+                    cancel
+                }) { answer.set(it.getOrNull()); done.countDown() }
+            assertTrue(done.await(10, TimeUnit.SECONDS))
+            assertEquals(1, calls.get()); assertEquals("배터리 73%", answer.get()?.text)
+            assertTrue(answer.get()?.usedTools == true)
+            server.takeRequest(2, TimeUnit.SECONDS)
+            val second = requireNotNull(server.takeRequest(2, TimeUnit.SECONDS)).body.readUtf8()
+            assertTrue(second.contains("73"))
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"device_brightness","arguments":{"value":"17"}}""", "밝기 조절") }.isFailure)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"record_query","arguments":{}}""", "질문") }.isFailure)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"native_navigation_start","arguments":{"destination":"버거킹"}}""", "오늘 날씨") }.isFailure)
+            assertNotNull(SelectedModelToolTransport.decode("""{"tool":"native_navigation_start","arguments":{"destination":"버거킹"}}""", "버거킹을 길 안내 해줘").call)
+            assertEquals("그냥 답변", SelectedModelToolTransport.decode("그냥 답변", "질문").answer)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"device_read","arguments":{}} {"answer":"other"}""", "안경 상태") }.isFailure)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"todo_add","arguments":{"title":"x","request_id":"fake"}}""", "할 일") }.isFailure)
+        } finally {
+            inference.close()
+            server.shutdown()
+        }
+    }
+
     @Test fun subscriptionRequestUsesSupportedStatelessStreamingContract() {
         val messages = org.json.JSONArray().put(JSONObject().put("role", "system").put("content", "instruction"))
             .put(JSONObject().put("role", "user").put("content", "question"))

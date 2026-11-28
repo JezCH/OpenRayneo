@@ -310,7 +310,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                         Text("휴대폰 음성 입력", style = MaterialTheme.typography.labelMedium)
                     }
                     Text(
-                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile) "$destinationLabel · 도구 없는 대화" else if (model.aiLegacy) "컴퓨터 Codex로 보내기" else "기존 PC 작업 · 전송 불가",
+                        if (mobile && executeTask) "업무 Agent로 보내기" else if (mobile && !model.aiLegacy) "$destinationLabel · 필요 시 앱 도구 사용" else if (mobile) "$destinationLabel · 도구 없는 대화" else if (model.aiLegacy) "컴퓨터 Codex로 보내기" else "기존 PC 작업 · 전송 불가",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

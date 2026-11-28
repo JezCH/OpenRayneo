@@ -10,7 +10,7 @@ import java.util.UUID
 
 /** Encrypted Agent outbox. Offline queued work survives phone/service restarts. */
 internal class DshRelay(private val main: Handler, private val repository: ConversationRepository,
-    private val restored: (String, String, JSONObject) -> Unit, private val selectedConfig: () -> JSONObject, private val progress: (String) -> Unit) {
+    private val restored: (String, String, JSONObject) -> Unit, private val selectedConfig: () -> JSONObject, private val selectedTool: SelectedToolExecutor, private val progress: (String) -> Unit) {
     private val directInference = DirectModelInference()
     private data class Request(val id: String, val text: String, val context: String,
         val complete: (Result<String>) -> Unit, val kind: String, val input: JSONObject?,
@@ -60,7 +60,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
                hintLifetimeMs: Long = 0L, preview: ((String) -> Unit)? = null,
-               automaticContext: (() -> JSONObject?)? = null, complete: (Result<String>) -> Unit): String {
+               automaticContext: (() -> JSONObject?)? = null, toolPermission: (() -> Boolean)? = null,
+               complete: (Result<String>) -> Unit): String {
         require(input?.optBoolean("backfill") != true) { "과거 보충 전사는 새 AI 업무 요청으로 실행하지 않습니다" }
         // Ordinary explicit chat may need a longer reasoning window; passive hints still expire in 60s.
         val ordinaryChat = kind == "hint" && input?.optString("purpose") == "explicit_question" && input.optJSONArray("history") != null
@@ -77,8 +78,10 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             "선택 모델 연결 설정이 필요합니다."
         } else null
         check(!useDirect || (kind == "hint" && hintLifetimeMs > 0)) {
-            "선택 모델은 질문·요약 전용입니다. 외부 업무 실행 연결은 아직 지원하지 않습니다."
+            "선택 모델은 현재 대화 기반 앱 도구를 지원합니다. 별도 외부 Agent 작업은 기존 연결 방식에서 실행하세요."
         }
+        require(toolPermission == null || (useDirect && ordinaryChat && input?.has("references") != true &&
+            (input?.optString("source").orEmpty() in setOf("", "NATIVE")) && input?.optBoolean("backfill") != true)) { "명시적인 현재 대화만 도구를 사용할 수 있습니다" }
         val request = Request(id, text, context, complete, kind, input,
             hintDeadline = if (hintLifetimeMs > 0L) SystemClock.elapsedRealtime() + hintLifetimeMs else 0L, preview = preview,
             automaticContext = automaticContext, direct = useDirect,
@@ -102,13 +105,19 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
                     SystemClock.elapsedRealtime() < request.hintDeadline } &&
                     runCatching { AiModelSelection.direct(selectedConfig()) == profile }.getOrDefault(false)
             }
-            directInference.submit(id, profile, text, context, input, automaticContext, valid) { result ->
+            val executor: SelectedToolExecutor? = toolPermission?.let { owner ->
+                { name, args, allowed, completion -> selectedTool(name, args, { allowed() && owner() }, completion) }
+            }
+            directInference.submit(id, profile, text, context, input, automaticContext, valid, executor) { result ->
                 main.post {
                     val accepted = synchronized(lock) {
                         if (requests[id] !== request || request.state != "running") false
                         else if (!valid()) { cancelHint(request); false }
                         else {
                             request.state = if (result.isSuccess) "completed" else "failed"
+                            result.getOrNull()?.let { answer ->
+                                if (toolPermission != null) input?.put("directUsedTools", answer.usedTools)?.put("nativeNavPending", answer.navigationPending)
+                            }
                             if (input?.optString("purpose") == "agent_probe") {
                                 result.getOrNull()?.reportedModel?.let { actual ->
                                     request.modelRoute = AgentProbePolicy.ModelRoute.from(profile.label, actual,
