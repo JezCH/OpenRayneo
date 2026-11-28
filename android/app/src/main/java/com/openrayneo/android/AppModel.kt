@@ -214,6 +214,10 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         mutableStateOf(preferences.getString("deviceName", "RayNeo iO") ?: "RayNeo iO")
         private set
 
+    // Explicit external text preview only; never persisted or added to AI history.
+    var externalHudDraft by mutableStateOf("")
+    var externalHudIncoming by mutableStateOf<String?>(null)
+    var externalHudOpen by mutableStateOf(false)
     var phoneDraft by mutableStateOf("")
     var selectedContact by mutableStateOf<SelectedContact?>(null)
     var computerDraft by mutableStateOf("")

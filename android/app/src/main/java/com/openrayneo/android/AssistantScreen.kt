@@ -262,6 +262,9 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
             if (s.agentReceipts.isNotEmpty()) item(key = "agent-receipts") {
                 AgentReceiptCard(model, s.agentReceipts)
             }
+            if (AppUpdate.supported && mobile) item(key = "external-hud") {
+                FeatureLink("외부 AI 답변 표시", "공유·붙여넣기 · 추가 AI 요청 없음", Icons.Outlined.Visibility) { configure("external-hud") }
+            }
             if (configured) item(key = "assistant-controls") {
                 Column {
                     TextButton(onClick = { showDiagnostics = !showDiagnostics }) {

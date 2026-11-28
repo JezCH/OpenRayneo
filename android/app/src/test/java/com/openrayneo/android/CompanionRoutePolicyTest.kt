@@ -29,6 +29,15 @@ class CompanionRoutePolicyTest {
         assertEquals(emptyList<String>(), CompanionRoutePolicy.back(emptyList()))
     }
 
+    @Test fun externalTextIsAValidationOnlyAdditionalRoute() {
+        val stack = listOf("settings")
+        assertNull(CompanionRoutePolicy.title("external-hud"))
+        assertEquals(stack, CompanionRoutePolicy.open(stack, "external-hud"))
+        assertNotNull(CompanionRoutePolicy.title("external-hud", validation = true))
+        assertEquals(stack + "external-hud", CompanionRoutePolicy.open(stack, "external-hud", validation = true))
+        assertEquals(24, CompanionRoutePolicy.titles.size)
+    }
+
     @Test fun invalidDestinationDoesNotAlterStackAndNewRouteAppends() {
         val stack = listOf("settings")
         assertEquals(stack, CompanionRoutePolicy.open(stack, "unknown"))

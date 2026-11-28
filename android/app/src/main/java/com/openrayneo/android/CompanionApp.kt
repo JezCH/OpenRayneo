@@ -42,11 +42,11 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         routeStack = ArrayList(next)
     }
     fun openRoute(target: String) {
-        if (target !in CompanionRoutePolicy.titles) {
+        if (CompanionRoutePolicy.title(target, AppUpdate.supported) == null) {
             model.notice = "지원되지 않는 화면입니다."
             return
         }
-        changeRoutes(CompanionRoutePolicy.open(routeStack, target))
+        changeRoutes(CompanionRoutePolicy.open(routeStack, target, AppUpdate.supported))
     }
     fun backRoute() { changeRoutes(CompanionRoutePolicy.back(routeStack)) }
     fun closeRoutes() { changeRoutes(emptyList()) }
@@ -59,6 +59,15 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
             sources = false
             pendingNavigation = null
             openRoute("system-status")
+        }
+    }
+    LaunchedEffect(model.externalHudOpen) {
+        if (AppUpdate.supported && model.externalHudOpen) {
+            model.externalHudOpen = false
+            devices = false
+            sources = false
+            pendingNavigation = null
+            openRoute("external-hud")
         }
     }
     val snackbars = remember { SnackbarHostState() }
@@ -91,7 +100,7 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 TopAppBar(
                     title = {
                         Text(
-                            CompanionRoutePolicy.titles[route]
+                            CompanionRoutePolicy.title(route, AppUpdate.supported)
                                 ?: listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                         )
                     },
@@ -184,6 +193,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
                 "app-update" -> if (AppUpdate.supported) AppUpdateScreen(model) else Text("이 앱은 자체 업데이트 대상이 아닙니다.")
+                "external-hud" -> if (AppUpdate.supported) ExternalHudScreen(model, phoneInput != null)
+                    else Text("검증 앱에서만 사용할 수 있습니다.")
                 "local-clock" -> LocalClockScreen(model)
                 "about-you" -> PersonalizationScreen()
                 "diagnostics" -> DiagnosticsScreen(model, actions)

@@ -30,8 +30,11 @@ internal object CompanionRoutePolicy {
         "record-migration" to "기존 기록 가져오기",
     )
 
-    fun open(stack: List<String>, target: String): List<String> {
-        if (target !in titles) return stack
+    fun title(target: String, validation: Boolean = false): String? =
+        titles[target] ?: if (validation && target == "external-hud") "외부 텍스트 안경 표시" else null
+
+    fun open(stack: List<String>, target: String, validation: Boolean = false): List<String> {
+        if (title(target, validation) == null) return stack
         val existing = stack.indexOf(target)
         return if (existing >= 0) stack.take(existing + 1) else stack + target
     }

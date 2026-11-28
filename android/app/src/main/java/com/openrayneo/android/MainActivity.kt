@@ -29,10 +29,26 @@ internal class MainActivity : ComponentActivity() {
             statusOpenRequest++
         }
     }
+    private fun receiveExternalHudText(incoming: Intent) {
+        if (!AppUpdate.supported || incoming.action != Intent.ACTION_SEND || incoming.type != "text/plain") return
+        // Exported activity: never open URIs, attachments, tools or AI. Share is preview only.
+        model.attempt {
+            val raw = incoming.getCharSequenceExtra(Intent.EXTRA_TEXT)
+            require(raw != null && raw.length in 1..ExternalHudText.MAX_INPUT) {
+                "공유할 일반 텍스트는 4000자 이하로 선택하거나 복사해 주세요."
+            }
+            val text = raw.toString()
+            require(ExternalHudText.pages(text).isNotEmpty()) { "표시할 일반 텍스트가 없습니다." }
+            model.externalHudIncoming = text
+            model.externalHudOpen = true
+        }
+        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+    }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         acceptStatusIntent(intent)
+        receiveExternalHudText(intent)
     }
     private var exportRecord: String? = null
     private val exportAudio = registerForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
@@ -201,6 +217,7 @@ internal class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         acceptStatusIntent(intent)
+        if (savedInstanceState == null) receiveExternalHudText(intent)
         enableEdgeToEdge()
         setContent {
             CompanionTheme(model.appearance) {

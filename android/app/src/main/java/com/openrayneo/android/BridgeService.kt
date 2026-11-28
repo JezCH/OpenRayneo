@@ -2570,6 +2570,25 @@ internal class BridgeService : Service() {
         cancelAgentProbe()
         agentProbe.reset()
     }
+    fun checkExternalHudReady() {
+        check(AppUpdate.supported) { "검증 앱에서만 사용할 수 있습니다." }
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+            state.ownership == DisplayOwnership.APP) { "안경 완전 연결 및 화면 제어 상태를 확인하세요." }
+        requireCaptureFree()
+        requirePrompterFree()
+        check(hudAnswerAvailable() && state.intent == DisplayIntent.Idle && state.session == null &&
+            !state.navigation.enabled && audioOwner == null && pendingNativeHint == null && !reconnectCapture.pending &&
+            !mediaCaptionState.busy && !translator.mediaTranslation.state.preparing && !agent.running &&
+            !codex.running && wakeRequest == null && nativeChatRequest == null && !ambientWakeBusy() &&
+            !speechOutput.speaking && !migration.state.busy) { "현재 기록·음성·화면·AI 작업을 먼저 종료하세요." }
+        check(focusPolicy.allows(FocusPolicy.Output.GENERAL_NOTIFICATION)) { "집중 모드와 안경 알림 설정을 확인하세요." }
+    }
+
+    fun sendExternalHudText(text: String) {
+        require(ExternalHudText.validPage(text)) { "표시할 텍스트 페이지를 확인하세요." }
+        checkExternalHudReady()
+        check(sendCompanionNotification("외부 텍스트", text)) { "안경 알림 전송 조건을 확인하세요." }
+    }
     fun sendAgentProbeHud() {
         val probe = agentProbe.state
         check(probe.phase == AgentProbePolicy.Phase.PASSED && probe.hud == AgentProbePolicy.Hud.NOT_SENT)
