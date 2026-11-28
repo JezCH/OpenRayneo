@@ -22,16 +22,40 @@ internal object NavigationFeed {
     fun isNavigationSource(pkg: String) = pkg == PACKAGE
     fun sourceLabel(pkg: String) = sources[pkg] ?: "지원하지 않는 지도 앱"
     // A lifecycle-only notification does not supply a maneuver, route ID or map.
-    enum class Observation { NON_NAVIGATION, STATUS_ONLY, UNRECOGNIZED, RECOGNIZED }
-    data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int)
+    enum class Observation { NON_NAVIGATION, STATUS_ONLY, WALK_STEP, UNRECOGNIZED, RECOGNIZED }
+    data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int, val walkSteps: Int = 0)
+    data class NativeWalkStep(val instruction: KoreanNavigationText.Instruction, val postedAt: Long) {
+        fun freshAt(now: Long) = now - postedAt in 0..2_999L
+    }
+    // Partial native-source data only; never insert into legacy 0x13 entries.
+    private val nativeWalkSteps = linkedMapOf<String, NativeWalkStep>()
+    fun nativeWalkStep(now: Long): NativeWalkStep? = nativeWalkSteps.values.filter { it.freshAt(now) }.singleOrNull()
     // Active notification metadata only; never retain rejected notification content.
     private val observations = linkedMapOf<String, Pair<String, Observation>>()
     fun observe(key: String, pkg: String, result: Observation) {
         observations.remove(key)
+        if (result != Observation.WALK_STEP) nativeWalkSteps.remove(key)
         observations[key] = pkg to result
-        while (observations.size > 64) observations.remove(observations.keys.first())
+        while (observations.size > 64) {
+            val oldest = observations.keys.first()
+            observations.remove(oldest)
+            nativeWalkSteps.remove(oldest)
+        }
     }
-    fun resetObservations() = observations.clear()
+    fun resetObservations() { observations.clear(); nativeWalkSteps.clear() }
+    fun observeWalk(key: String, pkg: String, title: String, text: String, postedAt: Long) {
+        if (!isNavigationSource(pkg)) return
+        // Original stock resources: terminal titles (do not mark navigation active).
+        if (title.trim() in setOf("길안내를 종료합니다.", "목적지에 도착했습니다.", "End directions.", "You've arrived at your destination.")) {
+            observe(key, pkg, Observation.NON_NAVIGATION)
+            return
+        }
+        val step = KoreanNavigationText.parseNaverWalk(title, text)
+        if (step != null && postedAt > 0) {
+            nativeWalkSteps[key] = NativeWalkStep(step, postedAt)
+            observe(key, pkg, Observation.WALK_STEP)
+        } else observe(key, pkg, Observation.STATUS_ONLY)
+    }
     val activeNavigationCount get() = observations.values.count { it.second != Observation.NON_NAVIGATION }
     fun activeNavigationKey(key: String) = observations[key]?.let { (pkg, observation) ->
         isNavigationSource(pkg) && observation != Observation.NON_NAVIGATION
@@ -39,7 +63,8 @@ internal object NavigationFeed {
     val evidence get() = sources.keys.map { pkg ->
         val seen = observations.values.filter { it.first == pkg }
         SourceEvidence(pkg, seen.size, seen.count { it.second == Observation.RECOGNIZED },
-            seen.count { it.second == Observation.UNRECOGNIZED || it.second == Observation.STATUS_ONLY })
+            seen.count { it.second == Observation.UNRECOGNIZED || it.second == Observation.STATUS_ONLY },
+            seen.count { it.second == Observation.WALK_STEP })
     }
 
     data class Entry(
@@ -133,6 +158,7 @@ internal object NavigationFeed {
     fun remove(key: String) {
         val entry = entries.remove(key)
         val observation = observations.remove(key)
+        nativeWalkSteps.remove(key)
         if (entry != null || observation != null) changed()
     }
     fun reject(key: String) {
@@ -234,6 +260,16 @@ internal class NavigationNotifications : NotificationListenerService() {
             return null
         }
         val extras = notification.extras ?: Bundle.EMPTY
+        // Original NAVER Maps 6.13.1.2 classes18.dex WalkNaviNotificationBuilder
+        // a/c uses channel 350_WALK_NAVIGATION and CATEGORY_SERVICE, and
+        // WalkNaviNotiUiStateMapper emits title plus remaining next-step distance.
+        // Never send this partial native-source observation to the legacy HUD.
+        if (notification.channelId == "350_WALK_NAVIGATION" && notification.category == Notification.CATEGORY_SERVICE) {
+            NavigationFeed.observeWalk(item.key, item.packageName,
+                extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
+                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(), item.postTime)
+            return null
+        }
         // Existing NAVER interop evidence: NaviToTesla's NaverPoiFinder observes
         // this exact active-guidance text independently of notification category.
         // It is NOT a direction, a distance, or a complete native route.
