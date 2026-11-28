@@ -776,8 +776,11 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
             Note("네이버 기본 연동은 변경하지 않습니다. BRouter를 별도로 설치하고 지역 데이터 및 도보 프로필을 준비한 경우에만 선택할 수 있습니다. 입력한 두 좌표는 기기의 BRouter 앱에 전달되며 해당 앱이 로컬 계산 자료를 보관할 수 있습니다. 실시간 안내가 아닌 실제 계산 경로 확보 단계입니다.")
             OutlinedTextField(start, { start = it }, label = { Text("출발 위도, 경도") }, singleLine = true, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(end, { end = it }, label = { Text("도착 위도, 경도") }, singleLine = true, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth())
-            ToolButton(onClick = { model.calculateOfflineWalkingRoute(start, end) },
-                enabled = !model.walkingCourseBusy && start.isNotBlank() && end.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("입력 좌표로 오프라인 경로 계산") }
+            ToolButton(onClick = { model.calculateOfflineFromCurrentPosition(end, autoReroute) },
+                enabled = !model.walkingCourseBusy && end.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("현재 위치에서 도보 경로 계산 및 추적") }
+            Note("현재 위치 버튼은 기존 정확한 위치 권한과 GPS를 사용하며, 현재 위치와 도착 좌표를 BRouter에 전달합니다. 화면을 떠나면 자동 추적을 시작하지 않습니다.")
+            ToolOutlinedButton(onClick = { model.calculateOfflineWalkingRoute(start, end) },
+                enabled = !model.walkingCourseBusy && start.isNotBlank() && end.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("입력한 출발 좌표로 경로만 계산") }
         }
         if (model.walkingCourseBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         if (course != null) {
@@ -821,6 +824,7 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                         Note(if(instruction!=null) "${distance}m 앞 · $instruction" else "다음 회전 지점까지 ${distance}m · 방향 미확인")
                     }
                     progress.followingTurn?.instruction?.let { Note("그다음 안내 · $it") }
+                    if(progress.nextTurn==null) Note("추가 회전 지시 미제공 · 남은 경로를 확인하세요.")
                     progress.remainingEstimateSeconds?.let { Note("경로 시간 자료 기준 남은 예상 시간 ${kotlin.math.ceil(it / 60.0).toInt()}분") }
                 }
             } else Note("사용자가 가져온 GPX 파일")

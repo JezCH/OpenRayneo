@@ -36,18 +36,24 @@ internal class OfflineNativeRoute(
         val sample=current()?.takeIf { it.route===route } ?: return null
         val progress=sample.progress
         val fix=sample.fix
-        val turn=progress.nextTurn ?: return null // no guessed straight/destination/arrival
+        val turn=progress.nextTurn
         if(progress.observedAtMs!=fix.observedAtMs) return null
-        val primary=wire.maneuver(turn.maneuver ?: return null) ?: return null
-        val following=progress.followingTurn?.let {
-            wire.maneuver(it.maneuver ?: return null) ?: return null
-        } ?: wire.noManeuver
-        val instruction=turn.instruction ?: return null
-        val exit=if(turn.sourceCode in 13..14) kotlin.math.abs(turn.exit) else 0
-        val guidance=NativePhoneGuidance.Snapshot(progress.observedAtMs,wire.enrouteState,
-            primary,following,exit,fix.speedMpsX100 ?: -1,
-            progress.nextTurnMeters ?: return null,progress.remainingMeters,
-            progress.remainingEstimateSeconds ?: -1,"","",instruction,false,false)
+        // No remaining provider hint is not a straight/arrival instruction.
+        // Retain real distances and map, using only a verified no-maneuver code.
+        val primary=if(turn==null) wire.noManeuver else
+            wire.maneuver(turn.maneuver ?: return null) ?: return null
+        // An unsupported following turn must not suppress a verified current one.
+        val following=progress.followingTurn?.maneuver?.let(wire::maneuver) ?: wire.noManeuver
+        val instruction=if(turn==null) "" else turn.instruction ?: return null
+        val exit=if(turn!=null && turn.sourceCode in 13..14) kotlin.math.abs(turn.exit) else 0
+        val nextDistance=if(turn==null) -1 else progress.nextTurnMeters ?: return null
+        // A mapping that contradicts verified firmware constraints is not usable.
+        val guidance=runCatching {
+            NativePhoneGuidance.Snapshot(progress.observedAtMs,wire.enrouteState,
+                primary,following,exit,fix.speedMpsX100 ?: -1,
+                nextDistance,progress.remainingMeters,
+                progress.remainingEstimateSeconds ?: -1,"","",instruction,false,false)
+        }.getOrNull() ?: return null
         return NativeLiveNavigation.Observation(guidance,sample.miniPng,sample.overviewPng)
     }
     override fun close() { closed=true }

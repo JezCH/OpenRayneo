@@ -537,15 +537,26 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         }
     }
     fun calculateOfflineWalkingRoute(startText: String, endText: String) = attempt {
+        calculateOfflineRoute(OfflineWalkingRoute.coordinate(startText),
+            OfflineWalkingRoute.coordinate(endText), false, false)
+    }
+    fun calculateOfflineFromCurrentPosition(endText: String, autoReroute: Boolean) = attempt {
+        check(hostVisible) { "앱 화면에서 시작하세요." }
+        calculateOfflineRoute(null, OfflineWalkingRoute.coordinate(endText), true, autoReroute)
+    }
+    private fun calculateOfflineRoute(start: NaverWalkingCourse.Point?, end: NaverWalkingCourse.Point,
+                                      beginTracking: Boolean, autoReroute: Boolean) {
         check(!walkingCourseBusy) { "경로 계산 또는 파일 가져오기 진행 중입니다." }
-        val start = OfflineWalkingRoute.coordinate(startText)
-        val end = OfflineWalkingRoute.coordinate(endText)
         stopOfflineTracking()
+        val trackingTicket = offlineTrackingGeneration
         val generation = ++walkingCourseGeneration
         walkingCourseBusy = true
         offlineRouteWorker.execute {
             val result = runCatching {
-                val route = OfflineWalkingRoute.calculate(context, start, end)
+                val origin = start ?: OfflineRouteLocation.current(context)
+                    ?.takeIf { it.accuracyMeters.isFinite() && it.accuracyMeters in 0.0..25.0 }?.point
+                    ?: error("현재 위치를 확인하지 못했습니다. 정확한 위치 권한과 GPS를 확인하세요.")
+                val route = OfflineWalkingRoute.calculate(context, origin, end)
                 route to runCatching { NativeCourseRaster.preview(route.course) }.getOrNull()
             }
             main.post {
@@ -558,7 +569,13 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                         offlineWalkingRoute = route
                         walkingCourse = route.course
                         walkingCourseRaster = preview
-                    }, { error = "오프라인 경로를 계산하지 못했습니다. BRouter 설치, 지역 데이터, 도보 프로필 및 좌표를 확인하세요." })
+                        if(beginTracking && hostVisible && trackingTicket==offlineTrackingGeneration)
+                            startOfflineTracking(autoReroute)
+                    }, { failure ->
+                        error = if(start==null && failure.message?.startsWith("현재 위치를 확인하지 못했습니다.")==true)
+                            "현재 위치를 확인하지 못했습니다. 정확한 위치 권한과 GPS를 확인하세요."
+                        else "오프라인 경로를 계산하지 못했습니다. BRouter 설치, 지역 데이터, 도보 프로필 및 좌표를 확인하세요."
+                    })
                 }
             }
         }
