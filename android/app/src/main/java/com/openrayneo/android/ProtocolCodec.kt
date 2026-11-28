@@ -84,10 +84,19 @@ internal object ProtocolCodec {
     fun hostVisibility(sequence: Int, visible: Boolean): ByteArray =
         frame(0x10, sequence, byteArrayOf(0x1f, 0, 1, if (visible) 2 else 1))
 
-    /** 0x06 uses raw JSON, not the protobuf business envelope. No unsupported
-     * capabilities are advertised. Reference: upstream CapabilityController.swift. */
+    /** Reciprocal stock phone feature registration, separate from navigation
+     * business 0x20 capability query. Stock 1.0.7.15 admission table 0x10404D90,
+     * matcher call 0x10742A9E; official Android APK 0x2075048..0x2075064.
+     * Upstream CapabilityController uses [name, version] pairs and type 3 for
+     * changed local registrations. Caller must establish actual source support. */
+    fun navigationHostCapabilities(sequence: Int, reply: Boolean, supported: Boolean): ByteArray {
+        val items = if (supported) """[["app.navigation.main","1.0.0.0"]]""" else "[]"
+        val json = if (reply) """{"type":2,"ret":"OK","capabilities":$items}"""
+            else """{"type":3,"capabilities":$items}"""
+        return frame(0x06, sequence, json.toByteArray(Charsets.UTF_8))
+    }
     fun emptyCapabilityReply(sequence: Int): ByteArray =
-        frame(0x06, sequence, """{"type":2,"ret":"OK","capabilities":[]}""".toByteArray(Charsets.UTF_8))
+        navigationHostCapabilities(sequence, reply = true, supported = false)
 
     /** Upstream CapabilityController's read-only peer capability request. */
     fun capabilityQuery(sequence: Int): ByteArray =
