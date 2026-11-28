@@ -134,6 +134,7 @@ internal class NativeNavigationExitGate {
     fun arm(id: String) { wake = id; requested = false }
     fun reset() { wake = null; requested = false }
     fun owns(id: String?) = id != null && wake == id
+    fun sent(id: String?) = owns(id) && requested
     fun take(id: String?): Boolean {
         if (!owns(id) || requested) return false
         requested = true

@@ -239,8 +239,10 @@ internal object KakaoCandidateVoicePolicy {
         val text = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFKC)
             .filterNot(Char::isWhitespace).trimEnd('.', '!', '?', '。', '！', '？')
         if (text in setOf("목적지후보알려줘", "목적지후보보여줘", "목적지후보목록")) return 0
-        val number = Regex("^([1-5]|일|이|삼|사|오)번목적지(?:를)?선택(?:해줘|해주세요)?$").matchEntire(text)
+        Regex("^([1-5])번목적지(?:를)?선택(?:해줘|해주세요)?$").matchEntire(text)
+            ?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        val ordinal = Regex("^(첫|두|세|네|다섯)번째목적지(?:를)?선택(?:해줘|해주세요)?$").matchEntire(text)
             ?.groupValues?.get(1) ?: return null
-        return number.toIntOrNull() ?: listOf("일","이","삼","사","오").indexOf(number).plus(1)
+        return listOf("첫","두","세","네","다섯").indexOf(ordinal).plus(1)
     }
 }

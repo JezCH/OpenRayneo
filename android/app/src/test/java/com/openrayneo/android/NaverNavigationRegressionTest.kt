@@ -87,6 +87,8 @@ class NaverNavigationRegressionTest {
         assertFalse(gate.take("other"))
         assertTrue(gate.owns("first"))
         assertTrue(gate.take("first"))
+        assertTrue(gate.sent("first"))
+        assertFalse(gate.sent("other"))
         assertFalse(gate.take("first"))
         gate.reset()
         assertFalse(gate.take("first"))

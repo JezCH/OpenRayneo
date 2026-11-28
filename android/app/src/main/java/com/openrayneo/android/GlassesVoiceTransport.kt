@@ -110,6 +110,7 @@ internal class GlassesVoiceTransport(
             3 -> if (source == ConversationSource.NATIVE && !navigationExit.owns(wakeId)) message.audio?.let(audio)
             8 -> { resetNavigationExit(); nativeActive = false; answering = false; if (source == ConversationSource.NATIVE) endRound(true) }
             11 -> {
+                if (navigationExit.sent(wakeId)) return // await real type 8 even if route was canceled
                 if (navigationExit.owns(wakeId) && nativeActive && navigationExitAllowed?.invoke() == true) {
                     val sid = body.optString("sid")
                     if (sid.isBlank() || sid == lastReply) wakeId?.let(::exitForNavigation)

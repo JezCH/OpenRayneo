@@ -25,7 +25,8 @@ class KakaoWalkingRouteTest {
             KakaoWalkingRoute.selectKeywordDestination(partial, "버거킹 B점")
         }
         assertEquals(2, KakaoCandidateVoicePolicy.parse("2번 목적지 선택"))
-        assertEquals(2, KakaoCandidateVoicePolicy.parse("이번목적지선택"))
+        assertEquals(2, KakaoCandidateVoicePolicy.parse("두 번째 목적지 선택"))
+        assertNull(KakaoCandidateVoicePolicy.parse("이번목적지선택"))
         assertEquals(0, KakaoCandidateVoicePolicy.parse("목적지 후보 알려줘"))
         assertNull(KakaoCandidateVoicePolicy.parse("2번"))
         assertNull(KakaoCandidateVoicePolicy.parse("2번 목적지 선택하지 마"))

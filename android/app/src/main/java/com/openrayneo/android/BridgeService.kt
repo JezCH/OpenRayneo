@@ -321,6 +321,7 @@ internal class BridgeService : Service() {
         if (mode !in setOf(NaverVoiceCommand.Mode.WALK, NaverVoiceCommand.Mode.UNSPECIFIED))
             return "선택한 공급자는 도보 전용입니다."
         val target = if (reroute != null) "${reroute.point.latitude},${reroute.point.longitude}"
+            else if (selectedKakao != null) selectedKakao.name
             else if (provider == "kakao" && destination in setOf("집", "회사"))
             runCatching { NativeNavigationPresets.read(this).resolve(destination) }.getOrNull()
                 ?: return "집·회사 목적지를 먼저 저장하세요."
@@ -342,6 +343,7 @@ internal class BridgeService : Service() {
         if (!offlineProviderAvailable(provider)) return "선택한 경로 공급자 설정 및 정확한 GPS를 확인하세요."
         val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L, provider)
         kakaoChoice = null
+        nativeVoiceNavigationWake = null; nativeVoiceNavigationEpoch = null
         offlinePreparation = pending
         diagnosticEvent("route-provider", "request=$provider")
         nativeStartTestStatus = if (reroute != null) "현재 위치에서 원래 목적지까지 동일 공급자 재탐색 중"
@@ -1815,7 +1817,7 @@ internal class BridgeService : Service() {
         NaverVoiceCommand.Control.START_NATIVE -> requestNativeNavigation(null)
         NaverVoiceCommand.Control.STOP_NATIVE -> {
             val active = nativeStartProbe != null
-            val queued = nativeRouteWaiting
+            val queued = nativeRouteWaiting || kakaoChoice != null
             val sid = offlinePreparation?.peerSid ?: queuedNativePeerSid
             clearPreparedNativeRoute()
             sid?.let { rejectNativePresetStart(it, "사용자 종료 요청") }
@@ -1907,6 +1909,7 @@ internal class BridgeService : Service() {
     }
     private fun requestNativeNavigation(request: NaverVoiceCommand.Request?): String {
         diagnosticEvent("navigation-action", "explicit start; destinationSpecified=${request != null}")
+        if (request != null && !nativeRouteWaiting) kakaoChoice = null
         val status = when {
             destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ->
                 "안경 연결을 먼저 확인하세요."
@@ -2518,12 +2521,15 @@ internal class BridgeService : Service() {
                 active.source == ConversationSource.NATIVE && request.recordId != null &&
                 active.activeRecord?.id == request.recordId && !destroyed && foreground &&
                 state.link.phase == LinkPhase.FULL && !state.disconnecting) {
+                if (unmixed && choiceCommand == 0) {
+                    // Provider search data lives only in the current selection session.
+                    val answer = kakaoChoice?.takeIf(::validKakaoChoice)?.let(::kakaoChoiceText) ?: "선택할 최신 목적지 후보가 없습니다."
+                    voiceTransport.reply(answer, request.text, wake)
+                    return true
+                }
                 val wasWaiting = nativeRouteWaiting
                 val answer = if (!unmixed) "겹친 발화입니다. 다시 요청하세요."
-                    else if (choiceCommand != null) when (choiceCommand) {
-                        0 -> kakaoChoice?.takeIf(::validKakaoChoice)?.let(::kakaoChoiceText) ?: "선택할 최신 목적지 후보가 없습니다."
-                        else -> chooseKakaoCandidateNumber(choiceCommand)
-                    }
+                    else if (choiceCommand != null) chooseKakaoCandidateNumber(choiceCommand)
                     else if (navControl != null) executeNavigationControl(navControl)
                     else requestVoiceNavigation(checkNotNull(navCommand))
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
