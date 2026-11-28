@@ -47,4 +47,34 @@ class AiModelSelectionTest {
         cfg.put(AiModelSelection.PROFILES, "[{\"id\":\"gpt\",\"label\":\"GPT\",\"url\":\"https://wrong.example/v1\",\"model\":\"gpt-test\",\"key\":\"test-gpt-key\"}]")
         assertEquals(AiModelSelection.GPT_URL, AiModelSelection.direct(cfg)?.url)
     }
+
+    @Test fun nativeExplicitVoiceRequiresStructuredToolRouteAndDoesNotRequirePrefix() {
+        val p = NativeExplicitVoicePolicy
+        assertEquals("안녕하세요", p.decode("안녕하세요", true)?.answer)
+        assertEquals("안녕하세요", p.decode("{\"route\":\"answer\",\"answer\":\"안녕하세요\"}", true)?.answer)
+        assertTrue(p.decode("{\"route\":\"agent\"}", true)?.agent == true)
+        assertFalse(p.decode("{\"route\":\"agent\"}", false)?.agent == true)
+        assertNull(p.decode("{\"route\":\"agent\",\"text\":\"다른 작업\"}", true))
+        assertNull(p.decode("{\"route\":\"unknown\"}", true))
+        assertNull(p.decode("[PASS]", true))
+        assertFalse(p.prompt(true).contains("업무 실행"))
+    }
+
+    @Test fun stockSpeechMetadataFollowsEffectivePhoneRecognition() {
+        val defaults = JSONObject()
+        assertEquals("ko-KR", NativeSpeechLanguage.source(defaults))
+        val caption = NativeSubtitleStart("test", "classic", "en-US", "zh-CN", "ahead")
+        assertEquals("ko-KR", caption.withPhoneLanguage(defaults).source)
+        assertEquals("", caption.withPhoneLanguage(defaults).target)
+        val explicitPair = NativeSubtitleStart("test", "bilingual", "en-US", "ko-KR", "ahead")
+        assertEquals(explicitPair, explicitPair.withPhoneLanguage(defaults))
+        val multilingual = JSONObject().put("asrEngine", "local").put("asrLanguage", "ko,en")
+        assertEquals("auto", NativeSpeechLanguage.source(multilingual))
+        val hint = NativeHintStart("test", "en-US", "zh-CN", "ahead", true)
+        val effective = hint.withPhoneLanguage(defaults).reply().getJSONObject("final_settings")
+        assertEquals("ko-KR", effective.getString("src_lang"))
+        assertEquals("ko-KR", effective.getString("dst_lang"))
+        assertFalse(effective.has("source_language"))
+    }
+
 }
