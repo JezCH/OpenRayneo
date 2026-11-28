@@ -12,6 +12,10 @@ internal class NativeLiveNavigation(
         val parameters: NativeNavigationStartup.Parameters
         val generation: Long
         val token: String
+        /** Non-null only when the authorized full route producer has bound this
+         * route to that actual NAVER walking notification. A notification alone
+         * cannot construct a Route or supply its identity or map. */
+        val naverWalkNotificationKey: String? get() = null
         /** Latest real observation for this route; null if not available. */
         fun observation(): Observation?
         fun close()
@@ -27,6 +31,7 @@ internal class NativeLiveNavigation(
     private var closed = false
     private var lastFreshAt = -1L
     private var arrivalSent = false
+    private var preferRaster = false
     var failure: String? = null
         private set
 
@@ -45,27 +50,49 @@ internal class NativeLiveNavigation(
             failure = "순정 지도 전송 거부 또는 시간 초과"
             return null
         }
-        if (arrivalSent || observation == null) return null
+        if (arrivalSent) return null
+        // Do not start or continue transmitting stale pixels after the live
+        // source expires. A partially transmitted expired frame is not reused.
+        // A fresh terminal observation does not send stale image data.
+        // Let it finish the route even when an older partial image expired.
+        val freshArrival = observation?.guidance?.let {
+            it.arrival && it.observedAtMs > lastGuidance
+        } == true
+        if (!freshArrival && session.rasterState == NativeRasterTransfer.State.SENDING &&
+            (lastMapAt < 0 || now - lastMapAt >= NativePhoneGuidance.VALID_FOR_MS)) {
+            failure = "순정 지도 원본 갱신 중단"
+            return null
+        }
+        if (observation == null) return null
         val guidance = observation.guidance
-        // Send the newest actual guidance before a map fragment; each completed
-        // write re-enters the pump, so route observations cannot queue multiple
-        // independent transport writes. Map requests are still peer-correlated.
-        val write = if (guidance.observedAtMs > lastGuidance) {
+        val newGuidance = guidance.observedAtMs > lastGuidance
+        fun guidanceWrite(): Write {
             val packet = session.guidanceFrame(sequence, route.generation, route.token, guidance, now)
             lastGuidance = guidance.observedAtMs
             arrivalSent = guidance.arrival
-            Write(packet)
-        } else {
+            preferRaster = true
+            return Write(packet)
+        }
+        fun rasterWrite(): Write? {
             val view = session.rasterView
-            if (view != null &&
-                (view.generation != lastView || observation.guidance.observedAtMs > lastMapAt)) {
+            if (view != null && (view.generation != lastView || guidance.observedAtMs > lastMapAt)) {
                 val png = if (view.view == NativeRasterFrame.View.MINI) observation.miniPng else observation.overviewPng
                 if (png != null && session.submitRaster(view, png)) {
                     lastView = view.generation
-                    lastMapAt = observation.guidance.observedAtMs
+                    lastMapAt = guidance.observedAtMs
                 }
             }
-            session.nextRasterWrite(sequence, now)?.let { Write(it.packet, it) }
+            return session.nextRasterWrite(sequence, now)?.let {
+                preferRaster = false
+                Write(it.packet, it)
+            }
+        }
+        // First guidance registers the route; arrival must not wait behind
+        // image fragments. Afterwards alternate when both are available so
+        // a continuously updating provider cannot starve requested map frames.
+        val write = when {
+            newGuidance && (lastGuidance < 0 || guidance.arrival || !preferRaster) -> guidanceWrite()
+            else -> rasterWrite() ?: if (newGuidance) guidanceWrite() else null
         }
         if (write != null) { inFlight = write; deadline = now + 5_000L }
         return write
