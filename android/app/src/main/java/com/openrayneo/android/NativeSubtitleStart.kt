@@ -48,6 +48,13 @@ internal data class NativeSubtitleStart(
 ) {
     val captions get() = mode == "classic"
     val languageHint get() = language(source)
+
+    /** Classic caption settings are negotiated with the actual phone ASR,
+     * not the glass's old default locale. Bilingual requests retain their
+     * explicitly selected pair; firmware label rendering needs device proof. */
+    fun withPhoneLanguage(config: JSONObject): NativeSubtitleStart =
+        if (captions) copy(source = NativeSpeechLanguage.source(config), target = "") else this
+
     fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
         JSONObject().put("mode", mode).put("source_language", source).put("target_language", target)
             .put("direction", direction).put("save_audio", false))
@@ -102,6 +109,12 @@ internal data class NativeSubtitleStart(
  * Accept only the known conversation mode and directions. */
 internal data class NativeHintStart(val sid: String, val source: String, val target: String, val direction: String,
                                     val stockLanguageKeys: Boolean = false, val mode: String = "conversation") {
+    /** Realtime hint capture uses the configured phone ASR. Its answer is
+     * generated in the phone's answer language, not a stale peer default. */
+    fun withPhoneLanguage(config: JSONObject): NativeHintStart =
+        copy(source = NativeSpeechLanguage.source(config),
+            target = if (mode == "classic" && target.isEmpty()) "" else KoreanLanguage.answerLanguage(config.optString("answerLanguage")))
+
     fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
         JSONObject().put("mode", mode)
             .put(if (stockLanguageKeys) "src_lang" else "source_language", source)
@@ -148,6 +161,25 @@ internal data class NativeHintStart(val sid: String, val source: String, val tar
             if (!target.matches(locale) && target != "auto" && !(mode == "classic" && target.isEmpty())) rejectNative("hint target language")
             if (direction !in setOf("ahead", "around")) rejectNative("hint direction")
             return NativeHintStart(sid, source, target, direction, stockKeys, mode)
+        }
+    }
+}
+
+/** Local speech/answer preferences, not a write to firmware language settings.
+ * Stock 1.0.6.11 parser 0x1070DEEC copies these settings strings; the
+ * existing parser accepts the corresponding locale tags. Actual label
+ * rendering on 1.0.7.11 must be observed, not assumed. */
+internal object NativeSpeechLanguage {
+    fun source(config: JSONObject): String {
+        if (SpeechRounds.engine(config) == "stream") return "ko-KR"
+        val hints = SpeechRounds.languageHints(config).split(',').map { it.trim() }
+            .filter { it.isNotEmpty() }.distinct()
+        return when (hints.singleOrNull()) {
+            "ko", "ko-KR" -> "ko-KR"
+            "en", "en-US" -> "en-US"
+            "zh", "zh-CN" -> "zh-CN"
+            "ja", "ja-JP" -> "ja-JP"
+            else -> "auto"
         }
     }
 }
