@@ -10,15 +10,42 @@ import org.json.JSONObject
  * request_id and reports code 0 or 17. Live acceptance on newer firmware
  * remains unverified. Never treat a capability response as a session ACK. */
 internal data class NativeNavigationCapabilities(
-    val phoneGuidance: Boolean, val amap: Boolean, val guidance: Boolean, val maps: Boolean
+    val phoneGuidance: Boolean, val amap: Boolean, val guidance: Boolean, val maps: Boolean,
+    val raster: RasterLimits? = null
 ) {
     val summary: String get() =
         "PHONE_GUIDANCE_V1 " + (if (phoneGuidance) "지원 보고" else "미보고") +
             " · AMAP_PB_V1 " + (if (amap) "지원 보고" else "미보고") +
             " · 길 안내 " + (if (guidance) "지원" else "미지원") +
-            " · 지도 " + (if (maps) "지원" else "미지원")
+            " · 지도 " + (if (maps) "지원" else "미지원") +
+            (raster?.let { " · PNG 프레임 ${it.mini.width}×${it.mini.height}/${it.overview.width}×${it.overview.height} · 조각 ${it.fragmentBytes}B" }
+                ?: " · 원격 PNG 세부 규격 미확인")
 
+    internal data class ViewLimits(val width: Int, val height: Int, val maxBytes: Int, val maxFragments: Int)
+    internal data class RasterLimits(val fragmentBytes: Int, val mini: ViewLimits, val overview: ViewLimits)
+    
     companion object {
+        // Retain only the positively reported intersection with the recovered
+        // 1.0.6.11 raster contract; missing or incompatible fields are not defaults.
+        private fun rasterLimits(body: JSONObject): RasterLimits? {
+            val maps = body.optJSONArray("supported_map_profiles") ?: return null
+            if (maps.length() !in 1..32 || (0 until maps.length()).any { maps.opt(it) !is String } ||
+                (0 until maps.length()).none { maps.optString(it) == "REMOTE_RASTER_FRAME_V1" }) return null
+            if (body.opt("map_supported") != true || body.opt("map_frame_codec") != "PNG" ||
+                body.opt("single_frame_in_flight") != true) return null
+            val fragment = body.opt("map_frame_fragment_size") as? Int ?: return null
+            if (fragment !in 1..4096) return null
+            fun view(prefix: String, w: Int, h: Int, max: Int, count: Int): ViewLimits? {
+                if (body.opt("${prefix}_map_width") != w || body.opt("${prefix}_map_height") != h) return null
+                val bytes = body.opt("${prefix}_max_png_bytes") as? Int ?: return null
+                val parts = body.opt("${prefix}_max_fragment_count") as? Int ?: return null
+                if (bytes !in 1..max || parts !in 1..count) return null
+                return ViewLimits(w, h, minOf(bytes, parts * fragment), parts)
+            }
+            return RasterLimits(fragment, view("mini", 184, 90, 65536, 16) ?: return null,
+                view("overview", 540, 220, 262144, 64) ?: return null)
+        }
+
         fun correlatedReply(message: ProtocolCodec.Message, requestId: String): JSONObject? {
             if (message.version != 1 || message.type != 0x31 || message.mode != 1L) return null
             val body = readBody(message) ?: return null
@@ -48,7 +75,8 @@ internal data class NativeNavigationCapabilities(
             val guidance = body.opt("guidance_supported") as? Boolean ?: return null
             val maps = body.opt("map_supported") as? Boolean ?: return null
             val profiles = (0 until engines.length()).map { engines.optString(it) }.toSet()
-            return NativeNavigationCapabilities("PHONE_GUIDANCE_V1" in profiles, "AMAP_PB_V1" in profiles, guidance, maps)
+            return NativeNavigationCapabilities("PHONE_GUIDANCE_V1" in profiles, "AMAP_PB_V1" in profiles, guidance, maps,
+                rasterLimits(body).takeIf { "PHONE_GUIDANCE_V1" in profiles && guidance && maps })
         }
     }
 }
