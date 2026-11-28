@@ -114,6 +114,8 @@ internal class BridgeService : Service() {
     private class NativeStartProbe(val session: NativeNavigationStartup.Session) {
         var closing = false
         var readyObserved = false
+        var closeWriteCompleted = false
+        var closeReason = ""
     }
     private var nativeStartProbe: NativeStartProbe? = null
     var nativeStartTestStatus = "순정 시작·종료 시험 미실행"; private set
@@ -122,7 +124,8 @@ internal class BridgeService : Service() {
         nativeNavCapabilities?.raster != null && nativeStartProbe == null &&
         state.error == null && pendingNativeHint == null && audioOwner == null &&
         voiceTransport.source == null && !reconnectCapture.pending && !voiceAlwaysOnStart.pending &&
-        !migration.state.busy
+        !migration.state.busy && navigation.activeNavigationCount == 0 &&
+        voiceNavigation == null && voiceNavigationLookup == null && pendingPresetHandoff == null
     fun runNativeStartTest(expectedEpoch: String) {
         check(Looper.myLooper() == Looper.getMainLooper())
         check(expectedEpoch == nativePresetConsentEpoch && nativeStartTestCanRun) {
@@ -148,12 +151,12 @@ internal class BridgeService : Service() {
         runCatching {
             connection.sendFrame(frame) { result ->
                 if (nativeStartProbe === probe && result.isFailure)
-                    finishNativeStartTest(probe, "시작 전송 실패 · 안경 화면 상태 미확인", true)
+                    closeNativeStartTest(probe, "시작 전송 실패 · " + probe.session.startupEvidence)
             }
-        }.onFailure { finishNativeStartTest(probe, "시작 전송 실패 · 안경 화면 상태 미확인", true) }
+        }.onFailure { closeNativeStartTest(probe, "시작 전송 실패 · " + probe.session.startupEvidence) }
         main.postDelayed({
             if (nativeStartProbe === probe && !probe.readyObserved && !probe.closing)
-                closeNativeStartTest(probe, "5초 내 시작·준비 회신 미확인")
+                closeNativeStartTest(probe, "5초 내 시작 완료되지 않음 · " + probe.session.startupEvidence)
         }, 5_000L)
         notifyUI()
     }
@@ -163,7 +166,16 @@ internal class BridgeService : Service() {
     private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
         val probe = nativeStartProbe ?: return false
         if (message.type !in setOf(2, 3, 4)) return false
-        if (probe.closing) return message.type in setOf(2, 4)
+        if (probe.closing) {
+            val reason = probe.session.peerEndReason(message)
+            if (reason != null) {
+                finishNativeStartTest(probe, probe.closeReason +
+                    " · 안경 END_REQUEST 확인($reason) · 실제 화면 종료/지도 미검증", false)
+                return true
+            }
+            return message.type in setOf(2, 4)
+        }
+        val before = probe.session.startupEvidence
         probe.session.receive(message)
         when (probe.session.phase) {
             NativeNavigationStartup.Session.Phase.READY -> if (!probe.readyObserved) {
@@ -179,6 +191,13 @@ internal class BridgeService : Service() {
                 closeNativeStartTest(probe, "시작 거부/확인 요구(${probe.session.rejectionCode}) · 자동 승인하지 않음")
             NativeNavigationStartup.Session.Phase.ENDED ->
                 finishNativeStartTest(probe, "안경 종료 요청 확인 · 지도/길 안내 미시험", false)
+            NativeNavigationStartup.Session.Phase.STARTING -> {
+                val after = probe.session.startupEvidence
+                if (before != after) {
+                    nativeStartTestStatus = after
+                    notifyUI()
+                }
+            }
             else -> Unit
         }
         return true
@@ -186,6 +205,7 @@ internal class BridgeService : Service() {
     private fun closeNativeStartTest(probe: NativeStartProbe, reason: String) {
         if (nativeStartProbe !== probe || probe.closing) return
         probe.closing = true
+        probe.closeReason = reason
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) {
             finishNativeStartTest(probe, "$reason · 연결 변경으로 종료 전송 없음", false)
             return
@@ -198,17 +218,21 @@ internal class BridgeService : Service() {
         nativeStartTestStatus = "$reason · 순정 종료 전송 중"
         runCatching {
             connection.sendFrame(frame) { result ->
-                if (nativeStartProbe === probe)
-                    finishNativeStartTest(probe,
-                        if (result.isSuccess) "$reason · END_REQUEST 전송 완료 · 실제 화면 종료/지도 미검증"
-                        else "$reason · 종료 전송 실패 · 안경 화면 확인 필요",
-                        // A transport write cannot establish actual peer closure.
-                        true)
+                if (nativeStartProbe === probe) {
+                    if (result.isSuccess) {
+                        probe.closeWriteCompleted = true
+                        nativeStartTestStatus = "$reason · 종료 전송 완료 · 안경 회신 대기"
+                        notifyUI()
+                    } else finishNativeStartTest(probe,
+                        "$reason · 종료 전송 실패 · 안경 화면 확인 필요", true)
+                }
             }
         }.onFailure { finishNativeStartTest(probe, "$reason · 종료 전송 실패 · 화면 확인 필요", true) }
         main.postDelayed({
             if (nativeStartProbe === probe)
-                finishNativeStartTest(probe, "$reason · 종료 전송 미확인 · 안경 화면 확인 필요", true)
+                finishNativeStartTest(probe, if (probe.closeWriteCompleted)
+                    "$reason · 종료 전송 완료 · 안경 종료 회신/화면 미확인"
+                    else "$reason · 종료 전송 미확인 · 안경 화면 확인 필요", true)
         }, 5_000L)
         notifyUI()
     }

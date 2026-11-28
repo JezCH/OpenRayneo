@@ -69,8 +69,30 @@ internal object NativeNavigationStartup {
         enum class Phase { NEW, STARTING, READY, SCENE_PENDING, SCENE_ACCEPTED, REJECTED, ENDED }
         var phase = Phase.NEW
             private set
-        private var accepted = false
-        private var ready = false
+        var startAccepted = false
+            private set
+        var glassReady = false
+            private set
+        var incompatibleStartReply = false
+            private set
+        var incompatibleReady = false
+            private set
+        val startupEvidence: String get() =
+            "START_REPLY " + when {
+                startAccepted -> "확인"
+                rejectionCode != null -> "거부($rejectionCode)"
+                incompatibleStartReply -> "규격 불일치"
+                else -> "미수신"
+            } + " / GLASS_READY " + when {
+                glassReady -> "확인"
+                incompatibleReady -> "규격 불일치"
+                else -> "미수신"
+            }
+
+        /** A device-originated END_REQUEST, including after the local close
+         * packet was created. No transport ACK or physical-screen inference. */
+        fun peerEndReason(message: ProtocolCodec.Message): Int? =
+            (body(message, 3)?.opt("reason_code") as? Int)?.takeIf { it in 1..7 }
         private var scene: NativeRouteScene.Encoded? = null
         private var endSent = false
         // A locally prepared route is not proof of acceptance by the glasses.
@@ -120,8 +142,7 @@ internal object NativeNavigationStartup {
         fun receive(message: ProtocolCodec.Message) {
             if (phase == Phase.NEW || phase == Phase.ENDED) return
             if (message.type == 3) {
-                val end = body(message, 3) ?: return
-                if ((end.opt("reason_code") as? Int) in 1..7) {
+                if (peerEndReason(message) != null) {
                     phase = Phase.ENDED
                     scene = null
                     route = null
@@ -142,18 +163,24 @@ internal object NativeNavigationStartup {
                             phase = Phase.REJECTED
                             return
                         }
-                        if (!parameters.matchesReply(reply)) return
-                        accepted = true
+                        if (!parameters.matchesReply(reply)) {
+                            incompatibleStartReply = true
+                            return
+                        }
+                        startAccepted = true
                     }
                     4 -> {
                         val response = body(message, 4) ?: return
-                        if (!parameters.matchesProfile(response)) return
-                        val runtime = response.opt("runtime_version") as? String ?: return
-                        if (runtime.isBlank() || runtime.toByteArray(Charsets.UTF_8).size > 128) return
-                        ready = true
+                        val runtime = response.opt("runtime_version") as? String
+                        if (!parameters.matchesProfile(response) || runtime.isNullOrBlank() ||
+                            runtime.toByteArray(Charsets.UTF_8).size > 128) {
+                            incompatibleReady = true
+                            return
+                        }
+                        glassReady = true
                     }
                 }
-                if (accepted && ready) phase = Phase.READY
+                if (startAccepted && glassReady) phase = Phase.READY
             } else if (phase == Phase.READY && raster?.receive(message) == true) {
                 return
             } else if (phase == Phase.SCENE_PENDING && scene?.committed(message) == true) {
