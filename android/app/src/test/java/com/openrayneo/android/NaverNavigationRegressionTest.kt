@@ -113,11 +113,7 @@ class NaverNavigationRegressionTest {
             .put("view_generation", 1).put("view_mode", "MINI")
             .put("width", 184).put("height", 90).put("codec", "PNG")
         session.receive(ProtocolCodec.Message(0x39, request.toString(), null, 1, 0, 2))
-        val png = java.io.ByteArrayOutputStream().let {
-            val image = java.awt.image.BufferedImage(184, 90, java.awt.image.BufferedImage.TYPE_INT_RGB)
-            assertTrue(javax.imageio.ImageIO.write(image, "png", it))
-            it.toByteArray()
-        }
+        val png = fixturePng(false)
         assertTrue(png.size in 1..4096)
         assertTrue(session.submitRaster(checkNotNull(session.rasterView), png))
         val rasterWrite = checkNotNull(session.nextRasterWrite(100, 1700))
@@ -145,6 +141,44 @@ class NaverNavigationRegressionTest {
         verifyRasterInterleaveAndExpiry(true)
     }
 
+    // Standard RGB PNG using only classes on Android's unit-test compile
+    // classpath. A constant image fits one fragment; seeded noise spans many.
+    private fun fixturePng(noise: Boolean): ByteArray {
+        val width = 184
+        val height = 90
+        val result = java.io.ByteArrayOutputStream()
+        val output = java.io.DataOutputStream(result)
+        output.write(byteArrayOf(137.toByte(), 80, 78, 71, 13, 10, 26, 10))
+        fun chunk(name: String, data: ByteArray) {
+            val type = name.toByteArray(Charsets.US_ASCII)
+            val crc = java.util.zip.CRC32().apply { update(type); update(data) }
+            output.writeInt(data.size)
+            output.write(type)
+            output.write(data)
+            output.writeInt(crc.value.toInt())
+        }
+        val ihdr = java.io.ByteArrayOutputStream()
+        java.io.DataOutputStream(ihdr).use {
+            it.writeInt(width)
+            it.writeInt(height)
+            it.write(byteArrayOf(8, 2, 0, 0, 0))
+        }
+        chunk("IHDR", ihdr.toByteArray())
+        val compressed = java.io.ByteArrayOutputStream()
+        val random = java.util.Random(7)
+        java.util.zip.DeflaterOutputStream(compressed).use { z ->
+            repeat(height) {
+                z.write(0) // PNG scanline filter None
+                val row = ByteArray(width * 3)
+                if (noise) random.nextBytes(row)
+                z.write(row)
+            }
+        }
+        chunk("IDAT", compressed.toByteArray())
+        chunk("IEND", byteArrayOf())
+        return result.toByteArray()
+    }
+
     private fun verifyRasterInterleaveAndExpiry(arrive: Boolean) {
         // JVM-only synthetic fixture. The generated PNG is real, but the
         // coordinates/route and peer replies are not device observations.
@@ -159,13 +193,7 @@ class NaverNavigationRegressionTest {
         session.acceptInitialPresetFrame(1)
         session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", sid)
             .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
-        val image = java.awt.image.BufferedImage(184, 90, java.awt.image.BufferedImage.TYPE_INT_RGB)
-        val random = java.util.Random(7)
-        for (y in 0 until 90) for (x in 0 until 184) image.setRGB(x, y, random.nextInt())
-        val png = java.io.ByteArrayOutputStream().let {
-            assertTrue(javax.imageio.ImageIO.write(image, "png", it))
-            it.toByteArray()
-        }
+        val png = fixturePng(true)
         assertTrue(png.size in 8193..65536)
         var observedAt = 1000L
         var arrival = false
