@@ -9,7 +9,7 @@ internal object LocalDeviceQuery {
     private val subjects = listOf("안경배터리", "안경배터리잔량", "안경의배터리", "레이네오배터리", "레이네오배터리잔량")
     private val endings = listOf("확인", "확인해줘", "알려줘", "얼마야", "얼마남았어", "몇퍼센트야", "몇퍼센트남았어", "몇프로야", "몇프로남았어", "몇%야", "몇%남았어")
     private val batteryQueries = subjects.flatMap { subject -> endings.map { subject + it } }.toSet()
-    private val brightness = "(?:안경(?:의|화면)?|레이네오(?:의|화면)?)밝기(?:를|가|는)?"
+    private val brightness = "(?:(?:안경(?:의|화면)?|레이네오(?:의|화면)?)|화면)?밝기(?:를|가|는)?"
     private val read = Regex("^$brightness(?:확인|확인해줘|알려줘|얼마야|몇단계야)$")
     private val up = Regex("^$brightness(?:올려|올려줘|높여|높여줘|한단계올려줘|한단계높여줘)$")
     private val down = Regex("^$brightness(?:내려|내려줘|낮춰|낮춰줘|한단계내려줘|한단계낮춰줘)$")

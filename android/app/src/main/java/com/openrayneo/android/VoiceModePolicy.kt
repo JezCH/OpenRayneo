@@ -82,8 +82,28 @@ internal object NativeDirectNavigationPolicy {
     private fun compact(text: String) = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
         .filterNot(Char::isWhitespace).lowercase(java.util.Locale.ROOT)
 
+    // Observed Korean ASR output: "버거킹을길안네해봐". Normalize
+    // the action word only, not the actual destination.
+    private fun actionText(question: String) = compact(question).replace("길안네", "길안내")
+
+    /** Exact standalone object + explicit walking command. No AI round-trip,
+     * no place from history and no provider changes. */
+    fun explicitRequest(question: String): NaverVoiceCommand.Request? {
+        if (!eligible(question)) return null
+        val q = java.text.Normalizer.normalize(question, java.text.Normalizer.Form.NFKC)
+            .trim().trimEnd('.', '!', '?', '。', '！', '？').trim()
+        val match = Regex("^(.{1,120}?)(?:을|를|까지)\\s*길\\s*안(?:내|네)(?:를)?\\s*(?:해\\s*봐|해\\s*줘|해\\s*주세요|해\\s*보세요)$")
+            .matchEntire(q) ?: return null
+        val destination = match.groupValues[1].trim()
+        val name = compact(destination)
+        if ((name.length < 2 && name != "집") || name in setOf("여기", "거기", "저기", "어디", "길", "지도", "목적지", "이전목적지", "경로", "장소") ||
+            name.contains("네이버") || name.contains("카카오") || destination.any(Char::isISOControl) ||
+            destination.any { it in ",.!?;:。！？" } || listOf("그리고", "그러면", "예를들", "만약", "말했", "말해", "요청하", "시도하", "해달", "갈수", "가는길").any { name.contains(it) }) return null
+        return NaverVoiceCommand.Request(destination, NaverVoiceCommand.Mode.WALK)
+    }
+
     fun eligible(question: String): Boolean {
-        val q = compact(question)
+        val q = actionText(question)
         if (q.length !in 3..400 || q.contains('"') || q.contains('“') || q.contains('”')) return false
         // Do not repurpose status, explanation, cancellation, negation, quoted
         // commands, other-app requests or non-walking modes as a route start.
