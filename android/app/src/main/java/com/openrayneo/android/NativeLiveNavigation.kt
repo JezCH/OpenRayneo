@@ -53,7 +53,12 @@ internal class NativeLiveNavigation(
         if (arrivalSent) return null
         // Do not start or continue transmitting stale pixels after the live
         // source expires. A partially transmitted expired frame is not reused.
-        if (session.rasterState == NativeRasterTransfer.State.SENDING &&
+        // A fresh terminal observation does not send stale image data.
+        // Let it finish the route even when an older partial image expired.
+        val freshArrival = observation?.guidance?.let {
+            it.arrival && it.observedAtMs > lastGuidance
+        } == true
+        if (!freshArrival && session.rasterState == NativeRasterTransfer.State.SENDING &&
             (lastMapAt < 0 || now - lastMapAt >= NativePhoneGuidance.VALID_FOR_MS)) {
             failure = "순정 지도 원본 갱신 중단"
             return null
