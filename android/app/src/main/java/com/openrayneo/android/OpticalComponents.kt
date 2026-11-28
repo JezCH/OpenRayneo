@@ -56,12 +56,13 @@ internal fun OpticalSignature(modifier: Modifier = Modifier) {
 internal fun OpticalActivityHeader(activity: String) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val wide = maxWidth >= 260.dp && LocalDensity.current.fontScale <= 1.3f
+        val artSize = if (maxWidth >= 288.dp) 148.dp else 120.dp
         if (wide) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(activity, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
             }
-            OpticalSignature(Modifier.size(if (maxWidth >= 288.dp) 148.dp else 120.dp))
+            OpticalSignature(Modifier.size(artSize))
         } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(activity, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
