@@ -53,7 +53,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures { compose = true; buildConfig = true; aidl = true }
     androidResources { noCompress += "onnx" }
     sourceSets.getByName("main").assets.srcDir("../../ThirdParty/SherpaOnnx")
     sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/mozilla/jni"))

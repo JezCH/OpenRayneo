@@ -290,6 +290,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     // Only the explicitly selected file's coordinates; no disk copy, network or GPS.
     var walkingCourse by mutableStateOf<NaverWalkingCourse.Course?>(null)
         private set
+    var offlineWalkingRoute by mutableStateOf<OfflineWalkingRoute.Route?>(null)
+        private set
+    private val offlineRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     var walkingCourseRaster by mutableStateOf<NativeCourseRaster.Preview?>(null)
         private set
     var walkingCourseBusy by mutableStateOf(false)
@@ -309,9 +312,33 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if (generation == walkingCourseGeneration) {
                     walkingCourseBusy = false
                     result.fold({ (course, preview) ->
+                        offlineWalkingRoute = null
                         walkingCourse = course
                         walkingCourseRaster = preview
                     }, { error = "GPX를 가져오지 못했습니다. UTF-8, 1MB 이하의 연속 코스 파일을 확인하세요." })
+                }
+            }
+        }
+    }
+    fun calculateOfflineWalkingRoute(startText: String, endText: String) = attempt {
+        check(!walkingCourseBusy) { "경로 계산 또는 파일 가져오기 진행 중입니다." }
+        val start = OfflineWalkingRoute.coordinate(startText)
+        val end = OfflineWalkingRoute.coordinate(endText)
+        val generation = ++walkingCourseGeneration
+        walkingCourseBusy = true
+        offlineRouteWorker.execute {
+            val result = runCatching {
+                val route = OfflineWalkingRoute.calculate(context, start, end)
+                route to runCatching { NativeCourseRaster.preview(route.course) }.getOrNull()
+            }
+            main.post {
+                if (generation == walkingCourseGeneration) {
+                    walkingCourseBusy = false
+                    result.fold({ (route, preview) ->
+                        offlineWalkingRoute = route
+                        walkingCourse = route.course
+                        walkingCourseRaster = preview
+                    }, { error = "오프라인 경로를 계산하지 못했습니다. BRouter 설치, 지역 데이터, 도보 프로필 및 좌표를 확인하세요." })
                 }
             }
         }
@@ -321,6 +348,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         walkingCourseBusy = false
         walkingCourse = null
         walkingCourseRaster = null
+        offlineWalkingRoute = null
     }
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
@@ -654,6 +682,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         bridge?.observers?.remove(observer)
         if (bound) context.unbindService(connection)
         files.shutdown()
+        offlineRouteWorker.shutdown()
         bridge = null
         bound = false
     }
