@@ -23,8 +23,15 @@ internal object OfflineRouteProgress {
         val lon=Math.toRadians(longitudeDelta(a.longitude,b.longitude))
         return 2*R*asin(sqrt((sin(lat/2).pow(2)+cos(Math.toRadians(a.latitude))*cos(Math.toRadians(b.latitude))*sin(lon/2).pow(2)).coerceIn(0.0,1.0)))
     }
+    // Bound to one immutable route instance and the most recent measured fix.
+    // A prior position is not a new fix and never extends guidance freshness.
+    data class Anchor internal constructor(val route: OfflineWalkingRoute.Route,
+                                          val alongMeters: Double, val observedAtMs: Long,
+                                          val accuracyMeters: Double) {
+        override fun toString() = "Anchor(redacted)"
+    }
     data class Assessment(val progress: Progress?, val confidentlyOffRoute: Boolean = false,
-                          val arrivalCandidate: Boolean = false)
+                          val arrivalCandidate: Boolean = false, val anchor: Anchor? = null)
     enum class Terminal { ARRIVED, OFF_ROUTE }
     /** Three distinct consecutive recent measurements spanning two seconds.
      * A poor/ambiguous fix resets the candidate. Initial conservative policy. */
@@ -57,7 +64,8 @@ internal object OfflineRouteProgress {
 
     /** Absence of a match is not proof of deviation: ambiguous crossings,
      * poor GPS and incomplete geometry must never trigger a new route. */
-    fun assess(route: OfflineWalkingRoute.Route, fix: Fix, nowMs: Long): Assessment {
+    fun assess(route: OfflineWalkingRoute.Route, fix: Fix, nowMs: Long,
+               previous: Anchor? = null): Assessment {
         if (fix.observedAtMs < 0 || nowMs < fix.observedAtMs ||
             nowMs-fix.observedAtMs >= NativePhoneGuidance.VALID_FOR_MS ||
             !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..25.0 ||
@@ -87,13 +95,31 @@ internal object OfflineRouteProgress {
             minLateral=minOf(minLateral,lateral)
             if(lateral<=maxLateral) candidates.add(Candidate(i,f,lateral,prefix[i]+f*length))
         }
-        val best=candidates.minByOrNull { it.lateral } ?: return Assessment(null,
+        val nearest=candidates.minByOrNull { it.lateral } ?: return Assessment(null,
             !incomplete && minLateral.isFinite() && fix.accuracyMeters <= 15.0 &&
                 minLateral > 45.0 + fix.accuracyMeters)
-        // Adjacent projections of the same junction are equivalent; a
-        // materially different along-route position within GPS error is not.
-        if(candidates.any { abs(it.along-best.along)>maxOf(25.0,2*fix.accuracyMeters) &&
-                it.lateral<=best.lateral+fix.accuracyMeters }) return Assessment(null)
+        // Adjacent projections of the same junction are equivalent. When
+        // there are distinct possible positions, a recent verified observation
+        // may exclude branches that cannot be reached at walking speed.
+        // Keep the global GPS error test; continuity alone cannot create a match.
+        val plausible=candidates.filter { it.lateral<=nearest.lateral+fix.accuracyMeters }
+        val separation=maxOf(25.0,2*fix.accuracyMeters)
+        fun ambiguous(pool: List<Candidate>, best: Candidate) =
+            pool.any { abs(it.along-best.along)>separation }
+        val prior=previous?.takeIf { it.route===route && fix.observedAtMs-it.observedAtMs in 1L..5_000L }
+        val best=if(prior==null) {
+            if(ambiguous(plausible,nearest)) return Assessment(null)
+            nearest
+        } else {
+            // Generous upper bound (6 m/s plus both GNSS error radii);
+            // allows backtracking. No forced monotonic progress or snapped jump.
+            val reach=6.0*(fix.observedAtMs-prior.observedAtMs)/1000.0+
+                prior.accuracyMeters+fix.accuracyMeters
+            val reachable=plausible.filter { abs(it.along-prior.alongMeters)<=reach }
+            val candidate=reachable.minByOrNull { it.lateral } ?: return Assessment(null)
+            if(ambiguous(reachable,candidate)) return Assessment(null)
+            candidate
+        }
         val remaining=(prefix.last()-best.along).coerceAtLeast(0.0)
         // If a fix is near a turn, retain it until the measured progress
         // exceeds its location by the uncertainty margin; never declare arrival.
@@ -116,6 +142,7 @@ internal object OfflineRouteProgress {
             remaining <= 20.0 && distance(fix.point, end)+fix.accuracyMeters <= 25.0 &&
             distance(fix.point, points.last())+fix.accuracyMeters <= 25.0
         return Assessment(Progress(fix.observedAtMs,remaining.roundToInt(),next,nextDistance,estimate,best.lateral.roundToInt(),following),
-            arrivalCandidate = nearDestination)
+            arrivalCandidate = nearDestination,
+            anchor = Anchor(route,best.along,fix.observedAtMs,fix.accuracyMeters))
     }
 }
