@@ -70,7 +70,11 @@ internal data class NativeSubtitleStart(
             val body = runCatching { JSONObject(message.json ?: rejectNative("json absent")) }.getOrNull() ?: rejectNative("json")
             val sid = body.opt("sid") as? String ?: rejectNative("sid type")
             if (!sid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) rejectNative("sid syntax")
-            if (body.has("code") && body.opt("code") != 0) rejectNative("code")
+            // Stock 1.0.6.11 startTranslation passes its successful startup
+            // result (1) to sendStartRequest (0x106fd1ce -> 0x10703478).
+            // Phone-originated examples use 0; keep both known success/request
+            // forms, but never admit a non-success startup error or force.
+            if (body.has("code") && body.opt("code") !in setOf(0, 1)) rejectNative("code")
             if (body.optBoolean("force", false)) rejectNative("force")
             val settings = body.optJSONObject("settings") ?: rejectNative("settings object")
             for (key in listOf("mode", "source_language", "target_language", "direction"))
