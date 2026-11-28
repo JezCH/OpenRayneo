@@ -99,6 +99,93 @@ class NaverNavigationRegressionTest {
         assertTrue(closed)
     }
 
+    @Test fun freshGuidanceCannotStarveRequestedRasterFragments() {
+        verifyRasterInterleaveAndExpiry(false)
+        verifyRasterInterleaveAndExpiry(true)
+    }
+
+    private fun verifyRasterInterleaveAndExpiry(arrive: Boolean) {
+        // JVM-only synthetic fixture. The generated PNG is real, but the
+        // coordinates/route and peer replies are not device observations.
+        val sid = "0123456789abcdef0123456789abcdef"
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            1, "ko-KR", "KR", 1, 1, "overseas", "JVM fixture")
+        val limits = NativeNavigationCapabilities.RasterLimits(4096,
+            NativeNavigationCapabilities.ViewLimits(184, 90, 65536, 16),
+            NativeNavigationCapabilities.ViewLimits(540, 220, 262144, 64))
+        val session = NativeNavigationStartup.Session(params, sid)
+        session.configureRaster(NativeNavigationCapabilities(true, false, true, true, limits))
+        session.acceptInitialPresetFrame(1)
+        session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", sid)
+            .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
+        val image = java.awt.image.BufferedImage(184, 90, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val random = java.util.Random(7)
+        for (y in 0 until 90) for (x in 0 until 184) image.setRGB(x, y, random.nextInt())
+        val png = java.io.ByteArrayOutputStream().let {
+            assertTrue(javax.imageio.ImageIO.write(image, "png", it))
+            it.toByteArray()
+        }
+        assertTrue(png.size in 8193..65536)
+        var observedAt = 1000L
+        var arrival = false
+        val route = object : NativeLiveNavigation.Route {
+            override val parameters = params
+            override val generation = 1L
+            override val token = "fixture-route"
+            override fun observation() = NativeLiveNavigation.Observation(
+                NativePhoneGuidance.Snapshot(observedAt, if (arrival) 4 else 1, 0, 0, 0, -1,
+                    100, 300, -1, "", "", "fixture", false, arrival), png, null)
+            override fun close() {}
+        }
+        val live = NativeLiveNavigation(session, route)
+        fun message(write: NativeLiveNavigation.Write) =
+            ProtocolCodec.message(ProtocolCodec.StreamDecoder().append(write.packet).single().payload)
+        val first = checkNotNull(live.next(2, 1100))
+        assertEquals(0x34, message(first).type)
+        live.written(first, true, 1110)
+        val request = NativeRouteScene.Identity(sid, 1, 1, route.token).json()
+            .put("view_generation", 1).put("view_mode", "MINI")
+            .put("width", 184).put("height", 90).put("codec", "PNG")
+        session.receive(ProtocolCodec.Message(0x39, request.toString(), null, 1, 0, 2))
+        observedAt = 1200
+        val fragment0 = checkNotNull(live.next(3, 1250))
+        assertEquals(0x35, message(fragment0).type)
+        assertEquals(0, org.json.JSONObject(message(fragment0).json!!).getInt("fragment_index"))
+        assertNull(live.next(4, 1260))
+        live.written(fragment0, true, 1270)
+        observedAt = 1300
+        val guidance = checkNotNull(live.next(5, 1350))
+        assertEquals(0x34, message(guidance).type)
+        live.written(guidance, true, 1360)
+        observedAt = 1400
+        val fragment1 = checkNotNull(live.next(6, 1450))
+        assertEquals(0x35, message(fragment1).type)
+        assertEquals(1, org.json.JSONObject(message(fragment1).json!!).getInt("fragment_index"))
+        live.written(fragment1, true, 1460)
+        observedAt = 1500
+        val resumedGuidance = checkNotNull(live.next(7, 1550))
+        assertEquals(0x34, message(resumedGuidance).type)
+        live.written(resumedGuidance, true, 1560)
+        if (arrive) {
+            // A fresh arrival may finish even though the partial image has expired.
+            observedAt = 4900
+            arrival = true
+            val end = checkNotNull(live.next(8, 5000))
+            assertEquals(0x34, message(end).type)
+            assertTrue(org.json.JSONObject(message(end).json!!).getBoolean("arrival"))
+            assertFalse(live.arrived)
+            live.written(end, true, 5010)
+            assertTrue(live.arrived)
+        } else {
+            // Never continue expired image fragments, even with fresh guidance.
+            observedAt = 4900
+            assertNull(live.next(8, 5000))
+            assertNotNull(live.failure)
+            assertFalse(live.arrived)
+        }
+        live.close()
+    }
+
     @Test fun exactTurnOnlyNeverGuessFromEtaOrConflict() {
         val p = KoreanNavigationText
         assertEquals(KoreanNavigationText.Instruction("우회전", 300), p.parse(listOf("300m 앞에서 우회전")))
