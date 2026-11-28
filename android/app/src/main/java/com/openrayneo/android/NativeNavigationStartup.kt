@@ -132,6 +132,17 @@ internal object NativeNavigationStartup {
             phase = Phase.STARTING
             return packet
         }
+        /** Reply to an already validated initial glasses preset, using its SID.
+         * GLASS_READY is still required; this outgoing reply is not peer ACK. */
+        fun acceptInitialPresetFrame(sequence: Int): ByteArray {
+            check(phase == Phase.NEW && parameters.profile == Profile.RASTER_FRAME && rasterLimits != null)
+            val packet = ProtocolCodec.display(0x20, sequence, 2,
+                parameters.json().put("sid", sid).put("code", 0).put("text", "").toString())
+            phase = Phase.STARTING
+            presetReplySent = true
+            return packet
+        }
+        private var presetReplySent = false
         private fun body(message: ProtocolCodec.Message, type: Int): JSONObject? {
             if (message.type != type || message.version != 1 || message.sequence != 0L ||
                 message.mode != 2L || message.audio?.isNotEmpty() == true) return null
@@ -180,7 +191,7 @@ internal object NativeNavigationStartup {
                         glassReady = true
                     }
                 }
-                if (startAccepted && glassReady) phase = Phase.READY
+                if ((startAccepted || presetReplySent) && glassReady) phase = Phase.READY
             } else if (phase == Phase.READY && raster?.receive(message) == true) {
                 return
             } else if (phase == Phase.SCENE_PENDING && scene?.committed(message) == true) {

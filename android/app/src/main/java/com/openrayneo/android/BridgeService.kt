@@ -58,9 +58,9 @@ internal class BridgeService : Service() {
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
-        // A stock menu request is not permission to launch a different phone app
-        // or to claim a route that has not been acquired.
-        noteNativeMenu(0x20, request.alias + " 순정 내비 요청 수신 · 실제 경로 공급 미연동 · 휴대폰 지도 미실행")
+        val destination = config.resolve(request.alias) ?: return
+        val status = startPreparedNativeRoute(destination, request.sid)
+        noteNativeMenu(0x20, request.alias + " · " + status)
     }
     val nativePresetPending get() = pendingNativePreset != null
     val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
@@ -77,7 +77,7 @@ internal class BridgeService : Service() {
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     // One explicitly consented, stationary START/READY/END round trip. It is
     // a real stock session, but never sends 0x34/0x35/0x3F or a fabricated route.
-    private class NativeStartProbe(val session: NativeNavigationStartup.Session) {
+    private class NativeStartProbe(val session: NativeNavigationStartup.Session, val live: NativeLiveNavigation? = null) {
         var closing = false
         var readyObserved = false
         var closeWriteCompleted = false
@@ -92,6 +92,100 @@ internal class BridgeService : Service() {
         voiceTransport.source == null && !reconnectCapture.pending && !voiceAlwaysOnStart.pending &&
         !migration.state.busy && navigation.activeNavigationCount == 0 &&
         voiceNavigation == null && voiceNavigationLookup == null && pendingPresetHandoff == null
+    // Only an explicitly requested, actually prepared route from an authorized
+    // source may enter the native display. No phone app launch or fallback HUD.
+    private var preparedNativeRoute: NativeLiveNavigation.Route? = null
+    private var queuedNativeDestination: String? = null
+    private var queuedNativeDeadline = 0L
+    internal fun setPreparedNativeRoute(route: NativeLiveNavigation.Route) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        check(!destroyed && nativeStartProbe == null && route.parameters.profile == NativeNavigationStartup.Profile.RASTER_FRAME)
+        clearPreparedNativeRoute()
+        preparedNativeRoute = route
+    }
+    private fun clearPreparedNativeRoute() {
+        preparedNativeRoute?.let { runCatching { it.close() } }
+        preparedNativeRoute = null
+        queuedNativeDestination = null
+    }
+    private fun startPreparedNativeRoute(destination: String, peerSid: String? = null): String {
+        val route = preparedNativeRoute?.takeIf { it.parameters.destination == destination }
+            ?: return "순정 내비 실제 경로 공급 미연동 · 휴대폰 지도 미실행"
+        val now = SystemClock.elapsedRealtime()
+        if (route.observation()?.guidance?.freshAt(now) != true) return "순정 내비 최신 경로 정보 대기"
+        if (!nativeStartTestCanRun) {
+            if (peerSid == null) {
+                queuedNativeDestination = destination
+                queuedNativeDeadline = now + 10_000L
+                return "순정 내비 요청 대기 · 음성 세션 및 화면 사용 종료 후 시작"
+            }
+            return "순정 내비 시작 보류 · 안경 화면 사용 상태 확인"
+        }
+        val caps = checkNotNull(nativeNavCapabilities)
+        val session = if (peerSid == null) NativeNavigationStartup.Session(route.parameters)
+            else NativeNavigationStartup.Session(route.parameters, peerSid)
+        session.configureRaster(caps)
+        val live = NativeLiveNavigation(session, route)
+        val probe = NativeStartProbe(session, live)
+        preparedNativeRoute = null
+        queuedNativeDestination = null
+        nativeStartProbe = probe
+        dispatch(GlassesEvent.ReserveNativeNavigation)
+        if (state.intent != DisplayIntent.NativeNavigation) {
+            live.close()
+            nativeStartProbe = null
+            return "순정 내비 화면 예약 실패"
+        }
+        val frame = if (peerSid == null) session.startFrame(navProbeTransportSequence++ and 65535)
+            else session.acceptInitialPresetFrame(navProbeTransportSequence++ and 65535)
+        nativeStartTestStatus = "순정 내비 시작 전송 · 안경 준비 회신 대기"
+        runCatching {
+            connection.sendFrame(frame) { result ->
+                if (nativeStartProbe === probe && result.isFailure) closeNativeStartTest(probe, "순정 내비 시작 전송 실패")
+            }
+        }.onFailure { closeNativeStartTest(probe, "순정 내비 시작 전송 실패") }
+        main.postDelayed({
+            if (nativeStartProbe === probe && !probe.readyObserved && !probe.closing)
+                closeNativeStartTest(probe, "순정 내비 준비 회신 시간 초과 · " + session.startupEvidence)
+        }, 5_000L)
+        notifyUI()
+        return nativeStartTestStatus
+    }
+    private fun pumpNativeNavigation() {
+        val destination = queuedNativeDestination
+        if (destination != null) {
+            if (SystemClock.elapsedRealtime() >= queuedNativeDeadline) {
+                clearPreparedNativeRoute()
+                navigationSwitchStatus = "순정 내비 시작 대기 만료"
+                notifyUI()
+            } else if (nativeStartTestCanRun) {
+                queuedNativeDestination = null
+                navigationSwitchStatus = startPreparedNativeRoute(destination)
+                notifyUI()
+            }
+        }
+        val probe = nativeStartProbe ?: return
+        val live = probe.live ?: return
+        if (probe.closing || !probe.readyObserved) return
+        val now = SystemClock.elapsedRealtime()
+        val write = runCatching { live.next(navProbeTransportSequence++ and 65535, now) }.getOrElse {
+            closeNativeStartTest(probe, "순정 내비 경로 데이터 규격 오류")
+            return
+        }
+        live.failure?.let { closeNativeStartTest(probe, it); return }
+        if (live.arrived) { closeNativeStartTest(probe, "경로 공급자 도착 확인"); return }
+        if (write == null) return
+        runCatching {
+            connection.sendFrame(write.packet) { result ->
+                main.post {
+                    if (nativeStartProbe === probe && !probe.closing) {
+                        live.written(write, result.isSuccess, SystemClock.elapsedRealtime())
+                        pumpNativeNavigation()
+                    }
+                }
+            }
+        }.onFailure { closeNativeStartTest(probe, "순정 내비 전송 실패") }
+    }
     fun runNativeStartTest(expectedEpoch: String) {
         check(Looper.myLooper() == Looper.getMainLooper())
         check(expectedEpoch == nativePresetConsentEpoch && nativeStartTestCanRun) {
@@ -131,7 +225,8 @@ internal class BridgeService : Service() {
     }
     private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
         val probe = nativeStartProbe ?: return false
-        if (message.type !in setOf(2, 3, 4)) return false
+        if (message.type !in setOf(2, 3, 4) &&
+            (probe.live == null || message.type !in setOf(0x36, 0x37, 0x38, 0x39))) return false
         if (probe.closing) {
             val reason = probe.session.peerEndReason(message)
             if (reason != null) {
@@ -146,11 +241,16 @@ internal class BridgeService : Service() {
         when (probe.session.phase) {
             NativeNavigationStartup.Session.Phase.READY -> if (!probe.readyObserved) {
                 probe.readyObserved = true
-                nativeStartTestStatus = "START_REPLY + GLASS_READY 확인 · 실제 화면 관찰 · 곧 종료"
-                main.postDelayed({
-                    if (nativeStartProbe === probe && !probe.closing)
-                        closeNativeStartTest(probe, "시작·준비 회신 확인")
-                }, 2_000L)
+                if (probe.live != null) {
+                    nativeStartTestStatus = "순정 내비 준비 회신 확인 · 실제 경로 전송"
+                    pumpNativeNavigation()
+                } else {
+                    nativeStartTestStatus = "START_REPLY + GLASS_READY 확인 · 실제 화면 관찰 · 곧 종료"
+                    main.postDelayed({
+                        if (nativeStartProbe === probe && !probe.closing)
+                            closeNativeStartTest(probe, "시작·준비 회신 확인")
+                    }, 2_000L)
+                }
                 notifyUI()
             }
             NativeNavigationStartup.Session.Phase.REJECTED ->
@@ -166,11 +266,13 @@ internal class BridgeService : Service() {
             }
             else -> Unit
         }
+        if (probe.live != null && !probe.closing) pumpNativeNavigation()
         return true
     }
     private fun closeNativeStartTest(probe: NativeStartProbe, reason: String) {
         if (nativeStartProbe !== probe || probe.closing) return
         probe.closing = true
+        probe.live?.close()
         probe.closeReason = reason
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) {
             finishNativeStartTest(probe, "$reason · 연결 변경으로 종료 전송 없음", false)
@@ -204,6 +306,7 @@ internal class BridgeService : Service() {
     }
     private fun finishNativeStartTest(probe: NativeStartProbe, status: String, yield: Boolean) {
         if (nativeStartProbe !== probe) return
+        probe.live?.close()
         nativeStartProbe = null
         nativeStartTestStatus = status
         if (state.intent == DisplayIntent.NativeNavigation) {
@@ -215,6 +318,8 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun resetNativeNavigationProbe() {
+        nativeStartProbe?.live?.close()
+        clearPreparedNativeRoute()
         nativeStartProbe = null
         nativeStartTestStatus = "순정 시작·종료 시험 미실행 · 연결 변경"
         navProbeRevision++
@@ -672,6 +777,7 @@ internal class BridgeService : Service() {
             if (wakePending && (state.link.phase != LinkPhase.FULL || state.disconnecting || state.intent != DisplayIntent.Idle || conversations.state.running || translator.active || voiceTransport.nativeActive)) cancelKoreanWake()
             pollNavigationSwitch()
             pollVoiceNavigation()
+            pumpNativeNavigation()
             pollNavigationVoiceHandoff()
             pollEndedNavigation()
             // A recovered capture or other busy mode can defer the initial query.
@@ -890,8 +996,10 @@ internal class BridgeService : Service() {
                     if (currentEvent == GlassesEvent.Disconnect || currentEvent == GlassesEvent.BeginConnection ||
                         currentEvent is GlassesEvent.ExternalPage ||
                         (currentEvent is GlassesEvent.LinkChanged && currentEvent.state.phase != LinkPhase.FULL)) {
+                        nativeStartProbe?.live?.close()
+                        clearPreparedNativeRoute()
                         nativeStartProbe = null
-                        nativeStartTestStatus = "순정 시작 시험 중단 · 연결/안경 화면 변경"
+                        nativeStartTestStatus = "순정 내비 중단 · 연결/안경 화면 변경"
                     }
                 }
                 val transition = GlassesCoordinator.reduce(state, currentEvent)
@@ -1227,7 +1335,13 @@ internal class BridgeService : Service() {
             nativeNavCapabilities?.raster == null ->
                 "현재 연결에서 순정 PNG 내비 프로필을 확인하지 못했습니다."
             request == null -> "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
-            else -> "순정 내비 경로 공급 미연동 · 휴대폰 지도 앱은 열지 않았습니다."
+            else -> {
+                val destination = if (request.destination in setOf("집", "회사"))
+                    runCatching { NativeNavigationPresets.read(this).resolve(request.destination) }.getOrNull()
+                    else request.destination
+                if (destination == null) "길 안내 화면에서 해당 목적지를 먼저 등록하세요."
+                else startPreparedNativeRoute(destination)
+            }
         }
         navigationSwitchStatus = status
         notifyUI()
@@ -3030,7 +3144,10 @@ internal class BridgeService : Service() {
                     NaverVoiceCommand.Request(it, NaverVoiceCommand.Mode.UNSPECIFIED)
                 }
                 val status = requestNativeNavigation(request)
-                completion(Result.success(JSONObject().put("started", false).put("status", status)))
+                completion(Result.success(JSONObject()
+                    .put("started", nativeStartProbe?.let { it.live != null && it.readyObserved && !it.closing } == true)
+                    .put("pending", queuedNativeDestination != null || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
+                    .put("status", status)))
             }
             "stop_navigation_mirroring" -> { stopNavigation(); completion(Result.success(JSONObject().put("following", false).put("mapNavigationChanged", false).put("provider", "naver").put("gaodeNavigationChanged", false))) }
             "show_notification" -> {
@@ -3176,6 +3293,8 @@ internal class BridgeService : Service() {
     override fun onDestroy() {
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
+        nativeStartProbe?.live?.close()
+        clearPreparedNativeRoute()
         nativeStartProbe = null
         localClock.clear(); voiceAlwaysOnStart.cancel(); reconnectCapture.cancel(); destroyed = true; memoryReferenceWorker.shutdownNow(); observers.clear(); main.removeCallbacksAndMessages(null)
         clearVoiceNavigation()
