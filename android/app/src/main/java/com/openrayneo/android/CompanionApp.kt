@@ -784,6 +784,23 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                 Note("BRouter / © OpenStreetMap contributors · 네이버 경로가 아닙니다.")
                 Note("실제 계산된 회전 지점 ${offline.turns.size}개 · " +
                     (offline.estimatedSeconds?.let { "엔진 예상 소요 시간 ${kotlin.math.ceil(it / 60).toInt()}분" } ?: "예상 시간 미제공"))
+                ToolOutlinedButton(onClick = { model.checkOfflineRoutePosition() },
+                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
+                    modifier = Modifier.fillMaxWidth()) { Text("현재 위치로 경로 진행 확인 (1회)") }
+                Note("이미 허용된 정확한 위치 권한만 사용합니다. 경로 진행 확인은 한 번의 GPS 측정이며 자동 추적이나 안경 안내가 아닙니다.")
+                if(model.offlineProgressBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                model.offlineProgress?.let { progress ->
+                    var current by remember(progress) { mutableStateOf(true) }
+                    LaunchedEffect(progress) {
+                        val remaining = NativePhoneGuidance.VALID_FOR_MS -
+                            (android.os.SystemClock.elapsedRealtime()-progress.observedAtMs)
+                        if(remaining>0) delay(remaining)
+                        current=false
+                    }
+                    Note("측정 결과${if(current) "" else " (이전 위치)"} · 경로 남은 거리 ${progress.remainingMeters}m")
+                    progress.nextTurnMeters?.let { Note("다음 엔진 회전 지점까지 ${it}m") }
+                    progress.remainingEstimateSeconds?.let { Note("경로 시간 자료 기준 남은 예상 시간 ${kotlin.math.ceil(it / 60.0).toInt()}분") }
+                }
             } else Note("사용자가 가져온 GPX 파일")
             Text("${course.points.size}개 좌표 · ${"%.2f".format(java.util.Locale.KOREA, course.lengthMeters / 1000.0)} km", style = MaterialTheme.typography.titleLarge)
             val preview = model.walkingCourseRaster

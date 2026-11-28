@@ -293,6 +293,34 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var offlineWalkingRoute by mutableStateOf<OfflineWalkingRoute.Route?>(null)
         private set
     private val offlineRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    var offlineProgress by mutableStateOf<OfflineRouteProgress.Progress?>(null)
+        private set
+    var offlineProgressBusy by mutableStateOf(false)
+        private set
+    private var offlineProgressGeneration = 0L
+    fun checkOfflineRoutePosition() = attempt {
+        val route = checkNotNull(offlineWalkingRoute) { "먼저 오프라인 경로를 계산하세요." }
+        check(hostVisible && !walkingCourseBusy && !offlineProgressBusy) { "앱 화면에서 경로 계산 종료 후 실행하세요." }
+        val ticket = ++offlineProgressGeneration
+        offlineProgress = null
+        offlineProgressBusy = true
+        offlineRouteWorker.execute {
+            val progress = runCatching {
+                OfflineRouteLocation.current(context)?.let {
+                    OfflineRouteProgress.match(route,it,android.os.SystemClock.elapsedRealtime())
+                }
+            }.getOrNull()
+            main.post {
+                if(ticket == offlineProgressGeneration) {
+                    offlineProgressBusy = false
+                    if(hostVisible && offlineWalkingRoute === route && !walkingCourseBusy) {
+                        offlineProgress = progress
+                        if(progress == null) error = "경로 위 위치를 확인하지 못했습니다. 정확한 위치 권한, GPS 수신, 경로 이탈 여부를 확인하세요."
+                    }
+                }
+            }
+        }
+    }
     var walkingCourseRaster by mutableStateOf<NativeCourseRaster.Preview?>(null)
         private set
     var walkingCourseBusy by mutableStateOf(false)
@@ -312,6 +340,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if (generation == walkingCourseGeneration) {
                     walkingCourseBusy = false
                     result.fold({ (course, preview) ->
+                        ++offlineProgressGeneration
+                        offlineProgress = null
+                        offlineProgressBusy = false
                         offlineWalkingRoute = null
                         walkingCourse = course
                         walkingCourseRaster = preview
@@ -335,6 +366,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 if (generation == walkingCourseGeneration) {
                     walkingCourseBusy = false
                     result.fold({ (route, preview) ->
+                        ++offlineProgressGeneration
+                        offlineProgress = null
+                        offlineProgressBusy = false
                         offlineWalkingRoute = route
                         walkingCourse = route.course
                         walkingCourseRaster = preview
@@ -349,6 +383,9 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         walkingCourse = null
         walkingCourseRaster = null
         offlineWalkingRoute = null
+        ++offlineProgressGeneration
+        offlineProgress = null
+        offlineProgressBusy = false
     }
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
