@@ -30,6 +30,7 @@ private object NativeStartShape {
             "trigger=${kind(body.opt("trigger"))}, force=${kind(body.opt("force"))}; settings=" +
             (settings?.let { "keys=${keys(it)}, mode=${token(it.opt("mode"))}, " +
                 "source=${token(it.opt("source_language"))}, target=${token(it.opt("target_language"))}, " +
+                "src_lang=${token(it.opt("src_lang"))}, dst_lang=${token(it.opt("dst_lang"))}, " +
                 "direction=${token(it.opt("direction"))}, save_audio=${kind(it.opt("save_audio"))}" }
                 ?: kind(body.opt("settings")))
     }
@@ -99,11 +100,21 @@ internal data class NativeSubtitleStart(
 /** The 0x17 type-1/2 contract is documented by upstream; the exact stock
  * device-originated packet on 1.0.7.11 remains a hardware acceptance test.
  * Accept only the known conversation mode and directions. */
-internal data class NativeHintStart(val sid: String, val source: String, val target: String, val direction: String) {
+internal data class NativeHintStart(val sid: String, val source: String, val target: String, val direction: String,
+                                    val stockLanguageKeys: Boolean = false) {
     fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
-        JSONObject().put("mode", "conversation").put("source_language", source).put("target_language", target)
+        JSONObject().put("mode", "conversation")
+            .put(if (stockLanguageKeys) "src_lang" else "source_language", source)
+            .put(if (stockLanguageKeys) "dst_lang" else "target_language", target)
             .put("direction", direction).put("save_audio", false))
     companion object {
+        private fun languageField(settings: JSONObject, stock: String, legacy: String): String {
+            val primary = if (settings.has(stock)) settings.opt(stock) as? String ?: rejectNative("$stock type") else null
+            val alternate = if (settings.has(legacy)) settings.opt(legacy) as? String ?: rejectNative("$legacy type") else null
+            if (!primary.isNullOrEmpty() && !alternate.isNullOrEmpty() && primary != alternate)
+                rejectNative("$stock conflicting alias")
+            return primary?.takeIf { it.isNotEmpty() } ?: alternate ?: rejectNative("$stock missing")
+        }
         fun parse(frame: ProtocolCodec.Frame): NativeHintStart? = parseResult(frame).getOrNull()
         fun parseResult(frame: ProtocolCodec.Frame): Result<NativeHintStart> = runCatching {
             decode(frame)
@@ -115,18 +126,24 @@ internal data class NativeHintStart(val sid: String, val source: String, val tar
             val body = runCatching { JSONObject(message.json ?: rejectNative("json absent")) }.getOrNull() ?: rejectNative("json")
             val sid = body.opt("sid") as? String ?: rejectNative("sid type")
             if (!sid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) rejectNative("sid syntax")
-            if (body.has("code") && body.opt("code") != 0) rejectNative("code")
+            // Stock request decoder 0x105a1768 defaults code to 1; retain the
+            // existing phone-originated 0 form and reject other status values.
+            if (body.has("code") && body.opt("code") !in setOf(0, 1)) rejectNative("code")
             if (body.optBoolean("force", false)) rejectNative("force")
             val settings = body.optJSONObject("settings") ?: rejectNative("settings object")
             if (settings.opt("mode") != "conversation") rejectNative("hint mode")
-            val source = settings.opt("source_language") as? String ?: rejectNative("hint source type")
-            val target = settings.opt("target_language") as? String ?: rejectNative("hint target type")
+            // Stock serializer 0x105a1d14 emits src_lang/dst_lang. The same
+            // settings decoder (0x105a1600, used for start and final_settings)
+            // reads these first and falls back to source/target_language.
+            val stockKeys = settings.has("src_lang") || settings.has("dst_lang")
+            val source = languageField(settings, "src_lang", "source_language")
+            val target = languageField(settings, "dst_lang", "target_language")
             val direction = settings.opt("direction") as? String ?: rejectNative("hint direction type")
             val locale = Regex("[a-z]{2,3}(-[A-Za-z]{2,4})?")
             if (!source.matches(locale) && source != "auto") rejectNative("hint source language")
             if (!target.matches(locale) && target != "auto") rejectNative("hint target language")
             if (direction !in setOf("ahead", "around")) rejectNative("hint direction")
-            return NativeHintStart(sid, source, target, direction)
+            return NativeHintStart(sid, source, target, direction, stockKeys)
         }
     }
 }
