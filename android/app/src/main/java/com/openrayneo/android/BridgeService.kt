@@ -1039,13 +1039,9 @@ internal class BridgeService : Service() {
         navigation.stop()
         navigation.observers.add(navigationObserver)
         NaverVoiceLaunch.authorizeHandoff = { voiceNavigationBlock() == null }
-        NaverVoiceLaunch.onOpened = { requestedAt ->
-            // Recheck the actual current feed before arming after a notification tap.
-            if (!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
-                navigation.connected && !navigation.enabled && navigation.entries.isEmpty() &&
-                navigation.activeNavigationCount == 0)
-                voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
-        }
+        // A deferred phone-map launch must follow the same phone-only policy
+        // as a direct launch. Never arm the eyewear HUD from a notification tap.
+        NaverVoiceLaunch.onOpened = null
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
