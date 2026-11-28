@@ -29,9 +29,11 @@ internal object OfflineWalkingRoute {
                 android.content.pm.PackageManager.PERMISSION_GRANTED)
     }.getOrDefault(false)
     data class Turn(val pointIndex: Int, val sourceCode: Int, val exit: Int,
-                    val nextDistanceMeters: Double, val angleDegrees: Int)
+                    val nextDistanceMeters: Double, val angleDegrees: Int,
+                    val instruction: String? = null, val nativeManeuver: Int? = null)
     class Route(val course: NaverWalkingCourse.Course, val turns: List<Turn>,
-                val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?) {
+                val pointTimesSeconds: List<Double>?, val estimatedSeconds: Double?,
+                val provider: String = "brouter") {
         override fun toString() = "OfflineWalkingRoute(points=${course.points.size})"
     }
 

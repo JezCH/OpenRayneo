@@ -704,6 +704,7 @@ private fun NavigationScreen(
         }
         item { NativeNavigationStartTest(model) }
         item { NativeNavigationPresetSettings(model) }
+        item { KakaoNativeRoutingSettings(model, actions) }
         item { OfflineNativeRoutingSettings(model) }
         item { NaverWalkingCourseSettings(model) }
         item { NaverPlaceLookupSettings(model) }
@@ -753,6 +754,46 @@ private fun NativeNavigationStartTest(model: AppModel) {
         }) { Text("정지 상태에서 시험") } },
         dismissButton = { TextButton(onClick = { consentEpoch = null }) { Text("취소") } }
     ) }
+}
+
+@Composable
+private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
+    val context = model.getApplication<android.app.Application>()
+    var saved by remember { mutableStateOf(runCatching { KakaoNativeRouteSettings.read(context) }.getOrNull()) }
+    var enabled by remember { mutableStateOf(saved?.enabled == true) }
+    var key by remember { mutableStateOf(saved?.key.orEmpty()) }
+    var destination by remember { mutableStateOf("") }
+    val s = model.state
+    val idle = s.available && !s.nativeStartTestPending
+    val unchanged = saved?.let { it.enabled == enabled && it.key == key.trim() } == true
+    ContentCard {
+        Text("카카오맵 순정 도보 내비", style = MaterialTheme.typography.titleMedium)
+        Note("카카오 공식 도보 API에서 받은 실제 경로와 휴대폰 GPS를 순정 안경 지도·안내 엔진으로 보냅니다. 배경지도 없이 실제 경로선을 표시합니다. API 요청 시 현재 위치와 목적지가 카카오에 전송됩니다.")
+        Note("카카오를 선택하면 일반 순정 도보 및 집·회사 요청에 우선 사용합니다. 명시한 네이버 요청은 바꾸지 않습니다. 카카오 실패 시 다른 공급자로 자동 전환하지 않습니다.")
+        if (saved == null) Note("설정을 읽지 못했습니다. 기존 값은 변경하지 않습니다.")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("카카오맵 선택", modifier = Modifier.weight(1f))
+            Switch(enabled, { enabled = it }, enabled = saved != null && idle)
+        }
+        OutlinedTextField(key, { key = it }, label = { Text("카카오 REST API 키") }, singleLine = true,
+            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), enabled = saved != null && idle)
+        Note("카카오디벨로퍼스 앱에서 카카오맵 API를 활성화한 뒤 REST API 키를 입력하세요. 키는 이 휴대폰의 암호화 저장소에만 저장합니다. 유료 API 사용 설정은 하지 않습니다.")
+        ToolButton(onClick = { model.attempt {
+            check(!model.state.nativeStartTestPending)
+            KakaoNativeRouteSettings.save(context, KakaoNativeRouteSettings.Config(enabled, key.trim()))
+            saved = KakaoNativeRouteSettings.read(context)
+            if (enabled) model.service().enableLocationWhileVisible()
+        } }, enabled = saved != null && idle && (!enabled || key.isNotBlank()),
+            modifier = Modifier.fillMaxWidth()) { Text("선택 및 API 키 저장") }
+        TextButton(onClick = actions.locationPermission) { Text("정확한 위치 권한 허용") }
+        OutlinedTextField(destination, { destination = it }, label = { Text("목적지 이름 또는 위도, 경도") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = idle)
+        ToolButton(onClick = { model.attempt { model.service().startKakaoNativeNavigation(destination) } },
+            enabled = idle && unchanged && saved?.configured == true && destination.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()) { Text("카카오 실제 도보 경로로 순정 내비 시작") }
+        if (s.nativeStartTestPending) ToolOutlinedButton(onClick = { model.attempt { model.service().cancelNativeStartTest() } }) { Text("순정 내비 종료·취소") }
+        Note(s.nativeStartTestStatus.ifBlank { "연결 및 경로 준비 대기" })
+    }
 }
 
 @Composable

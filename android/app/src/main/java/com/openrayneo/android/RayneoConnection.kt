@@ -31,6 +31,9 @@ internal class RayneoConnection(private val context: Context, private val listen
         fun onState(text: String, ready: Boolean, busy: Boolean)
         fun onLog(text: String)
         fun onFrame(frame: ProtocolCodec.Frame, source: String) {}
+        // The owner supplies the same truthful feature registry as SPP.
+        fun navigationHostSupported(): Boolean = false
+        fun onBleHostCapabilityWritten() {}
     }
 
     private val adapter = context.getSystemService(BluetoothManager::class.java).adapter
@@ -394,7 +397,8 @@ internal class RayneoConnection(private val context: Context, private val listen
     /** Reply to an actual request on its authenticated BLE ingress, including
      * after SPP is connected. Keep at most one pending query, retry on queue
      * drain and retain the existing SPP fallback when BLE cannot enqueue.
-     * This is the known upstream empty response, not a feature claim. */
+     * The owner determines support independently of transport readiness;
+     * never advertise a feature merely because BLE authentication succeeded. */
     private fun replyBleCapability() {
         if (!authenticationHandled || bleOnly || gatt == null || pendingCapability == null) return
         if (android.os.SystemClock.elapsedRealtime() - pendingCapabilityAt >= 5_000L) {
@@ -403,7 +407,9 @@ internal class RayneoConnection(private val context: Context, private val listen
             log("BLE 기능 협상: $earlyCapabilityStatus")
             return
         }
-        val bytes = ProtocolCodec.emptyCapabilityReply(earlyCapabilitySequence and 65535)
+        val supported = runCatching { listener.navigationHostSupported() }.getOrDefault(false)
+        val bytes = ProtocolCodec.navigationHostCapabilities(earlyCapabilitySequence and 65535,
+            reply = true, supported = supported)
         if (bleWrites.size >= 32 || bytes.size > blePayloadSize) {
             earlyCapabilityStatus = if (bleWrites.size >= 32) "BLE 혼잡 · 대기열 배출 대기" else "BLE 크기 제한"
             // Preserve the prior known SPP path, only if the socket is already
@@ -420,9 +426,17 @@ internal class RayneoConnection(private val context: Context, private val listen
         val session = generation
         pendingCapability = null
         earlyCapabilityStatus = "BLE 응답 전송 중"
+        runCatching {
+            val decoded = ProtocolCodec.StreamDecoder().append(bytes).single()
+            listener.onLog("BLE 기능 송신 규격: " + DiagnosticCapabilityShape.describe(decoded.payload))
+        }
         enqueueBleFrame(bytes, "BLE 기능 협상 응답 전송") { result ->
             if (session == generation) {
-                earlyCapabilityStatus = if (result.isSuccess) "BLE 응답 전송 · 기기 적용 미확인" else "BLE 응답 전송 실패"
+                earlyCapabilityStatus = if (result.isSuccess) {
+                    if (supported) "BLE 순정 내비 지원 응답 전송 · 기기 적용 미확인"
+                    else "BLE 빈 지원 응답 전송 · 기기 적용 미확인"
+                } else "BLE 응답 전송 실패"
+                if (result.isSuccess) listener.onBleHostCapabilityWritten()
                 log("BLE 기능 협상: $earlyCapabilityStatus")
             }
         }

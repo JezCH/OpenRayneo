@@ -25,6 +25,8 @@ internal class ConnectionSupervisor(
     private val discovered: (RayneoConnection.Device) -> Unit,
     private val received: (ProtocolCodec.Frame, String) -> Unit,
     private val report: (String) -> Unit,
+    private val nativeHostSupport: () -> Boolean = { false },
+    private val bleHostCapabilityWritten: () -> Unit = {},
 ) : RayneoConnection.Listener {
     val transport = RayneoConnection(context, this)
     var state = LinkState(); private set
@@ -197,4 +199,6 @@ internal class ConnectionSupervisor(
     }
     override fun onFrame(frame: ProtocolCodec.Frame, source: String) = received(frame, source)
     override fun onLog(text: String) = report(text)
+    override fun navigationHostSupported(): Boolean = nativeHostSupport()
+    override fun onBleHostCapabilityWritten() = bleHostCapabilityWritten()
 }

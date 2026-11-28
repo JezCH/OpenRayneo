@@ -70,8 +70,8 @@ internal class OfflineNativeRoute(
             val turn = progress.nextTurn
             // Unknown primary is not equivalent to "no maneuver". Do not
             // send an unsupported direction or silently use a legacy code.
-            val primary = wire.maneuver(turn?.sourceCode) ?: return null
-            val following = wire.maneuver(progress.followingTurn?.sourceCode) ?: wire.noManeuver
+            val primary = turn?.nativeManeuver ?: wire.maneuver(turn?.sourceCode) ?: return null
+            val following = progress.followingTurn?.nativeManeuver ?: wire.maneuver(progress.followingTurn?.sourceCode) ?: wire.noManeuver
             val roundabout = turn?.sourceCode in 13..14
             val exit = if(roundabout) {
                 val hint=checkNotNull(turn)
@@ -82,7 +82,7 @@ internal class OfflineNativeRoute(
                 if(turn!=null && turn.exit!=0) return null
                 0
             }
-            val instruction=if(roundabout) "회전교차로 ${exit}번 출구" else turnLabel(turn?.sourceCode)
+            val instruction=turn?.instruction ?: if(roundabout) "회전교차로 ${exit}번 출구" else turnLabel(turn?.sourceCode)
             val distance=if(turn==null) -1 else progress.nextTurnMeters ?: return null
             return runCatching {
                 NativePhoneGuidance.Snapshot(progress.observedAtMs, wire.guidingState,
@@ -91,6 +91,7 @@ internal class OfflineNativeRoute(
             }.getOrNull()
         }
     }
+    internal val provider get() = course.provider
     override val generation = 1L
     override val token = UUID.randomUUID().toString()
     private val main = Handler(Looper.getMainLooper())

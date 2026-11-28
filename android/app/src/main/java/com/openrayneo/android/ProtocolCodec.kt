@@ -90,7 +90,7 @@ internal object ProtocolCodec {
      * Upstream CapabilityController uses [name, version] pairs and type 3 for
      * changed local registrations. Caller must establish actual source support. */
     fun navigationHostCapabilities(sequence: Int, reply: Boolean, supported: Boolean): ByteArray {
-        val items = if (supported) """[["app.navigation.main","1.0.0.0"]]""" else "[]"
+        val items = if (supported) """[{"app.navigation.main":"1.0.0.0"}]""" else "[]"
         val json = if (reply) """{"type":2,"ret":"OK","capabilities":$items}"""
             else """{"type":3,"capabilities":$items}"""
         return frame(0x06, sequence, json.toByteArray(Charsets.UTF_8))

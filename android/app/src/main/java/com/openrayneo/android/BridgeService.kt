@@ -159,7 +159,7 @@ internal class BridgeService : Service() {
         nativeSessionCanStart && liveNativeSourceMatches(route)
     private fun liveNativeSourceMatches(route: NativeLiveNavigation.Route): Boolean {
         if (route is OfflineNativeRoute && (!offlineLocationAvailable() ||
-                (route.requiresProviderSelection && !offlineProviderAvailable()))) return false
+                (route.requiresProviderSelection && !offlineProviderAvailable(route.provider)))) return false
         val key = route.naverWalkNotificationKey
         return if (key == null) navigation.activeNavigationCount == 0
         else navigation.matchesNativeWalkSource(key, System.currentTimeMillis())
@@ -170,7 +170,8 @@ internal class BridgeService : Service() {
     private var queuedNativeDestination: String? = null
     private var queuedNativeDeadline = 0L
     private var queuedNativePeerSid: String? = null
-    private class OfflinePreparation(val destination: String, val peerSid: String?, val epoch: String, val deadline: Long) {
+    private class OfflinePreparation(val destination: String, val peerSid: String?, val epoch: String, val deadline: Long,
+                                     val provider: String = "brouter") {
         var future: java.util.concurrent.Future<*>? = null
     }
     private var offlinePreparation: OfflinePreparation? = null
@@ -184,19 +185,45 @@ internal class BridgeService : Service() {
         val manager = getSystemService(android.location.LocationManager::class.java)
         manager != null && manager.isLocationEnabled && manager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
     }.getOrDefault(false)
-    private fun offlineProviderAvailable(): Boolean {
-        val selected = runCatching { OfflineNativeRouteSettings.read(this).enabled }.getOrDefault(false)
-        return OfflineNativeRouteSettings.canAdvertise(selected, selected && OfflineWalkingRoute.serviceAvailable(this),
+    private fun selectedNativeProvider(): String? {
+        val kakao = runCatching { KakaoNativeRouteSettings.read(this) }.getOrNull()
+        if (kakao?.enabled == true) return "kakao"
+        return "brouter".takeIf { runCatching { OfflineNativeRouteSettings.read(this).enabled }.getOrDefault(false) }
+    }
+    private fun offlineProviderAvailable(provider: String? = selectedNativeProvider()): Boolean {
+        val selected = provider != null && selectedNativeProvider() == provider
+        val accessible = when (provider) {
+            "kakao" -> runCatching { KakaoNativeRouteSettings.read(this).configured }.getOrDefault(false)
+            "brouter" -> selected && OfflineWalkingRoute.serviceAvailable(this)
+            else -> false
+        }
+        return OfflineNativeRouteSettings.canAdvertise(selected, accessible,
             OfflineNativeRoute.verifiedWire() != null,
             checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED,
             foreground && (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0, offlineGpsEnabled())
     }
+    fun startKakaoNativeNavigation(destination: String) {
+        check(selectedNativeProvider() == "kakao") { "카카오맵 순정 도보 공급자를 먼저 선택하세요." }
+        val target = destination.trim()
+        require(target.length in 1..120 && target.none(Char::isISOControl)) { "목적지 이름 또는 위도, 경도를 입력하세요." }
+        if (hostVisible) enableLocationWhileVisible()
+        val result = requestNativeNavigation(NaverVoiceCommand.Request(target, NaverVoiceCommand.Mode.WALK))
+        if (!nativeRouteWaiting && nativeStartProbe == null) { nativeStartTestStatus = result; notifyUI() }
+    }
     private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null): String? {
-        val config = runCatching { OfflineNativeRouteSettings.read(this) }.getOrNull() ?: return null
-        if (!config.enabled) return null
+        val provider = selectedNativeProvider() ?: return null
+        val kakao = if (provider == "kakao") runCatching { KakaoNativeRouteSettings.read(this) }.getOrNull() else null
         if (mode !in setOf(NaverVoiceCommand.Mode.WALK, NaverVoiceCommand.Mode.UNSPECIFIED))
-            return "선택한 오프라인 공급자는 도보 전용입니다."
-        val point = config.resolve(destination) ?: return "오프라인 집·회사 좌표 또는 실제 도착 좌표를 설정하세요."
+            return "선택한 공급자는 도보 전용입니다."
+        val target = if (provider == "kakao" && destination in setOf("집", "회사"))
+            runCatching { NativeNavigationPresets.read(this).resolve(destination) }.getOrNull()
+                ?: return "집·회사 목적지를 먼저 저장하세요."
+            else destination
+        val point = if (provider == "brouter")
+            runCatching { OfflineNativeRouteSettings.read(this).resolve(destination) }.getOrNull()
+                ?: return "오프라인 집·회사 좌표 또는 실제 도착 좌표를 설정하세요."
+            else null
+        if (provider == "kakao" && kakao?.configured != true) return "카카오맵 REST API 키를 설정하세요."
         val wire = OfflineNativeRoute.verifiedWire() ?: return "순정 도보 통신 규격 검증 필요 · 전송하지 않음"
         if (destroyed || !foreground || state.link.phase != LinkPhase.FULL || state.disconnecting ||
             nativeStartProbe != null || nativeRouteWaiting || nativeNavCapabilities?.raster == null)
@@ -206,27 +233,31 @@ internal class BridgeService : Service() {
         if (hostVisible) runCatching { enableLocationWhileVisible() }
         if ((foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) == 0)
             return "앱에서 위치 전경 서비스를 먼저 시작하세요."
-        if (!offlineProviderAvailable()) return "선택한 BRouter 서비스 또는 GPS 사용 가능 상태를 확인하세요."
-        val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L)
+        if (!offlineProviderAvailable(provider)) return "선택한 경로 공급자 설정 및 정확한 GPS를 확인하세요."
+        val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L, provider)
         offlinePreparation = pending
-        nativeStartTestStatus = "실제 현재 위치와 BRouter 도보 경로 계산 중"
+        diagnosticEvent("route-provider", "request=$provider")
+        nativeStartTestStatus = if (provider == "kakao") "카카오맵 실제 도보 경로 요청 중" else "실제 현재 위치와 BRouter 도보 경로 계산 중"
         pending.future = nativeRouteWorker.submit {
             val result = runCatching {
                 val fix = checkNotNull(OfflineRouteLocation.current(this)) { "정확한 GPS 위치 미확인" }
                 check(fix.accuracyMeters <= 25.0) { "정확한 GPS 위치 미확인" }
-                OfflineWalkingRoute.calculate(this, fix.point, point)
+                if (provider == "kakao") KakaoWalkingRoute.calculate(checkNotNull(kakao).key, fix.point, target)
+                else OfflineWalkingRoute.calculate(this, fix.point, checkNotNull(point))
             }
             main.post {
                 if (offlinePreparation !== pending) return@post
                 offlinePreparation = null
                 if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ||
-                    nativePresetConsentEpoch != pending.epoch || SystemClock.elapsedRealtime() >= pending.deadline || !offlineProviderAvailable()) {
+                    nativePresetConsentEpoch != pending.epoch || SystemClock.elapsedRealtime() >= pending.deadline || !offlineProviderAvailable(provider) ||
+                    (kakao != null && runCatching { KakaoNativeRouteSettings.read(this) }.getOrNull() != kakao)) {
                     nativeStartTestStatus = "순정 경로 요청 만료 또는 연결·공급자 상태 변경"
                     pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
                     notifyUI()
                     return@post
                 }
                 result.fold({ course ->
+                    diagnosticEvent("route-provider", "success=$provider points=${course.course.points.size} steps=${course.turns.size}")
                     runCatching { prepareCalculatedRoute(course, destination, wire, pending.peerSid, requiresProviderSelection = true) }
                         .onFailure {
                             diagnosticFailure("navigation-prepare", it)
@@ -236,7 +267,10 @@ internal class BridgeService : Service() {
                         }
                 }, {
                     diagnosticFailure("navigation-calculate", it)
-                    nativeStartTestStatus = "오프라인 경로 계산 실패 · BRouter 설치·데이터·GPS 확인"
+                    diagnosticEvent("route-provider", "failure=$provider" + if (it is KakaoWalkingRoute.Failure) " ${it.message}" else "")
+                    nativeStartTestStatus = if (provider == "kakao") "카카오 도보 경로 실패 · " +
+                        ((it as? KakaoWalkingRoute.Failure)?.message ?: "GPS 또는 연결 상태 확인")
+                        else "오프라인 경로 계산 실패 · BRouter 설치·데이터·GPS 확인"
                     pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
                     notifyUI()
                 })
@@ -347,7 +381,7 @@ internal class BridgeService : Service() {
     private fun pumpNativeNavigation() {
         val pending = offlinePreparation
         val prepared = preparedNativeRoute as? OfflineNativeRoute
-        if ((pending != null && !offlineProviderAvailable()) ||
+        if ((pending != null && !offlineProviderAvailable(pending.provider)) ||
             (prepared != null && !liveNativeSourceMatches(prepared))) {
             val sid = pending?.peerSid ?: queuedNativePeerSid
             clearPreparedNativeRoute()
@@ -772,7 +806,7 @@ internal class BridgeService : Service() {
             true -> "허용"; false -> "꺼짐"; null -> "미확인"
         }
         return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus\n휴대폰 순정 내비 공급: " +
-            (if (offlineProviderAvailable()) "선택한 BRouter 공급자 사용 가능 · 경로별 계산 필요"
+            (if (offlineProviderAvailable()) "선택한 ${if (selectedNativeProvider() == "kakao") "카카오맵" else "BRouter"} 공급자 설정 확인 · 실제 경로별 계산 필요"
             else if (hasLiveNativeHostSource()) "실제 경로 세션 준비/진행" else "미연동 · 기능 버전 경고 가능") +
             "\n$capabilityStatus\n$nativePresetStatus"
     }
@@ -817,6 +851,7 @@ internal class BridgeService : Service() {
     // Current-link last successful host capability write, not a peer ACK.
     private var nativeHostCapabilitySent = false
     private var nativeHostCapabilityPending = false
+    private var nativeHostCapabilityDirty = false
     private var nativeHostCapabilityRetryAt = 0L
     private var peerCapabilityRevision = 0L
     var peerCapabilityStatus = "현재 연결의 기능 조회 대기"; private set
@@ -884,8 +919,10 @@ internal class BridgeService : Service() {
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
             nativeHostCapabilityPending || SystemClock.elapsedRealtime() < nativeHostCapabilityRetryAt) return
         val supported = hasLiveNativeHostSource()
-        if (supported != nativeHostCapabilitySent)
+        if (supported != nativeHostCapabilitySent || nativeHostCapabilityDirty) {
+            nativeHostCapabilityDirty = false
             sendNativeHostCapability(reply = false, supported = supported)
+        }
     }
     private fun sendNativeHostCapability(reply: Boolean, supported: Boolean) {
         val revision = ++capabilityRevision
@@ -902,6 +939,7 @@ internal class BridgeService : Service() {
                 capabilityStatus = if (supported) "app.navigation.main 1.0.0.0 전송 · 안경 적용 미확인"
                     else "실제 경로 공급 미확인 · 빈 지원 목록 전송 · 안경 적용 미확인"
             } else {
+                nativeHostCapabilityDirty = true
                 nativeHostCapabilityRetryAt = SystemClock.elapsedRealtime() + 5_000L
                 capabilityStatus = "휴대폰 기능 협상 전송 실패"
             }
@@ -1153,7 +1191,9 @@ internal class BridgeService : Service() {
                 }
                 voiceTransport.receive(frame)
                 if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
-            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
+            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog,
+            nativeHostSupport = { !destroyed && !state.disconnecting && hasLiveNativeHostSource() },
+            bleHostCapabilityWritten = { if (!destroyed) nativeHostCapabilityDirty = true })
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
@@ -1371,6 +1411,7 @@ internal class BridgeService : Service() {
                     capabilityRevision++
                     nativeHostCapabilitySent = false
                     nativeHostCapabilityPending = false
+                    nativeHostCapabilityDirty = false
                     nativeHostCapabilityRetryAt = 0L
                     peerCapabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
