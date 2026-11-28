@@ -89,7 +89,16 @@ internal class OfflineNativeRoute(
                     progress.remainingEstimateSeconds ?: -1, "", "", instruction, false, false)
             }.getOrNull()
         }
+        /** Only the confirmed local arrival tracker calls this. */
+        fun arrivalSnapshot(progress: OfflineRouteProgress.Progress, wire: Wire,
+                            speedMpsX100: Int?): NativePhoneGuidance.Snapshot =
+            NativePhoneGuidance.Snapshot(progress.observedAtMs, 4, 23, wire.noManeuver,
+                0, speedMpsX100 ?: -1, -1, progress.remainingMeters, -1, "", "",
+                "목적지 도착 범위 확인", false, true)
     }
+    private val terminalTracker = OfflineRouteProgress.TerminalTracker()
+    override var failureReason: String? = null
+        private set
     override val generation = 1L
     override val token = UUID.randomUUID().toString()
     private val main = Handler(Looper.getMainLooper())
@@ -101,12 +110,14 @@ internal class OfflineNativeRoute(
     private var current: NativeLiveNavigation.Observation? = null
     private var revision = 0L
     private var lastSeenAt = -1L
+    private var terminal = false
     init {
         try {
             watch = OfflineRouteLocation.watch(context) { fix ->
-                if (!closed) {
+                if (!closed && !terminal) {
                     if (fix == null || !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..25.0) {
                         ++revision
+                        terminalTracker.reset()
                         latest = null
                         current = null
                         changed()
@@ -123,25 +134,47 @@ internal class OfflineNativeRoute(
         }
     }
     private fun process() {
-        if (closed || busy) return
+        if (closed || terminal || busy) return
         val fix = latest ?: return
         val ticket = revision
         latest = null
         busy = true
         worker.execute {
             val result = runCatching {
-                val progress = OfflineRouteProgress.match(course, fix, SystemClock.elapsedRealtime())
-                    ?: return@runCatching null
-                val guidance = snapshot(progress, wire, fix.speedMpsX100) ?: return@runCatching null
-                val mini = NativeCourseRaster.render(course.course, NativeRasterFrame.View.MINI, fix.point)
-                val full = NativeCourseRaster.render(course.course, NativeRasterFrame.View.OVERVIEW, fix.point)
-                NativeLiveNavigation.Observation(guidance, mini, full)
+                val assessment = OfflineRouteProgress.assess(course, fix, SystemClock.elapsedRealtime())
+                val guidance = assessment.progress?.let { snapshot(it, wire, fix.speedMpsX100) }
+                val observation = guidance?.let {
+                    val mini = NativeCourseRaster.render(course.course, NativeRasterFrame.View.MINI, fix.point)
+                    val full = NativeCourseRaster.render(course.course, NativeRasterFrame.View.OVERVIEW, fix.point)
+                    NativeLiveNavigation.Observation(it, mini, full)
+                }
+                assessment to observation
             }.getOrNull()
             main.post {
                 busy = false
                 if (closed) return@post
                 if (ticket == revision) {
-                    current = result?.takeIf { it.guidance.freshAt(SystemClock.elapsedRealtime()) }
+                    val now = SystemClock.elapsedRealtime()
+                    val assessment = result?.first ?: OfflineRouteProgress.Assessment(null)
+                    val decision = terminalTracker.observe(assessment, fix.observedAtMs, now)
+                    current = when (decision) {
+                        OfflineRouteProgress.Terminal.ARRIVED -> {
+                            terminal = true
+                            val arrived = arrivalSnapshot(checkNotNull(assessment.progress), wire, fix.speedMpsX100)
+                            NativeLiveNavigation.Observation(arrived, null, null)
+                        }
+                        OfflineRouteProgress.Terminal.OFF_ROUTE -> {
+                            terminal = true
+                            failureReason = "실제 경로 이탈 확인 · 안내 종료, 새 경로 요청 필요"
+                            null
+                        }
+                        null -> result?.second?.takeIf { it.guidance.freshAt(now) }
+                    }
+                    if (terminal) {
+                        latest = null
+                        runCatching { watch?.close() }
+                        watch = null
+                    }
                     changed()
                 }
                 process()
