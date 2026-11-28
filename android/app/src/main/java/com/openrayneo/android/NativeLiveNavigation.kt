@@ -27,6 +27,10 @@ internal class NativeLiveNavigation(
     private var closed = false
     private var lastFreshAt = -1L
     private var arrivalSent = false
+    // After each successful guidance selection, give the requested raster a
+    // chance even if a newer GPS sample arrived before the write callback.
+    // Never send a map before the first route-registration guidance.
+    private var preferRaster = false
     var failure: String? = null
         private set
 
@@ -47,23 +51,32 @@ internal class NativeLiveNavigation(
         }
         if (arrivalSent || observation == null) return null
         val guidance = observation.guidance
-        val write = if (guidance.observedAtMs > lastGuidance) {
-            val packet = session.guidanceFrame(sequence, route.generation, route.token, guidance, now)
-            lastGuidance = guidance.observedAtMs
-            arrivalSent = guidance.arrival
-            Write(packet)
-        } else {
+        fun rasterWrite(): Write? {
             val view = session.rasterView
             if (view != null &&
-                (view.generation != lastView || observation.guidance.observedAtMs > lastMapAt)) {
+                (view.generation != lastView || guidance.observedAtMs > lastMapAt)) {
                 val png = if (view.view == NativeRasterFrame.View.MINI) observation.miniPng else observation.overviewPng
                 if (png != null && session.submitRaster(view, png)) {
                     lastView = view.generation
-                    lastMapAt = observation.guidance.observedAtMs
+                    lastMapAt = guidance.observedAtMs
                 }
             }
-            session.nextRasterWrite(sequence, now)?.let { Write(it.packet, it) }
+            return session.nextRasterWrite(sequence, now)?.let { Write(it.packet, it) }
         }
+        val newer = guidance.observedAtMs > lastGuidance
+        // A genuine arrival must not be delayed by a map fragment.
+        val mapFirst = preferRaster && !(newer && guidance.arrival)
+        var write = if (mapFirst) rasterWrite() else null
+        if (write == null && newer) {
+            val packet = session.guidanceFrame(sequence, route.generation, route.token, guidance, now)
+            lastGuidance = guidance.observedAtMs
+            arrivalSent = guidance.arrival
+            preferRaster = true
+            write = Write(packet)
+        } else if (write == null && !mapFirst) {
+            write = rasterWrite()
+        }
+        if (write?.raster != null) preferRaster = false
         if (write != null) { inFlight = write; deadline = now + 5_000L }
         return write
     }
