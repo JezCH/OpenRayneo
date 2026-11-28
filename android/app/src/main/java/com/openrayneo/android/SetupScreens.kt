@@ -4,6 +4,7 @@ package com.openrayneo.android
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -62,7 +64,7 @@ internal fun OnboardingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "시작하기: · ${step + 1} / 5",
+                "설정 ${step + 1} / 5",
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -70,23 +72,22 @@ internal fun OnboardingScreen(
             Note(subtitles[step])
             when (step) {
                 0 -> {
-                    GlassesArtwork(
-                        Modifier.fillMaxWidth().height(90.dp),
-                        MaterialTheme.colorScheme.primary,
-                    )
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        OpticalSignature(Modifier.size(120.dp))
+                    }
                     SetupRow(Icons.Outlined.GraphicEq, "일상과 회의 기록", "안경 음성을 인식하고 필요한 정보를 찾아보기")
                     SetupRow(Icons.Outlined.AutoAwesome, "언제든 AI에게 질문", "연결한 AI 서비스 또는 컴퓨터에 작업 요청")
                     SetupRow(Icons.Outlined.Tune, "직접 제어", "표시와 음성 수신은 언제든 일시정지 가능")
                     RecommendedSettingsCard(model)
                 }
                 1 -> {
-                    ContentCard {
+                    OpticalPanel {
                         GlassesArtwork(
                             Modifier.fillMaxWidth().height(110.dp),
                             MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            if (model.state.glasses.link.phase == LinkPhase.FULL) "안경 연결됨"
+                            if (model.state.available && model.state.glasses.link.phase == LinkPhase.FULL && !model.state.glasses.disconnecting) "통신 연결됨"
                             else "연결 전 준비",
                             style = MaterialTheme.typography.titleLarge,
                         )
@@ -101,7 +102,7 @@ internal fun OnboardingScreen(
                     Note("'근처 기기' 권한은 연결할 때만 요청합니다. 연결하지 않아도 어시스턴트를 먼저 설정할 수 있습니다.")
                 }
                 2 -> {
-                    ContentCard {
+                    OpticalPanel {
                         Text(if (model.state.conversation.modelReady) "음성 인식 준비됨" else "음성 인식 설정 필요", style = MaterialTheme.typography.titleMedium)
                         Note("한국어·다국어 음성 모델이 내장되어 별도 다운로드가 필요하지 않습니다. 처음 사용할 때 앱이 준비합니다.")
                         if (!model.state.conversation.modelReady)
@@ -129,7 +130,7 @@ internal fun OnboardingScreen(
                     Note("로컬 Agent의 의미 전략과 모델은 DSH Go에서 설정합니다. 기록 요약 모델은 '음성 및 요약' 설정에서 따로 설정할 수 있습니다. 휴대폰 음성 입력은 앱 내장 음성 인식 모델을 사용합니다.")
                 }
                 4 -> {
-                    ContentCard {
+                    OpticalPanel {
                         CompletionRow(
                             "안경 연결",
                             model.state.glasses.link.phase == LinkPhase.FULL,
@@ -249,64 +250,75 @@ internal fun SettingsScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (AppUpdate.supported) SettingsRow("앱 업데이트", model.updateCheck.summary, Icons.Outlined.Settings) { open("app-update") }
+        if (AppUpdate.supported) SettingsGroup {
+            SettingsRow("앱 업데이트", model.updateCheck.summary, Icons.Outlined.Settings) { open("app-update") }
+        }
         SectionLabel("AI 연결")
-        SettingsRow(
-            "모델 선택",
-            model.aiStatus,
-            Icons.Outlined.Smartphone,
-        ) {
-            open("model")
+        SettingsGroup {
+            SettingsRow(
+                "모델 선택",
+                model.aiStatus,
+                Icons.Outlined.Smartphone,
+            ) {
+                open("model")
+            }
+            SettingsRow(
+                "컴퓨터 Codex",
+                if (model.state.computerConnected) "연결됨" else "연결 매개변수 및 설정 가져오기",
+                Icons.Outlined.Computer,
+            ) {
+                open("computer")
+            }
+            SettingsRow("AI 연결 · DSH Go", model.state.agentServer.receiverStatus + " · 연결 및 동기화", Icons.Outlined.Hub) { open("agent-api") }
         }
-        SettingsRow(
-            "컴퓨터 Codex",
-            if (model.state.computerConnected) "연결됨" else "연결 매개변수 및 설정 가져오기",
-            Icons.Outlined.Computer,
-        ) {
-            open("computer")
-        }
-        SettingsRow("AI 연결 · DSH Go", model.state.agentServer.receiverStatus + " · 연결 및 동기화", Icons.Outlined.Hub) { open("agent-api") }
         SectionLabel("음성·기억 설정")
-        SettingsRow("자동 기능 관리", "호출 · 힌트 · 기억 · 알림의 실제 상태와 허용 설정", Icons.Outlined.Tune) { open("feature-controls") }
-        SettingsRow("음성·기억 설정", "내장 음성 모델 · 언어 · 기억 및 요약", Icons.Outlined.Mic) { open("voice-settings") }
-        SettingsRow("About You · 개인화 정보", "승인한 프로필·선호·관심사 관리", Icons.Outlined.People) { open("about-you") }
-        SettingsRow("한국어 호출어", "내 호출어 · 듣기 시작 및 중지", Icons.Outlined.Mic) { open("korean-wake") }
-        SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }
+        SettingsGroup {
+            SettingsRow("자동 기능 관리", "호출 · 힌트 · 기억 · 알림의 실제 상태와 허용 설정", Icons.Outlined.Tune) { open("feature-controls") }
+            SettingsRow("음성·기억 설정", "내장 음성 모델 · 언어 · 기억 및 요약", Icons.Outlined.Mic) { open("voice-settings") }
+            SettingsRow("About You · 개인화 정보", "승인한 프로필·선호·관심사 관리", Icons.Outlined.People) { open("about-you") }
+            SettingsRow("한국어 호출어", "내 호출어 · 듣기 시작 및 중지", Icons.Outlined.Mic) { open("korean-wake") }
+            SettingsRow("목소리 및 인물", "본인 등록, 연락처 및 목소리 프로필", Icons.Outlined.People) { open("voice-profiles") }
+        }
         SectionLabel("기록 및 데이터")
-        SettingsRow("기존 기록 가져오기", "다른 설치본에서 전사·요약·음성 이전", Icons.Outlined.FolderOpen) { open("record-migration") }
+        SettingsGroup {
+            SettingsRow("기존 기록 가져오기", "다른 설치본에서 전사·요약·음성 이전", Icons.Outlined.FolderOpen) { open("record-migration") }
+        }
         SectionLabel("안경 설정")
-        SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
-        SettingsRow("홈 화면 및 콘텐츠", "위젯, 할 일, 일정 및 날씨", Icons.Outlined.Dashboard) { open("content") }
-        SettingsRow("프롬프터 원고함", "로컬 원고, 안경 재생 및 제어", Icons.Outlined.Description) { open("teleprompter") }
+        SettingsGroup {
+            SettingsRow("안경 설정", "밝기, 화면 위치 및 깨우기", Icons.Outlined.Settings) { open("device-settings") }
+            SettingsRow("홈 화면 및 콘텐츠", "위젯, 할 일, 일정 및 날씨", Icons.Outlined.Dashboard) { open("content") }
+            SettingsRow("프롬프터 원고함", "로컬 원고, 안경 재생 및 제어", Icons.Outlined.Description) { open("teleprompter") }
 
-        SettingsRow("기기 및 진단", "연결 로그, 테스트 알림 및 오디오 복구", Icons.Outlined.Tune) { open("diagnostics") }
+            SettingsRow("기기 및 진단", "연결 로그, 테스트 알림 및 오디오 복구", Icons.Outlined.Tune) { open("diagnostics") }
+        }
         SectionLabel("휴대폰 권한")
-        SettingsRow(
-            "근처 기기",
-            if (model.bluetoothAllowed) "허용됨" else "안경 연결 시 필요",
-            Icons.Outlined.Bluetooth,
-        ) {
-            actions.appSettings()
+        SettingsGroup {
+            SettingsRow(
+                "근처 기기",
+                if (model.bluetoothAllowed) "허용됨" else "안경 연결 시 필요",
+                Icons.Outlined.Bluetooth,
+            ) {
+                actions.appSettings()
+            }
+            SettingsRow("휴대폰 알림", "앱별 안경 알림 전달 설정", Icons.Outlined.NotificationsNone) { open("phone-notifications") }
+            SettingsRow(
+                "알림 접근 권한",
+                if (model.notificationAllowed) "허용됨 · ${model.state.notificationReadStatus}"
+                else "내비게이션 추종 시 필요",
+                Icons.Outlined.NotificationsNone,
+                actions.notificationAccess,
+            )
+            SettingsRow(
+                "백그라운드 상태 알림",
+                if (model.backgroundNotifications) "허용됨" else "선택 사항, 백그라운드 연결 상태 확인",
+                Icons.Outlined.NotificationsActive,
+            ) {
+                if (model.backgroundNotifications) actions.appSettings()
+                else actions.notificationPermission()
+            }
         }
-        SettingsRow("휴대폰 알림", "앱별 안경 알림 전달 설정", Icons.Outlined.NotificationsNone) { open("phone-notifications") }
-        SettingsRow(
-            "알림 접근 권한",
-            if (model.notificationAllowed) "허용됨 · ${model.state.notificationReadStatus}"
-            else "내비게이션 추종 시 필요",
-            Icons.Outlined.NotificationsNone,
-            actions.notificationAccess,
-        )
-        SettingsRow(
-            "백그라운드 상태 알림",
-            if (model.backgroundNotifications) "허용됨" else "선택 사항, 백그라운드 연결 상태 확인",
-            Icons.Outlined.NotificationsActive,
-        ) {
-            if (model.backgroundNotifications) actions.appSettings()
-            else actions.notificationPermission()
-        }
-
         SectionLabel("화면 모드")
-        ContentCard {
+        OpticalPanel {
             listOf("system" to "시스템 설정 따르기", "light" to "라이트", "dark" to "다크").forEach { (key, title) ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
@@ -318,7 +330,9 @@ internal fun SettingsScreen(
             }
         }
         SectionLabel("앱 정보")
-        SettingsRow("사용 안내 다시 보기", "안경 연결, 내비게이션 데모 및 어시스턴트 설정", Icons.Outlined.Explore, replay)
+        SettingsGroup {
+            SettingsRow("사용 안내 다시 보기", "안경 연결, 내비게이션 데모 및 어시스턴트 설정", Icons.Outlined.Explore, replay)
+        }
         Note(
             "OpenRayneo ${BuildConfig.VERSION_NAME} · 빌드 ${BuildConfig.GIT_COMMIT} (${BuildConfig.VERSION_CODE})\n기록 오디오는 휴대폰에 암호화 저장되며 전사와 화자 분석이 끝난 뒤 전달됩니다. 휴대폰 음성 입력은 앱 내장 모델을 사용합니다.",
             Modifier.padding(vertical = 12.dp),
@@ -327,23 +341,27 @@ internal fun SettingsScreen(
 }
 
 @Composable
-private fun SettingsRow(title: String, summary: String, icon: ImageVector, click: () -> Unit) {
-    Card(
-        onClick = click,
-        colors =
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
-        ListItem(
-            headlineContent = { Text(title) },
-            supportingContent = { Text(summary) },
-            leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
-            trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
-            colors =
-                ListItemDefaults.colors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-        )
+        Column(content = content)
     }
+}
+
+@Composable
+private fun SettingsRow(title: String, summary: String, icon: ImageVector, click: () -> Unit) {
+    ListItem(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClick = click),
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleSmall) },
+        supportingContent = { Text(summary) },
+        leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
+        trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    )
 }
 
 @Composable
@@ -364,13 +382,16 @@ internal fun ConfigurationScreen(model: AppModel, mobile: Boolean, importConfig:
         Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Icon(
-            if (mobile) Icons.Outlined.Smartphone else Icons.Outlined.Computer,
-            null,
-            Modifier.size(40.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Text(if (mobile) "기록 요약 모델 설정" else "컴퓨터 연결 설정", style = MaterialTheme.typography.headlineMedium)
+        OpticalPanel {
+            Text("컴퓨터 연결", style = MaterialTheme.typography.headlineSmall)
+            Note(when {
+                !model.state.available -> "서비스 상태 미확인"
+                model.state.computerConnected -> "컴퓨터 연결 확인"
+                model.config.optString("codexUrl").isNotBlank() && model.config.optString("codexToken").isNotBlank() -> "설정 저장됨 · 연결 미확인"
+                else -> "연결 설정 필요"
+            })
+            Note(if (url != model.config.optString(urlKey) || name != model.config.optString(nameKey) || secret != model.config.optString(secretKey)) "저장되지 않은 입력이 있습니다." else "저장된 설정")
+        }
         Note(
             if (mobile) "앱 내 기록 요약에 사용되며 Chat Completions 호환 클라우드 또는 휴대폰 로컬 서비스를 지원합니다. 로컬 서비스에 인증이 없으면 API Key를 비워 둘 수 있습니다."
             else "먼저 컴퓨터에서 OpenRayneo의 Codex 연결 스크립트를 실행한 뒤 생성된 설정을 가져오세요. USB 모드는 포트 포워딩도 켜야 합니다."
@@ -457,12 +478,13 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
     val context = LocalContext.current
     val s = model.state
     var bleOnly by rememberSaveable { mutableStateOf(false) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
     val ready = s.glasses.link.phase in setOf(LinkPhase.FULL, LinkPhase.BLE_ONLY)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        ContentCard {
+        OpticalPanel {
             Text("현재 연결 상태", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.titleMedium)
             Note(if (s.available) "통신: " + s.glasses.link.detail else "서비스 상태 미확인")
@@ -574,6 +596,9 @@ internal fun DiagnosticsScreen(model: AppModel, actions: UiActions) {
                 Text("로그 복사")
             }
         }
-        ContentCard { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
+        TextButton(onClick = { showLogs = !showLogs }) {
+            Text(if (showLogs) "연결 로그 접기" else "연결 로그 보기 · ${s.logs.size}개")
+        }
+        if (showLogs) OpticalPanel { Note(s.logs.joinToString("\n").ifBlank { "연결 로그 없음" }) }
     }
 }

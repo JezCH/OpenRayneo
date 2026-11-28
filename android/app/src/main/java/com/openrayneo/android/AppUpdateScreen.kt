@@ -98,7 +98,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         // On recreation or when another activity is running, the manual confirmation button remains.
         if (pendingConfirmation != null && !busy && openConfirmation) {
             openConfirmation = false
-            if (idle()) runCatching { context.startActivity(pendingConfirmation) }
+            if (idle()) runCatching { AppUpdateInstall.launchConfirmation(context, pendingConfirmation) }
                 .onFailure { status = "Android 설치 확인 버튼으로 다시 시도하세요" }
         }
     }
@@ -113,7 +113,7 @@ internal fun AppUpdateScreen(model: AppModel) {
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        ContentCard {
+        OpticalPanel {
             Text("현재 설치 버전", style = MaterialTheme.typography.labelLarge)
             Text(BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")", style = MaterialTheme.typography.headlineSmall)
             Note("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
@@ -127,8 +127,12 @@ internal fun AppUpdateScreen(model: AppModel) {
             Column { Text("자동 업데이트 확인"); Text("앱 실행·복귀 시, 6시간 간격", style = MaterialTheme.typography.bodySmall) }
         }
         Text("최근 성공: " + updates.lastCheckedLabel())
-        Text(updates.summary)
-        if (updates.error.isNotBlank()) Text(updates.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        OpticalPanel {
+            Text(updates.summary, style = MaterialTheme.typography.titleMedium)
+            if (updates.error.isNotBlank()) Text(updates.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            if (status.isNotBlank()) Text(status)
+            if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
+        }
         Button(onClick = {
             pendingInstall = null; status = ""
             updates.refresh(true)
@@ -151,6 +155,16 @@ internal fun AppUpdateScreen(model: AppModel) {
                 }
             }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null, modifier = Modifier.fillMaxWidth()) {
                 Text(if (cached) "받아 둔 APK 검증 및 설치" else if (item.delta != null) "변경분 업데이트" else "다운로드 및 설치")
+            }
+            if (cached) TextButton(onClick = {
+                if (!app.packageManager.canRequestPackageInstalls()) requestPermission()
+                else launchWork {
+                    AppUpdateInstall.openSystemInstaller(context, item) {
+                        idle() && !updates.checking && updates.error.isBlank() && updates.candidate == item
+                    }
+                }
+            }, enabled = !busy && currentCandidate && idle() && AppUpdateInstall.sessionId == null) {
+                Text("시스템 설치 화면으로 복구 설치 (재다운로드 없음)")
             }
             if (!cached) TextButton(onClick = { model.attempt { updates.startDownload(item) } },
                 enabled = !busy && currentCandidate && AppUpdateInstall.sessionId == null) { Text("다운로드만") }
@@ -177,7 +191,7 @@ internal fun AppUpdateScreen(model: AppModel) {
         if (updates.downloadStatus.isNotBlank()) Text(updates.downloadStatus)
         AppUpdateInstall.confirmation?.let { confirm ->
             Button(onClick = {
-                if (idle()) runCatching { context.startActivity(confirm) }
+                if (idle()) runCatching { AppUpdateInstall.launchConfirmation(context, confirm) }
                     .onFailure { status = "설치 확인 화면을 열 수 없습니다. 설치 요청을 취소하고 다시 시도하세요." }
             }, enabled = !busy && idle()) { Text("Android 설치 확인") }
         }
@@ -204,8 +218,6 @@ internal fun AppUpdateScreen(model: AppModel) {
                 model.attempt { model.service().disconnect() }
             }) { Text("자동 재연결 중지 후 설치") }
         }
-        if (status.isNotBlank()) Text(status)
-        if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
         SectionLabel("설치 인증서")
         androidx.compose.foundation.text.selection.SelectionContainer {
             Text("설치 인증서 SHA-256: " + signer, style = MaterialTheme.typography.bodySmall)

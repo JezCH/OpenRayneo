@@ -31,12 +31,14 @@ internal fun ModelSelectionScreen(model: AppModel) {
         key = profile?.key.orEmpty()
         editId = id
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+    Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        ContentCard {
+        OpticalPanel {
             Text("현재 선택한 모델", style = MaterialTheme.typography.labelLarge)
             Text(AiModelSelection.label(config), style = MaterialTheme.typography.headlineSmall)
             Text(selectedAiStatus(model).label, style = MaterialTheme.typography.titleSmall)
+            AiModelSelection.direct(config)?.let { Note("선택 모델: " + it.model) }
+            Note(model.aiStatus)
             Note("안경·휴대폰 질문, AI 힌트, 기록 요약, 온라인 번역 및 후속 조치 분석에 같은 선택을 적용합니다. 내장 음성 인식·오프라인 번역은 그대로 유지합니다. 다른 모델로 자동 대체하지 않습니다.")
             if (!model.aiSwitchAllowed) Note("진행 중인 기록·번역·AI 작업을 마치면 모델을 변경할 수 있습니다.")
         }
@@ -77,8 +79,11 @@ internal fun ModelSelectionScreen(model: AppModel) {
             Note(gpt?.let { it.model + if (selected == it.id) " · 선택됨" else " · 저장됨" }
                 ?: "첫 연결에 사용자 API 인증 필요")
             Note("OpenAI API 연결입니다. ChatGPT 앱 로그인이나 구독이 자동으로 연결되지 않으며 API 이용료가 발생할 수 있습니다.")
-            ToolButton(onClick = { if (gpt?.configured == true) model.selectAiModel(gpt.id) else edit(AiModelSelection.GPT) },
-                enabled = model.aiSwitchAllowed && selected != AiModelSelection.GPT) { Text(if (selected == AiModelSelection.GPT) "선택됨" else "GPT 선택") }
+            ToolButton(onClick = { if (gpt?.configured == true) pending = gpt else edit(AiModelSelection.GPT) },
+                enabled = model.aiSwitchAllowed && (selected != AiModelSelection.GPT || gpt?.configured != true),
+                modifier = Modifier.fillMaxWidth()) {
+                Text(if (gpt?.configured != true) "GPT 연결 설정" else if (selected == AiModelSelection.GPT) "선택됨" else "GPT 선택")
+            }
             if (gpt != null) TextButton(onClick = { edit(gpt.id) }, enabled = model.aiSwitchAllowed) { Text("GPT 연결 설정") }
         }
         SectionLabel("제조사 및 기타 모델")
@@ -91,7 +96,7 @@ internal fun ModelSelectionScreen(model: AppModel) {
             ContentCard {
                 Text(profile.label, style = MaterialTheme.typography.titleMedium)
                 Note(profile.model + if (selected == profile.id) " · 선택됨" else " · 저장됨")
-                ToolButton(onClick = { model.selectAiModel(profile.id) }, enabled = model.aiSwitchAllowed && profile.configured && selected != profile.id) {
+                ToolButton(onClick = { pending = profile }, enabled = model.aiSwitchAllowed && profile.configured && selected != profile.id, modifier = Modifier.fillMaxWidth()) {
                     Text(if (selected == profile.id) "선택됨" else "이 모델 선택")
                 }
                 TextButton(onClick = { edit(profile.id) }, enabled = model.aiSwitchAllowed) { Text("연결 설정") }
@@ -128,7 +133,12 @@ internal fun ModelSelectionScreen(model: AppModel) {
     }
     pending?.let { profile ->
         AlertDialog(onDismissRequest = { pending = null }, title = { Text(profile.label + "로 변경") },
-            text = { Text(if (profile.id == AiModelSelection.CHATGPT_PLAN) "이후 승인한 AI 요청은 ChatGPT 구독 사용량을 소비할 수 있습니다. 일반 채팅방·기억은 공유되지 않으며 별도 유료 API로 자동 전환하지 않습니다. 기존 기록과 자동 녹음 설정은 유지합니다." else "이후 앱에서 승인하여 사용하는 AI 기능의 질문·전사·참조 자료가 선택한 서비스에 전달될 수 있고 이용료가 발생할 수 있습니다. 기존 기록은 유지되며 자동 녹음이나 자동 AI 요청은 켜지지 않습니다.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("모델: " + profile.model, style = MaterialTheme.typography.titleSmall)
+                    Text(if (profile.id == AiModelSelection.CHATGPT_PLAN) "이후 승인한 AI 요청은 ChatGPT 구독 사용량을 소비할 수 있습니다. 일반 채팅방·기억은 공유되지 않으며 별도 유료 API로 자동 전환하지 않습니다. 기존 기록과 자동 녹음 설정은 유지합니다." else "이후 앱에서 승인하여 사용하는 AI 기능의 질문·전사·참조 자료가 선택한 서비스에 전달될 수 있고 이용료가 발생할 수 있습니다. 기존 기록은 유지되며 자동 녹음이나 자동 AI 요청은 켜지지 않습니다.")
+                }
+            },
             confirmButton = { TextButton(onClick = { pending = null; model.selectAiModel(profile.id, profile) }, enabled = model.aiSwitchAllowed) { Text("동의하고 선택") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("취소") } })
     }

@@ -23,6 +23,9 @@ internal class GlassesDisplay(
     // completion and reader callbacks run on different threads. Retain only
     // a small bounded prefix until the start reply has actually been sent.
     private var awaitingNativeReply = false
+    private var nativePaused = false
+    // Called only on the same owned SID after a real peer resume event.
+    var mayResumeNativeAudio: (Long) -> Boolean = { false }
     private data class EarlyAudio(val packet: ByteArray, val sequence: Long, val source: String)
     private val earlyAudio = ArrayDeque<EarlyAudio>()
     private var earlyAudioBytes = 0
@@ -111,7 +114,7 @@ internal class GlassesDisplay(
             }
             return
         }
-        if (message.type == 4 && !active.receivesGlassesAudio) return
+        if (message.type == 4 && (!active.receivesGlassesAudio || nativePaused)) return
         if (message.type == 4) {
             message.audio?.takeIf { it.isNotEmpty() }?.let { packet ->
                 val number = json.optLong("seq", -1)
@@ -132,6 +135,41 @@ internal class GlassesDisplay(
             if (reason == 17) {
                 report("안경 네트워크 약함 보고 · 현재 세션 유지")
                 return
+            }
+            // The upstream controller distinguishes pause, active, and closed.
+            // Limit the new behavior to already accepted device-originated
+            // caption/hint pages; the phone-originated display path is unchanged.
+            if (active.nativeSubtitle != null || active.nativeHint != null) {
+                when (reason) {
+                    8, 12 -> if (accepted) {
+                        if (!nativePaused) {
+                            nativePaused = true
+                            discardEarlyAudio()
+                            cancel(settle)
+                            settled = false
+                            signal(active.id, PageSignal.NativePaused)
+                        }
+                        return
+                    }
+                    9, 13 -> {
+                        if (accepted && nativePaused) {
+                            if (!mayResumeNativeAudio(active.id)) {
+                                fail("안경 세션 재개 조건 불충족 · 음성 수신 중지")
+                                return
+                            }
+                            nativePaused = false
+                            audioReported = false
+                            // Keep the same SID and dedup history; no new start
+                            // request, no automatic reconnect or new consent.
+                            signal(active.id, PageSignal.NativeResumed(2))
+                            if (generation != receivingGeneration || failed) return
+                            schedule(settle, 500)
+                        }
+                        return
+                    }
+                    in 1..7, 10, 11, 14 -> Unit
+                    else -> return
+                }
             }
             reset()
             signal(active.id, PageSignal.Ended("안경이 현재 페이지 종료 또는 일시정지를 요청함 (사유 $reason), 표시를 양보함"))
@@ -193,7 +231,7 @@ internal class GlassesDisplay(
     }
 
     private fun flush() {
-        if (!accepted || !settled || writing || failed) return
+        if (!accepted || !settled || writing || failed || nativePaused) return
         val content = pending ?: return
         val id = sid ?: return
         val active = session ?: return
@@ -241,6 +279,7 @@ internal class GlassesDisplay(
         cancel(timeout); cancel(settle)
         session = null; sid = null; audioAccepted = false; accepted = false; settled = false; writing = false; failed = false
         navigationFrameSent = false; pending = null; lastWritten = null
+        nativePaused = false
         discardEarlyAudio()
         recentAudioSequences.clear(); audioReported = false; unmatchedAudioReported = false
     }

@@ -55,10 +55,17 @@ internal class CompanionContent(private val context: Context, private val reques
     }
     fun refresh() = run { dashboard(); events(1); events(0); JSONObject().put("readBack", true) }
     fun disconnected() { initialDeviceSyncFinished = false; weatherAttemptAt = 0; state = CompanionContentState(); changed() }
-    fun run(work: () -> JSONObject) {
+    fun run(work: () -> JSONObject) = runWithResult(work) {}
+    fun runWithResult(work: () -> JSONObject, completion: (Result<JSONObject>) -> Unit) {
         check(!state.busy) { "현재 안경 작업을 기다리세요" }
         state = state.copy(busy = true, notice = "안경과 동기화 중…"); changed()
-        execute(work) { result -> state = state.copy(busy = false, notice = result.fold({ it.optString("message").ifBlank { if (it.optBoolean("readBack")) "기기 재조회로 확인됨" else "전송됨, 자세한 상태는 결과 참조" } }, { it.message ?: "작업 실패" })); changed() }
+        execute(work) { result ->
+            state = state.copy(busy = false, notice = result.fold({
+                it.optString("message").ifBlank { if (it.optBoolean("readBack")) "기기 재조회로 확인됨" else if (it.has("readBack")) "기기 변경 결과 미확인 · 다시 읽어 확인하세요" else "작업 결과 수신 · 실제 기기 반영 별도 확인" }
+            }, { it.message ?: "작업 실패" }))
+            changed()
+            completion(result)
+        }
     }
     fun execute(work: () -> JSONObject, completion: (Result<JSONObject>) -> Unit) = requests.perform(work, completion)
     fun execute(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) = execute({ tool(name, args) }, completion)

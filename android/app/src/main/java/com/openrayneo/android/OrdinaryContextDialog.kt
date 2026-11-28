@@ -46,6 +46,12 @@ private fun OrdinaryContextDialog(store: OrdinaryContextStore, dismiss: () -> Un
     val labels = mapOf("about" to "나에 대한 소개", "interests" to "관심 주제 및 프로젝트", "preferences" to "답변 및 지원 방식 선호")
     AlertDialog(onDismissRequest = dismiss, title = { Text("일반 질문 자동 기억 참조") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OpticalPanel {
+                Text(if (fields.isEmpty() && ids.isEmpty()) "자동 첨부 꺼짐" else "선택한 자동 참조 범위", style = MaterialTheme.typography.titleMedium)
+                Note("개인화 ${fields.size}개 · 기록 주제 ${ids.size}개")
+                Note(if (glasses && (fields.isNotEmpty() || ids.isNotEmpty())) "휴대폰과 안경의 명시적 일반 질문" else "휴대폰의 일반 질문만")
+                Note("아래 선택은 저장 후 적용됩니다. 수동 첨부와 별개입니다.")
+            }
             Note("한 번 허용한 항목만 다음 일반 질문에서 연결된 AI에 자동 첨부합니다. 기존 수동 첨부와는 별개이며 기본은 꺼짐입니다.")
             Text("개인화 정보", style = MaterialTheme.typography.titleSmall)
             if (profile.isEmpty()) Note("음성 및 기억 설정에서 About You 정보를 저장하고 읽기 허용을 먼저 켜세요.")

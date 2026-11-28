@@ -34,6 +34,8 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         s.wakeActive -> "한국어 호출 대기 중"
         s.wakePending -> "한국어 호출 응답 대기 중"
         s.mediaCaption.busy -> "미디어 자막 · " + s.mediaCaption.detail
+        s.captionActive && s.glasses.session?.nativePaused == true -> "주변 자막 일시정지"
+        s.translationActive && s.glasses.session?.nativePaused == true -> "실시간 번역 일시정지"
         s.captionActive -> "실시간 자막 중"
         s.translationActive -> "실시간 번역 중"
         s.teleprompter.active != null -> "프롬프터 사용 중"
@@ -48,14 +50,10 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            ContentCard {
-                Text("현재 활동", style = MaterialTheme.typography.labelLarge)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
-                    Text(activity, style = MaterialTheme.typography.headlineSmall)
-                }
+            OpticalHeroPanel {
+                OpticalActivityHeader(activity)
                 Note("음성 인식: " + when {
                     !s.available -> "서비스 준비 중"
                     !model.speechConfigured -> "선택한 인식 모델 설정 필요"
@@ -100,7 +98,43 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     }
                 }
                 if (c.error != null) Text(c.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+        }
+        if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {
+            FeatureLink("확인이 필요한 AI 작업 ${s.approvals.size + s.agentReviews.size}건", "내용 확인 후 승인 또는 거절", Icons.Outlined.AutoAwesome) { navigate(1) }
+        }
+        item { SectionLabel("바로 사용") }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, tileModifier) { navigate(1) }
+            }, second = { tileModifier ->
+                OpticalQuickTile("회의 기록", "전사 · 요약", Icons.Outlined.GraphicEq, tileModifier) {
+                    if (!linked) connect() else if (!c.modelReady) open("voice-settings")
+                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
+                    else { resume = false; requested = ConversationMode.MEETING }
+                }
+            })
+        }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, tileModifier) {
+                    if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
+                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
+                    else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
+                }
+            }, second = { tileModifier ->
+                OpticalQuickTile("한국어 호출", "말로 AI 호출", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
+            })
+        }
+        item {
+            OpticalQuickPair(first = { tileModifier ->
+                OpticalQuickTile("영상 자막", "휴대폰 소리 번역", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
+            }, second = { tileModifier ->
+                OpticalQuickTile("한영 통역", "안경 음성 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
+            })
+        }
+        item {
+            OpticalPanel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("AI 연결", style = MaterialTheme.typography.labelLarge)
@@ -119,41 +153,11 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                         Text(model.deviceName, style = MaterialTheme.typography.titleMedium)
                         Note(if (linked) "BLE·SPP 연결 · " + s.deviceSettings.readback.label else s.glasses.link.detail)
                         if (!linked) s.glasses.link.lastFailure?.let { Note("최근 연결 원인: $it") }
-                        if (linked && s.deviceSettings.loaded) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
+                        if (linked && s.deviceSettings.loaded && s.deviceSettings.readback == DeviceReadback.VERIFIED) s.deviceSettings.status.deviceInt("battery")?.takeIf { it in 0..100 }?.let { Note("배터리 $it%") }
                     }
                     TextButton(onClick = { if (linked || s.glasses.link.reconnectWaiting) navigate(4) else connect() }) { Text(if (linked || s.glasses.link.reconnectWaiting) "관리" else "연결") }
                 }
                 if (s.glasses.link.reconnectWaiting) TextButton(onClick = { model.attempt { model.service().disconnect() } }, enabled = s.available) { Text("자동 재연결 중지") }
-            }
-        }
-        if (s.approvals.isNotEmpty() || s.agentReviews.isNotEmpty()) item {
-            FeatureLink("확인이 필요한 AI 작업 ${s.approvals.size + s.agentReviews.size}건", "내용 확인 후 승인 또는 거절", Icons.Outlined.AutoAwesome) { navigate(1) }
-        }
-        item { SectionLabel("바로 사용") }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("AI에게 질문", "질문 · PC 작업", Icons.AutoMirrored.Outlined.Chat, Modifier.weight(1f)) { navigate(1) }
-                FeatureTile("회의 기록", "전사 · 요약", Icons.Outlined.GraphicEq, Modifier.weight(1f)) {
-                    if (!linked) connect() else if (!c.modelReady) open("voice-settings")
-                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
-                    else { resume = false; requested = ConversationMode.MEETING }
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("실시간 힌트", "대화 중 짧은 도움", Icons.Outlined.AutoAwesome, Modifier.weight(1f)) {
-                    if (!linked) connect() else if (!c.modelReady || !model.speechConfigured) open("voice-settings")
-                    else if (c.running || c.stopping || otherMode || s.alwaysOnResumePending) navigate(2)
-                    else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
-                }
-                FeatureTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, Modifier.weight(1f)) { open("korean-wake") }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FeatureTile("영상 자막", "휴대폰 소리 → 한국어", Icons.Outlined.Translate, Modifier.weight(1f)) { open("media-captions") }
-                FeatureTile("한영 통역", "안경 마이크 · 내장 번역", Icons.Outlined.Translate, Modifier.weight(1f)) { open("translation") }
             }
         }
         item { FeatureLink("모든 도구", "대화 자막 · 프롬프터 · 길 안내 · 일정", Icons.Outlined.Dashboard) { navigate(3) } }
@@ -213,6 +217,7 @@ private data class ToolDestination(
     val title: String,
     val subtitle: String,
     val icon: ImageVector,
+    val status: String? = null,
     val open: () -> Unit,
 )
 
@@ -221,48 +226,67 @@ private data class ToolDestination(
 private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel(title)
-        OutlinedCard(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        ) {
-            destinations.forEachIndexed { index, destination ->
-                if (index > 0) HorizontalDivider(
-                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-                ListItem(
-                    headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = { Text(destination.subtitle) },
-                    leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
-                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
-                    modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
+        destinations.forEach { destination ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = destination.open)
+                .padding(vertical = 8.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(9.dp).size(24.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(destination.title, style = MaterialTheme.typography.titleMedium)
+                    Note(destination.subtitle)
+                    destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
+                }
+                Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-internal fun ToolsScreen(open: (String) -> Unit, navigate: (Int) -> Unit) {
+internal fun ToolsScreen(model: AppModel, open: (String) -> Unit, navigate: (Int) -> Unit) {
+    val s = model.state
+    val visible = s.available
+    val recordingStatus = if (visible && (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending)) recording(s).label else null
+    val translationPreparing = visible && s.mediaTranslation.preparing && s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { OpticalWorkspaceHeading("기능 라이브러리", "안경과 휴대폰의 도구", 3) }
         item {
             ToolDestinationGroup("자막 및 번역", listOf(
-                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate) { open("media-captions") },
-                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq) { open("captions") },
-                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate) { open("translation") },
+                ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate, status = when {
+                    !visible -> null
+                    s.mediaCaption.busy -> s.mediaCaption.detail
+                    s.mediaTranslation.preparing && !translationPreparing -> "번역 준비 중"
+                    else -> null
+                }) { open("media-captions") },
+                ToolDestination("주변 대화 자막", "안경 마이크로 듣고 글자로 표시", Icons.Outlined.GraphicEq, status = if (visible && s.captionActive) s.glasses.displayDescription else null) { open("captions") },
+                ToolDestination("주변 대화 번역", "한국어 ↔ 영어 · 기본 내장 모델", Icons.Outlined.Translate, status = when {
+                    !visible -> null
+                    s.translationActive && !s.captionActive && !s.mediaCaption.busy -> s.glasses.displayDescription
+                    translationPreparing || s.offlinePreparing -> "번역 준비 중"
+                    else -> null
+                }) { open("translation") },
             ))
         }
         item {
             ToolDestinationGroup("AI 및 기록", listOf(
-                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic) { open("korean-wake") },
-                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq) { navigate(2) },
+                ToolDestination("한국어 호출", "내 호출어 설정 · 듣기 시작/중지", Icons.Outlined.Mic, status = when {
+                    !visible -> null
+                    s.wakeActive -> "호출 대기 중"
+                    s.wakePending -> "질문 응답 대기 중"
+                    s.nativeWakeAvailable -> "기본 호출 처리 중"
+                    else -> null
+                }) { open("korean-wake") },
+                ToolDestination("일상·회의 기록", "대화 기록 시작 · 원문 및 요약 보기", Icons.Outlined.GraphicEq, status = recordingStatus) { navigate(2) },
             ))
         }
         item {
             ToolDestinationGroup("생활 및 업무", listOf(
-                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description) { open("teleprompter") },
-                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe) { open("navigation") },
+                ToolDestination("프롬프터", "원고 가져오기 · 안경에서 읽기", Icons.Outlined.Description, status = if (visible && (s.teleprompter.active != null || s.teleprompter.busy)) s.teleprompter.notice else null) { open("teleprompter") },
+                ToolDestination("길 안내", "네이버지도 길 안내를 안경에 표시", Icons.Outlined.NearMe, status = if (visible && s.glasses.navigation.enabled) "길 안내 세션 사용 중" else null) { open("navigation") },
                 ToolDestination("할 일 · 일정 · 날씨", "안경 홈 화면과 생활 정보 관리", Icons.Outlined.Dashboard) { open("content") },
                 ToolDestination("타이머 · 스톱워치", "직접 시작 · 남은 시간 · 정지", Icons.Outlined.Dashboard) { open("local-clock") },
             ))
@@ -306,12 +330,16 @@ internal fun TranslationToolScreen(model: AppModel) {
             model.notice = "내장 통역 준비 완료 · 화면에서 다시 시작하세요."
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text(if (s.translationActive) "현재 통역 세션" else "한국어 ↔ 영어", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.translationStatus)
-            if (s.translationActive) Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            if (s.translationActive) {
+                Note("음성 수신: " + s.glasses.audio.detail)
+                Note("표시 세션: " + s.glasses.displayDescription + " · 실제 안경 표시 별도 확인")
+            }
             if (!s.translationActive) {
+                SectionLabel("번역 방식")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(bundled, { mode = "bundled" }, enabled = !mt.preparing); Text("앱 내장 한영 통역")
                 }
@@ -406,15 +434,18 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
     )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            ContentCard {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OpticalHeroPanel {
+                OpticalWorkspaceHeading(model.deviceName, connection.label, 4,
+                    detailColor = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-                        Text(connection.label, style = MaterialTheme.typography.titleMedium,
-                            color = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurface)
+                        Text(battery?.let { "${it}%" } ?: "배터리 미확인", style = if (battery != null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium)
+                        if (battery != null) Note("기기가 보고한 배터리")
                     }
-                    GlassesArtwork(Modifier.width(92.dp).height(64.dp), MaterialTheme.colorScheme.primary)
+                    if (androidx.compose.ui.platform.LocalDensity.current.fontScale <= 1.3f)
+                        GlassesArtwork(Modifier.width(116.dp).height(66.dp), MaterialTheme.colorScheme.primary)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
@@ -423,7 +454,6 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
                     linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
                     else -> s.glasses.link.detail
                 })
-                Text(battery?.let { "보고된 배터리 ${it}%" } ?: "배터리 미확인", style = MaterialTheme.typography.titleMedium)
                 if (battery != null) {
                     LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
                 }
@@ -467,11 +497,10 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
         s.teleprompter.active != null || s.teleprompter.busy || s.nativeWakeAvailable || s.phoneRunning || s.computerRunning
     var confirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ContentCard {
+        item { OpticalPanel {
             Text(if (s.captionActive) "현재 주변 자막 세션" else "안경 마이크 자막 시작", style = MaterialTheme.typography.headlineSmall)
             Text(deviceConnectionStatus(s).label, style = MaterialTheme.typography.labelLarge)
             Note(s.captionStatus)
-            Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
             if (s.captionActive) {
                 ToolButton(onClick = { model.attempt { model.service().stopCaption() } }, modifier = Modifier.fillMaxWidth()) { Text("주변 자막 종료") }
                 Note("음성 수신: " + s.glasses.audio.detail)
@@ -486,6 +515,7 @@ internal fun CaptionToolScreen(model: AppModel, voiceSettings: () -> Unit, media
                 if (busy) Note("다른 기록·안경 화면·AI 작업을 먼저 종료하세요.")
                 ToolButton(onClick = { confirm = true }, enabled = linked && localReady && !busy, modifier = Modifier.fillMaxWidth()) { Text("자막 시작") }
             }
+            Note("안경 마이크로 들은 말을 휴대폰의 로컬 음성 모델로 인식해 안경에 표시합니다. 번역·AI 요청·대화 기록 저장을 하지 않습니다. 모델을 내려받은 후에는 네트워크 없이 사용할 수 있습니다.")
         } }
         item { GlassesOutputPreview(s.glasses) }
         item { ContentCard {

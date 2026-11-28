@@ -44,10 +44,23 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
     LaunchedEffect(autoSuggest) { if (autoSuggest && question.isNotBlank()) suggest() }
     val current = result
     val hits = current?.hits.orEmpty()
-    val enabled = !busy && !model.state.phoneRunning && !model.state.migration.busy && model.aiReady
+    val enabled = !busy && model.state.available && !model.state.phoneRunning && !model.state.migration.busy && model.aiReady
     AlertDialog(onDismissRequest = dismiss, title = { Text("기억을 참고한 질문") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OpticalPanel {
+                    Text("이번 질문", style = MaterialTheme.typography.titleMedium)
+                    Note("전송 대상: " + AiModelSelection.label(config) + " · " + selectedAiStatus(model).label)
+                OutlinedTextField(question, { question = it.take(2000); confirmed = false; if (suggested) { result = null; selected = emptySet() } }, Modifier.fillMaxWidth(),
+                    label = { Text("AI에게 할 질문") }, enabled = !busy, minLines = 2, maxLines = 5)
+                if (autoSuggest) TextButton(enabled = enabled && question.isNotBlank(), onClick = {
+                    model.phoneDraft = question
+                    model.send(AnswerSource.MOBILE_AGENT)
+                    dismiss()
+                }) { Text("이번 수동 첨부 없이 일반 AI로 보내기") }
+                    if (autoSuggest) Note("일반 질문의 자동 기억 참조·대화 이어가기 설정은 별도로 적용될 수 있습니다.")
+                }
+                SectionLabel("참조할 기억")
                 Note("과거 기록을 휴대폰에서 먼저 검색합니다. 선택한 전사 일부와 질문만 연결된 AI로 전송합니다. 일반 AI 작업과 달리 도구를 사용하지 않습니다.")
                 Note("자동 추천 범위: 최근 ${days}일 · 최대 ${limit}개. 기기 내 구문·핵심어·일부 조사/띄어쓰기 변형 일치입니다. 의미 추론이나 외부 모델 호출은 하지 않습니다.")
                 if (topics.isFailure) Note("주제 목록을 읽지 못했습니다. 전체 기록 검색만 가능합니다.")
@@ -77,6 +90,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
                 if (current != null && hits.isEmpty()) Note("일치하는 전사 기록이 없습니다. 검색어를 바꿔 보거나 기억 없이 질문할 수 있습니다.")
+                if (hits.isNotEmpty()) Text("검색 후보 ${hits.size}개 · 선택 ${selected.size}개", style = MaterialTheme.typography.titleSmall)
                 hits.forEachIndexed { index, hit ->
                     Row(verticalAlignment = Alignment.Top) {
                         Checkbox(index in selected, { checked ->
@@ -87,6 +101,7 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                             Text(java.text.SimpleDateFormat("yyyy.MM.dd HH:mm", java.util.Locale.KOREA).format(java.util.Date(hit.source.start)),
                                 style = MaterialTheme.typography.labelMedium)
                             Text(hit.excerpt)
+                            if (hit.clipped) Note("원문 일부 · 전체 발화가 아닙니다.")
                             Note("관련 후보 · 선택하기 전에 원문을 확인하세요")
                             Note(if (hit.source.incomplete || hit.source.mixed || !hit.source.stable) "전사 또는 화자 정보가 불확실할 수 있음" else "원본 전사 · 사실 여부는 별도 확인")
                         }
@@ -94,13 +109,6 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                     HorizontalDivider()
                 }
                 if (current?.more == true) Note("추가 결과가 있습니다. 검색어를 구체화하면 더 정확히 선택할 수 있습니다.")
-                OutlinedTextField(question, { question = it.take(2000); confirmed = false; if (suggested) { result = null; selected = emptySet() } }, Modifier.fillMaxWidth(),
-                    label = { Text("AI에게 할 질문") }, enabled = !busy, minLines = 2, maxLines = 5)
-                if (autoSuggest) TextButton(enabled = enabled && question.isNotBlank(), onClick = {
-                    model.phoneDraft = question
-                    model.send(AnswerSource.MOBILE_AGENT)
-                    dismiss()
-                }) { Text("기억 첨부 없이 일반 AI로 보내기") }
                 if (profile.isFailure) Note("개인화 정보를 읽지 못했습니다. 첨부하지 않습니다.")
                 if (profile.getOrDefault(emptyMap()).isNotEmpty()) {
                     Text("나에 대해 · 이번 질문에만 첨부", style = MaterialTheme.typography.labelMedium)
@@ -118,11 +126,17 @@ internal fun MemoryQuestionDialog(model: AppModel, initialQuestion: String, auto
                     }
                 }
                 if (selected.isNotEmpty() || pickedProfile.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(confirmed, { confirmed = it })
-                        Text("선택한 전사 ${selected.size}개와 개인화 항목 ${pickedProfile.size}개 및 질문을 AI에 보내는 데 동의합니다.")
+                    OpticalPanel {
+                        Text("전송 전 확인", style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.Top) {
+                            Checkbox(confirmed, { confirmed = it })
+                            Column(Modifier.weight(1f)) {
+                                Text("전사 ${selected.size}개 · 개인화 ${pickedProfile.size}개")
+                                Note("선택한 자료 및 질문을 " + AiModelSelection.label(config) + "에 보내는 데 동의합니다.")
+                            }
+                        }
+                        Note("선택한 AI의 이용량 또는 비용이 발생할 수 있습니다. 휴대폰 일반 대화 목록에는 남기지 않지만 연결 서비스의 기록 정책은 별도입니다.")
                     }
-                    Note("설정된 DSH 모델 이용량이 발생할 수 있습니다. 휴대폰 일반 대화 목록에는 남기지 않지만 연결 서비스의 기록 정책은 별도입니다.")
                 }
             }
         },

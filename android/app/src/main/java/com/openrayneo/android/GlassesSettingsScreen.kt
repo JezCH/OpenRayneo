@@ -20,14 +20,14 @@ internal fun GlassesSettingsScreen(model: AppModel) {
     val settings = snapshot.settings
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        ContentCard {
+        OpticalPanel {
             Text("기기에서 읽은 설정", style = MaterialTheme.typography.titleLarge)
             Text(deviceConnectionStatus(model.state).label, style = MaterialTheme.typography.titleMedium)
             Note(if (connected) snapshot.notice else "현재 안경 설정을 확인할 수 없습니다. 먼저 기기 탭에서 연결을 완료하세요.")
             if (snapshot.loaded) Note("기기 보고값 · " + snapshot.readback.label)
             if (snapshot.loaded && (!connected || snapshot.readback != DeviceReadback.VERIFIED))
                 Note("아래 값은 현재 기기 상태로 확인되지 않았습니다.")
-            Note("각 항목을 수정한 뒤 적용 버튼을 눌러 기기로 전송합니다. 적용 결과는 기기 응답으로 확인하세요.")
+            Note("읽은 값과 편집 중인 값은 다를 수 있습니다. 항목별 적용 버튼을 눌러 전송하고 기기 응답을 확인하세요.")
             ToolButton(onClick = { model.attempt { model.service().deviceSettings.refresh() } },
                 enabled = connected && !snapshot.busy, modifier = Modifier.fillMaxWidth()) {
                 Text(if (snapshot.busy) "기기 응답 대기 중…" else "안경 설정 다시 읽기")
@@ -185,11 +185,9 @@ internal fun GlassesSettingsScreen(model: AppModel) {
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            content()
-        }
+    OpticalPanel {
+        SectionLabel(title)
+        content()
     }
 }
 
@@ -204,7 +202,7 @@ private fun SettingsToggle(title: String, value: Boolean, enabled: Boolean, upda
 private fun SettingsChoice(title: String, value: Int, choices: List<Pair<Int, String>>, enabled: Boolean, update: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        ToolOutlinedButton(onClick = { expanded = true }, enabled = enabled) {
+        ToolOutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
             Text("$title: ${choices.firstOrNull { it.first == value }?.second ?: "기기 값 $value"}")
         }
         DropdownMenu(expanded, { expanded = false }) {

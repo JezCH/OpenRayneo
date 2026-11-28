@@ -521,6 +521,20 @@ internal class BridgeService : Service() {
             { id, signal -> dispatch(GlassesEvent.SessionSignal(id, signal)) },
             { id, packet -> if (audioOwner == id && state.session?.id == id) audio.accept(packet) },
             { dispatch(GlassesEvent.ExternalPage(it)) })
+        display.mayResumeNativeAudio = { id ->
+            val current = state.session
+            !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+                state.ownership == DisplayOwnership.APP && current?.id == id &&
+                current.nativePaused && current.phase != PagePhase.CLOSING &&
+                audioOwner == null && !prompterReserved && !deviceSettings.state.initialization.recorder.occupied &&
+                !voiceTransport.nativeActive && voiceTransport.source == null && !speechOutput.speaking &&
+                deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch") == true &&
+                ((current.nativeSubtitle != null && state.intent == DisplayIntent.Translation && translator.active) ||
+                    (current.nativeHint != null && state.intent == DisplayIntent.PromptStandby &&
+                        conversations.state.running && !conversations.state.stopping &&
+                        conversations.state.source == ConversationSource.REALTIME &&
+                        focusPolicy.allows(FocusPolicy.Output.PASSIVE_HINT)))
+        }
         navigation.initialize(this)
         navigation.stop()
         navigation.observers.add(navigationObserver)
@@ -1340,10 +1354,11 @@ internal class BridgeService : Service() {
         passiveInputGate.clear()
     }
     private fun sendCompanionNotification(title: String, body: String,
-                                          output: FocusPolicy.Output = FocusPolicy.Output.GENERAL_NOTIFICATION): Boolean {
+                                          output: FocusPolicy.Output = FocusPolicy.Output.GENERAL_NOTIFICATION,
+                                          completion: ((Result<Unit>) -> Unit)? = null): Boolean {
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL || !focusPolicy.allows(output) ||
             prompterReserved || translator.active || voiceTransport.nativeActive || state.ownership != DisplayOwnership.APP) return false
-        connection.sendNotification(title, body)
+        connection.sendNotification(title, body, completion)
         return true
     }
     fun clockReadout(): Pair<String, String> {
@@ -2555,6 +2570,25 @@ internal class BridgeService : Service() {
     private fun resetAgentProbe() {
         cancelAgentProbe()
         agentProbe.reset()
+    }
+    fun checkExternalHudReady() {
+        check(AppUpdate.supported) { "검증 앱에서만 사용할 수 있습니다." }
+        check(!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+            state.ownership == DisplayOwnership.APP) { "안경 완전 연결 및 화면 제어 상태를 확인하세요." }
+        requireCaptureFree()
+        requirePrompterFree()
+        check(hudAnswerAvailable() && state.intent == DisplayIntent.Idle && state.session == null &&
+            !state.navigation.enabled && audioOwner == null && pendingNativeHint == null && !reconnectCapture.pending &&
+            !mediaCaptionState.busy && !translator.mediaTranslation.state.preparing && !agent.running &&
+            !codex.running && wakeRequest == null && nativeChatRequest == null && !ambientWakeBusy() &&
+            !speechOutput.speaking && !migration.state.busy) { "현재 기록·음성·화면·AI 작업을 먼저 종료하세요." }
+        check(focusPolicy.allows(FocusPolicy.Output.GENERAL_NOTIFICATION)) { "집중 모드와 안경 알림 설정을 확인하세요." }
+    }
+
+    fun sendExternalHudText(text: String, completion: (Result<Unit>) -> Unit) {
+        require(ExternalHudText.validPage(text)) { "표시할 텍스트 페이지를 확인하세요." }
+        checkExternalHudReady()
+        check(sendCompanionNotification("외부 텍스트", text, completion = completion)) { "안경 알림 전송 조건을 확인하세요." }
     }
     fun sendAgentProbeHud() {
         val probe = agentProbe.state

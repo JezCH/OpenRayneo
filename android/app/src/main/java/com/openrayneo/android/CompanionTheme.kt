@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,50 +30,80 @@ import androidx.compose.ui.unit.sp
 internal val Pine = Color(0xFF256B52)
 internal val SignalGreen = Color(0xFFB8EFCD)
 internal val LensBlack = Color(0xFF13251D)
+// Optical V3: opaque, independently checked foreground/background roles.
 private val Day =
     lightColorScheme(
-        primary = Pine,
-        onPrimary = Color.White,
-        primaryContainer = Color(0xFFDCEFE4),
-        onPrimaryContainer = Color(0xFF173D2D),
-        secondary = Color(0xFF515955),
-        secondaryContainer = Color(0xFFEBEEEC),
-        onSecondaryContainer = Color(0xFF303733),
-        background = Color(0xFFF7F8F7),
-        onBackground = Color(0xFF202623),
-        surface = Color(0xFFF7F8F7),
-        onSurface = Color(0xFF202623),
-        surfaceContainer = Color(0xFFEFF1F0),
-        surfaceContainerLow = Color.White,
-        surfaceContainerHigh = Color(0xFFE5E8E6),
-        surfaceVariant = Color(0xFFE5E8E6),
-        onSurfaceVariant = Color(0xFF5B645F),
-        outline = Color(0xFF818B85),
-        outlineVariant = Color(0xFFDCE1DD),
-        tertiaryContainer = Color(0xFFFFF0CD),
-        onTertiaryContainer = Color(0xFF4B3C0A),
+        primary = Color(0xFF005D80),
+        onPrimary = Color(0xFFFFFFFF),
+        primaryContainer = Color(0xFFD9EDF7),
+        onPrimaryContainer = Color(0xFF12384C),
+        secondary = Color(0xFF526275),
+        onSecondary = Color(0xFFFFFFFF),
+        secondaryContainer = Color(0xFFE4EAF1),
+        onSecondaryContainer = Color(0xFF26394D),
+        tertiary = Color(0xFF805000),
+        onTertiary = Color(0xFFFFFFFF),
+        tertiaryContainer = Color(0xFFFFEAC8),
+        onTertiaryContainer = Color(0xFF4B2E00),
+        error = Color(0xFFA3293D),
+        onError = Color(0xFFFFFFFF),
+        errorContainer = Color(0xFFFCE0E4),
+        onErrorContainer = Color(0xFF731A2A),
+        background = Color(0xFFF2F6FA),
+        onBackground = Color(0xFF152333),
+        surface = Color(0xFFF2F6FA),
+        onSurface = Color(0xFF152333),
+        surfaceContainerLowest = Color(0xFFFFFFFF),
+        surfaceContainerLow = Color(0xFFFFFFFF),
+        surfaceContainer = Color(0xFFE9EFF5),
+        surfaceContainerHigh = Color(0xFFE0E8F0),
+        surfaceContainerHighest = Color(0xFFD7E1EB),
+        surfaceVariant = Color(0xFFE0E8F0),
+        onSurfaceVariant = Color(0xFF526275),
+        outline = Color(0xFF6C7F92),
+        outlineVariant = Color(0xFFC7D3DF),
+        inverseSurface = Color(0xFF233347),
+        inverseOnSurface = Color(0xFFF0F6FF),
+        inversePrimary = Color(0xFF83DFFF),
+        surfaceTint = Color(0xFF005D80),
+        scrim = Color(0xFF000000),
     )
 private val Night =
     darkColorScheme(
-        primary = SignalGreen,
-        onPrimary = LensBlack,
-        primaryContainer = Color(0xFF244936),
-        onPrimaryContainer = SignalGreen,
-        secondary = Color(0xFFBAC4BD),
-        secondaryContainer = Color(0xFF303732),
-        onSecondaryContainer = Color(0xFFDCE4DF),
-        background = Color(0xFF121614),
-        onBackground = Color(0xFFE2E8E4),
-        surface = Color(0xFF121614),
-        onSurface = Color(0xFFE2E8E4),
-        surfaceContainer = Color(0xFF242A26),
-        surfaceContainerLow = Color(0xFF1B211D),
-        surfaceContainerHigh = Color(0xFF2D342F),
-        onSurfaceVariant = Color(0xFFB5BFB8),
-        outline = Color(0xFF7E8981),
-        outlineVariant = Color(0xFF3B453D),
-        tertiaryContainer = Color(0xFF4D3C17),
-        onTertiaryContainer = Color(0xFFFFE0A0),
+        primary = Color(0xFF83DFFF),
+        onPrimary = Color(0xFF091923),
+        primaryContainer = Color(0xFF173B4D),
+        onPrimaryContainer = Color(0xFFC9F0FF),
+        secondary = Color(0xFFA7B6CA),
+        onSecondary = Color(0xFF182737),
+        secondaryContainer = Color(0xFF253344),
+        onSecondaryContainer = Color(0xFFE2EAF4),
+        tertiary = Color(0xFFFFD28B),
+        onTertiary = Color(0xFF402900),
+        tertiaryContainer = Color(0xFF4D3518),
+        onTertiaryContainer = Color(0xFFFFE5BA),
+        error = Color(0xFFFFA7AD),
+        onError = Color(0xFF561923),
+        errorContainer = Color(0xFF53232D),
+        onErrorContainer = Color(0xFFFFDADD),
+        background = Color(0xFF090E17),
+        onBackground = Color(0xFFF0F6FF),
+        surface = Color(0xFF090E17),
+        onSurface = Color(0xFFF0F6FF),
+        surfaceContainerLowest = Color(0xFF090E17),
+        surfaceContainerLow = Color(0xFF111923),
+        surfaceContainer = Color(0xFF141E2C),
+        surfaceContainerHigh = Color(0xFF1D2A3A),
+        surfaceContainerHighest = Color(0xFF253344),
+        surfaceVariant = Color(0xFF253344),
+        onSurfaceVariant = Color(0xFFA7B6CA),
+        outline = Color(0xFF657D94),
+        outlineVariant = Color(0xFF344457),
+        inverseSurface = Color(0xFFDFEAF4),
+        inverseOnSurface = Color(0xFF152333),
+        inversePrimary = Color(0xFF005D80),
+        surfaceTint = Color(0xFF83DFFF),
+        scrim = Color(0xFF000000),
     )
 
 @Composable
@@ -102,33 +133,26 @@ internal fun CompanionTheme(appearance: String, content: @Composable () -> Unit)
         colorScheme = if (dark) Night else Day,
         shapes =
             Shapes(
-                extraSmall = RoundedCornerShape(4.dp),
-                small = RoundedCornerShape(6.dp),
-                medium = RoundedCornerShape(8.dp),
-                large = RoundedCornerShape(10.dp),
-                extraLarge = RoundedCornerShape(12.dp),
+                extraSmall = RoundedCornerShape(6.dp),
+                small = RoundedCornerShape(8.dp),
+                medium = RoundedCornerShape(12.dp),
+                large = RoundedCornerShape(16.dp),
+                extraLarge = RoundedCornerShape(24.dp),
             ),
         typography =
             Typography().let {
                 it.copy(
-                    headlineLarge =
-                        it.headlineLarge.copy(
-                            fontSize = 24.sp,
-                            lineHeight = 32.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    headlineMedium =
-                        it.headlineMedium.copy(
-                            fontSize = 22.sp,
-                            lineHeight = 30.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    titleLarge =
-                        it.titleLarge.copy(
-                            fontSize = 20.sp,
-                            lineHeight = 28.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
+                    headlineLarge = it.headlineLarge.copy(fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold),
+                    headlineMedium = it.headlineMedium.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold),
+                    headlineSmall = it.headlineSmall.copy(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold),
+                    titleLarge = it.titleLarge.copy(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold),
+                    titleMedium = it.titleMedium.copy(fontSize = 18.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium),
+                    titleSmall = it.titleSmall.copy(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
+                    bodyLarge = it.bodyLarge.copy(fontSize = 16.sp, lineHeight = 25.sp),
+                    bodyMedium = it.bodyMedium.copy(fontSize = 14.sp, lineHeight = 22.sp),
+                    bodySmall = it.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                    labelLarge = it.labelLarge.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                    labelMedium = it.labelMedium.copy(fontSize = 12.sp, lineHeight = 18.sp),
                 )
             },
         content = content,
@@ -136,7 +160,7 @@ internal fun CompanionTheme(appearance: String, content: @Composable () -> Unit)
 }
 
 @Composable
-internal fun GlassesArtwork(modifier: Modifier = Modifier, color: Color = Pine) {
+internal fun GlassesArtwork(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
     Canvas(modifier.semantics { contentDescription = "RayNeo 스마트 안경 윤곽" }) {
         val w = size.width
         val h = size.height
@@ -176,11 +200,14 @@ internal fun GlassesArtwork(modifier: Modifier = Modifier, color: Color = Pine) 
 
 @Composable
 internal fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp).semantics { heading() },
-    )
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.width(3.dp).height(18.dp).background(MaterialTheme.colorScheme.primary))
+        Text(text, style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f).semantics { heading() })
+        HorizontalDivider(Modifier.weight(.18f), color = MaterialTheme.colorScheme.outlineVariant)
+    }
 }
 
 @Composable
@@ -198,18 +225,12 @@ internal fun ContentCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    OutlinedCard(
-        modifier.fillMaxWidth(),
-        colors =
-            CardDefaults.outlinedCardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ),
-    ) {
-        Column(
-            Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            content = content,
-        )
+    Surface(modifier.fillMaxWidth(), shape = OpticalFrameShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        }
     }
 }
 
@@ -236,7 +257,7 @@ internal fun ToolButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Button(onClick, modifier.heightIn(min = 48.dp), enabled, shape = MaterialTheme.shapes.medium, content = content)
+    Button(onClick, modifier.heightIn(min = 50.dp), enabled, shape = OpticalControlShape, content = content)
 }
 
 @Composable
@@ -250,7 +271,7 @@ internal fun ToolOutlinedButton(
         onClick,
         modifier.heightIn(min = 48.dp),
         enabled,
-        shape = MaterialTheme.shapes.medium,
+        shape = OpticalControlShape,
         content = content,
     )
 }

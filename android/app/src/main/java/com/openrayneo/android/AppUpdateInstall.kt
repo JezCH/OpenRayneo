@@ -3,9 +3,17 @@ package com.openrayneo.android
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,6 +22,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileNotFoundException
 
 internal object AppUpdateInstall {
     const val ACTION = "com.openrayneo.android.validation.UPDATE_RESULT"
@@ -21,10 +30,46 @@ internal object AppUpdateInstall {
     var confirmation by mutableStateOf<Intent?>(null); private set
     var status by mutableStateOf(""); private set
 
+    private var confirmationLaunched = false
+
+    // Consume a confirmation once per session, even if the user taps while the
+    // automatic approval effect is also scheduled. Restore only on launch failure.
+    fun launchConfirmation(context: Context, intent: Intent) {
+        if (confirmation !== intent || confirmationLaunched) return
+        confirmationLaunched = true
+        confirmation = null
+        try {
+            context.startActivity(intent)
+            status = "Android 설치 승인 화면 요청됨"
+        } catch (e: Exception) {
+            confirmationLaunched = false
+            confirmation = intent
+            throw e
+        }
+    }
+
+    // Explicit recovery route for a verified cached APK. Let the system installer
+    // own its session, instead of committing another app-managed session.
+    suspend fun openSystemInstaller(context: Context, candidate: AppUpdate.Candidate, idle: () -> Boolean) {
+        check(AppUpdate.supported && context.packageName == AppUpdate.PACKAGE)
+        check(sessionId == null && idle()) { "진행 중인 설치나 기능을 먼저 종료하세요" }
+        check(context.packageManager.canRequestPackageInstalls()) { "이 앱의 외부 APK 설치 허용이 필요합니다" }
+        val apk = AppUpdate.verifiedCachedApk(context, candidate)
+        currentCoroutineContext().ensureActive()
+        check(sessionId == null && idle()) { "새 작업이 시작되어 설치를 보류합니다" }
+        val uri = Uri.Builder().scheme("content").authority(context.packageName + ".update-apk")
+            .appendPath(apk.name).build()
+        val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.clipData = ClipData.newRawUri("OpenRayneo update", uri)
+        context.startActivity(intent)
+        status = "시스템 설치 화면을 열었습니다 · 설치 승인 후 앱을 다시 열어 버전을 확인하세요"
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences("validation_update_install", Context.MODE_PRIVATE)
     private fun clear(context: Context) {
         prefs(context).edit().remove("session").apply()
-        sessionId = null; confirmation = null
+        sessionId = null; confirmation = null; confirmationLaunched = false
     }
 
     // Keep only our own session ID, so a restarted process can cancel an interrupted install.
@@ -58,6 +103,7 @@ internal object AppUpdateInstall {
         sessionId = id
         status = "설치 준비 중"
         confirmation = null
+        confirmationLaunched = false
         var committed = false
         try {
             withContext(Dispatchers.IO) {
@@ -105,6 +151,7 @@ internal object AppUpdateInstall {
         if (id != sessionId) return
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                if (confirmationLaunched) return
                 confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                 status = if (confirmation != null) "Android 설치 확인을 진행하세요" else "설치 확인 정보를 받지 못했습니다. 취소 후 다시 시도하세요."
             }
@@ -129,4 +176,52 @@ class AppUpdateInstallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (context.packageName == AppUpdate.PACKAGE) AppUpdateInstall.result(context, intent)
     }
+}
+
+
+// Non-exported, grant-only, read-only provider. It exposes exactly a named
+// verified-update cache file, never records, models or arbitrary private paths.
+class AppUpdateApkProvider : ContentProvider() {
+    override fun onCreate() = true
+
+    private fun apk(uri: Uri): File {
+        val app = context ?: throw FileNotFoundException()
+        val name = uri.pathSegments.singleOrNull() ?: throw FileNotFoundException()
+        if (app.packageName != AppUpdate.PACKAGE ||
+            uri.authority != app.packageName + ".update-apk" ||
+            !name.matches(Regex("validation-[0-9]+-[0-9a-f]{64}\\.apk"))) throw FileNotFoundException()
+        val dir = File(app.noBackupFilesDir, "verified-app-update").canonicalFile
+        val file = File(dir, name)
+        if (file.canonicalFile != file || !file.isFile || file.length() !in 1..AppUpdate.MAX_APK)
+            throw FileNotFoundException()
+        return file
+    }
+
+    override fun getType(uri: Uri) = "application/vnd.android.package-archive"
+
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+        selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+        val file = apk(uri)
+        val columns = projection?.toList()?.toTypedArray() ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+        return MatrixCursor(columns).apply {
+            addRow(columns.map { column ->
+                when (column) {
+                    OpenableColumns.DISPLAY_NAME -> file.name
+                    OpenableColumns.SIZE -> file.length()
+                    else -> null
+                }
+            })
+        }
+    }
+
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        if (mode != "r") throw FileNotFoundException("Read only")
+        return ParcelFileDescriptor.open(apk(uri), ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = throw UnsupportedOperationException()
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int =
+        throw UnsupportedOperationException()
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int =
+        throw UnsupportedOperationException()
 }
