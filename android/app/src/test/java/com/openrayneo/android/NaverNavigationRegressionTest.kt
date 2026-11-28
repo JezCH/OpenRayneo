@@ -296,13 +296,22 @@ class NaverNavigationRegressionTest {
         assertTrue(requireNotNull(progress.nextTurnMeters) in 54..57)
         assertEquals(5, progress.nextTurn?.sourceCode)
         assertEquals(130, progress.remainingEstimateSeconds)
-        // Fixture codes only. They do not establish the stock wire mapping.
-        val wire=OfflineNativeRoute.Wire(1,1,1,1,0,mapOf(5 to 3, 13 to 19))
+        // Walking/unit/side values are fixture-only; maneuver codes now
+        // come from the actual official 0x1c4f8f4 constant table.
+        val wire=OfflineNativeRoute.Wire(1,OfflineNativeRoute.VERIFIED_GUIDING_STATE,1,1,
+            OfflineNativeRoute.VERIFIED_NO_MANEUVER,OfflineNativeRoute.verifiedManeuvers)
+        assertEquals(2,wire.maneuver(1))
+        assertEquals(4,wire.maneuver(2))
+        assertEquals(7,wire.maneuver(5))
+        assertEquals(19,wire.maneuver(14))
+        assertNull(wire.maneuver(15))
+        assertNull(wire.maneuver(17))
+        assertNull(wire.maneuver(18))
         val guidance=checkNotNull(OfflineNativeRoute.snapshot(progress,wire,123))
-        assertEquals(3,guidance.maneuver)
+        assertEquals(7,guidance.maneuver)
         assertEquals(123,guidance.speedMpsX100)
         assertEquals("우회전",guidance.instruction)
-        assertNull(OfflineNativeRoute.snapshot(progress.copy(nextTurn=progress.nextTurn?.copy(sourceCode=2)),wire))
+        assertNull(OfflineNativeRoute.snapshot(progress.copy(nextTurn=progress.nextTurn?.copy(sourceCode=15)),wire))
         val circle=progress.copy(nextTurn=OfflineWalkingRoute.Turn(1,13,2,89.0,90))
         assertEquals(2,checkNotNull(OfflineNativeRoute.snapshot(circle,wire)).roundaboutExit)
         assertNull(OfflineNativeRoute.snapshot(circle.copy(nextTurn=circle.nextTurn?.copy(exit=0)),wire))

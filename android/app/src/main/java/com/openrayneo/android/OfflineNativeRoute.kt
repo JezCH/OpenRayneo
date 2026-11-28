@@ -28,8 +28,22 @@ internal class OfflineNativeRoute(
         fun maneuver(code: Int?): Int? = if(code==null) noManeuver else maneuvers[code]
     }
     companion object {
-        // Only a reviewed, evidence-backed stock walking mapping may enable
-        // this source. Ranges alone are not semantic enum evidence.
+        // Official app 1.0.30, libapp SHA 5d196b14..., exact
+        // 0x1c4f8f4 -> PP+0x52650 (60-entry semantic map).
+        // Evidence: Rayneo-Original runs 46144064096 / 46144213745.
+        // BRouter Formatter timode=2 source codes -> canonical RayNeo wire.
+        // Generic U-turn (15) has no verified direction; exit 17/18 is
+        // not proven equivalent to an on/off-ramp. Do not guess them.
+        internal val verifiedManeuvers: Map<Int, Int> = mapOf(
+            1 to 2, 2 to 4, 3 to 3, 4 to 5,
+            5 to 7, 6 to 6, 7 to 8, 8 to 17, 9 to 18,
+            10 to 9, 11 to 10, 13 to 19, 14 to 19
+        )
+        internal const val VERIFIED_NO_MANEUVER = 0
+        internal const val VERIFIED_GUIDING_STATE = 1
+        // The maneuver map is now independently verified. Still require
+        // exact walking/unit/driving-side profile values before any live
+        // start; do not copy SDK ordinals or legacy icon IDs.
         fun verifiedWire(): Wire? = null
 
         // Exact BRouter VoiceHint.java at ff7b616df988dbd82c9869368638065a7595b11d.
