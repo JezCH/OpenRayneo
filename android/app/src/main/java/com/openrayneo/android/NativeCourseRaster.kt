@@ -11,8 +11,9 @@ import kotlin.math.cos
 
 /**
  * Render the actual user-selected route coordinates into a stock-sized PNG.
- * No basemap, live position, turn instruction, ETA, or route/provider identity
- * is invented. A full-course thumbnail is not a moving mini-map.
+ * No basemap, position, turn instruction, ETA, or route/provider identity
+ * is invented. A full-course thumbnail is distinct from the optional
+ * mini view centered on a measured, validated GPS fix.
  * Session.submitRaster still requires a correlated view and negotiated limits.
  */
 internal object NativeCourseRaster {

@@ -835,7 +835,7 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
             } else Note("순정 크기 PNG를 생성하지 못했습니다. 원본 코스 좌표는 유지됩니다.")
             val geometry = remember(course) { course.nativeGeometry() }
             Note(if (geometry == null) "순정 장면 규격에 맞지 않는 좌표 수 또는 범위 · 원본 코스는 보존됩니다." else "순정 장면용 경로 형상 준비 · 세션 및 실제 안내 연동 필요")
-            Note("경로 좌표의 연결선과 거리 합계입니다. 배경지도, 실시간 위치, 실제 도착 시각은 포함하지 않습니다. 앱은 결과를 메모리에 유지하며 안경으로 전송하지 않습니다.")
+            Note("정적 코스 이미지에는 배경지도와 실시간 위치가 없습니다. 별도 위치 갱신 화면만 실측 위치를 사용하며, 앱은 결과를 메모리에 유지하고 안경으로 전송하지 않습니다.")
             ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }
     }

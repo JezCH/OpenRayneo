@@ -307,6 +307,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private var offlineTrackingGeneration=0L
     private var trackingWorkerBusy=false
     private var latestFix: OfflineRouteProgress.Fix?=null
+    private var fixRevision=0L
     private var trackingExpiry: Runnable?=null
     fun stopOfflineTracking() {
         ++offlineTrackingGeneration
@@ -329,6 +330,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         try {
             offlineWatch=OfflineRouteLocation.watch(context) { fix ->
                 if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
+                    ++fixRevision
                     latestFix=fix
                     if(fix==null) {
                         offlineProgress=null
@@ -344,6 +346,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     private fun processOfflineFix(route: OfflineWalkingRoute.Route,ticket: Long) {
         if(trackingWorkerBusy || !offlineTracking || ticket!=offlineTrackingGeneration) return
         val fix=latestFix ?: return
+        val revision=fixRevision
         latestFix=null
         trackingWorkerBusy=true
         offlineRouteWorker.execute {
@@ -355,7 +358,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 trackingWorkerBusy=false
                 if(ticket==offlineTrackingGeneration && offlineTracking && hostVisible && offlineWalkingRoute===route) {
                     val age=android.os.SystemClock.elapsedRealtime()-fix.observedAtMs
-                    if(result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS) {
+                    if(revision==fixRevision && result!=null && age in 0 until NativePhoneGuidance.VALID_FOR_MS) {
                         offlineProgress=result.first
                         offlineLiveMini=result.second
                         trackingExpiry?.let(main::removeCallbacks)
