@@ -12,7 +12,9 @@ internal object CompanionTools {
             .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().apply { properties.forEach { put(it.first, it.second) }; if (mutates(name)) put("request_id", field("string", "같은 쓰기를 재시도할 때는 같은 ID 사용. 외부 Agent는 필수, 휴대폰 Agent는 자동 제공")) })
                 .put("required", JSONArray(required)).put("additionalProperties", false)))
     fun definitions(): JSONArray = JSONArray().apply {
-        put(definition("navigation_status", "Amap 알림 추종 상태 읽기. 경로는 추론하지 않음"))
+        put(definition("navigation_status", "순정 내비 세션과 별도 네이버 알림 HUD 상태 조회. 경로는 추론하지 않음"))
+        put(definition("native_navigation_start", "사용자가 명시적으로 요청한 안경 순정 내비 시작. 휴대폰 지도 앱을 열지 않으며 started 및 status 실제 결과를 그대로 전달. 목적지가 없으면 필요한 조건을 확인.", emptyList(),
+            "destination" to field("string", "명시된 실제 목적지 또는 집/회사 별칭. 없으면 생략")))
         put(definition("stop_navigation_mirroring", "안경 추종 중지. Amap 내비게이션은 계속됨"))
         put(definition("show_notification", "안경에 짧은 알림 전송. 집중 모드/알림 설정/연결 상태에 따라 queued=false 반환. 대기열 등록 성공이 표시를 보장하지 않음", listOf("title", "body"),
             "title" to field("string", "제목"), "body" to field("string", "본문")))

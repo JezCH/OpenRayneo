@@ -8,11 +8,15 @@ class NaverNavigationRegressionTest {
     @Test fun explicitCommandsAndNonCommands() {
         val c = NaverVoiceCommand
         val expected = mapOf(
-            "안경 길 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 내비게이션 종료!" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 안내 꺼 줘" to NaverVoiceCommand.Control.STOP_HUD,
-            "안경 길 안내 시작해 줘" to NaverVoiceCommand.Control.START_HUD,
-            "안경 길 안내 재개해 줘" to NaverVoiceCommand.Control.START_HUD,
+            "안경 길 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 내비게이션 종료!" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 안내 꺼 줘" to NaverVoiceCommand.Control.STOP_NATIVE,
+            "안경 길 안내 시작해 줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 길 안내 재개해 줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 네비를 켜봐" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 내비 켜줘" to NaverVoiceCommand.Control.START_NATIVE,
+            "안경 알림 안내 재개해 줘" to NaverVoiceCommand.Control.START_HUD,
+            "안경 알림 안내 종료해 줘" to NaverVoiceCommand.Control.STOP_HUD,
             "길찾기 취소해 줘" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 요청 취소" to NaverVoiceCommand.Control.CANCEL_REQUEST,
             "길 안내 상태 알려 줘?" to NaverVoiceCommand.Control.STATUS,
@@ -29,6 +33,10 @@ class NaverNavigationRegressionTest {
             "안경 길 안내 종료해 줘 그리고 기록 삭제", "", "타이머 취소").forEach { assertNull(it, c.control(it)) }
         assertEquals(NaverVoiceCommand.Mode.WALK, c.parse("인천시청까지 걸어서 안내해 줘")?.mode)
         assertEquals("인천시청", c.parse("인천시청까지 걸어서 안내해 줘")?.destination)
+        assertEquals(false, c.parse("인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(false, c.parse("네이버지도에서 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("휴대폰에서 네이버지도 인천시청까지 걸어서 안내해 줘")?.phoneApp)
+        assertEquals(true, c.parse("네이버지도에서 강남역 검색해 줘")?.phoneApp)
         assertEquals(false, c.parse("네이버지도에서 강남역 검색해 줘")?.routeRequested)
         assertNull(c.parse("서울역으로 안내하지 마"))
         assertEquals("집", c.parse("집까지 길찾기 해 줘")?.destination)
@@ -44,6 +52,51 @@ class NaverNavigationRegressionTest {
         assertEquals(1L, message.mode)
         assertNull(message.audio)
         assertEquals("""{"request_id":"preset-request","revision":2,"home":{"available":true,"preset_id":"1234567890abcdef"},"company":{"available":true,"preset_id":"fedcba0987654321"}}""", message.json)
+    }
+
+    @Test fun liveSessionUsesPeerSidAndNeverRefreshesStaleGuidance() {
+        val sid = "0123456789abcdef0123456789abcdef"
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            1, "ko-KR", "KR", 1, 1, "overseas", "JVM fixture")
+        val limits = NativeNavigationCapabilities.RasterLimits(4096,
+            NativeNavigationCapabilities.ViewLimits(184, 90, 65536, 16),
+            NativeNavigationCapabilities.ViewLimits(540, 220, 262144, 64))
+        val session = NativeNavigationStartup.Session(params, sid)
+        session.configureRaster(NativeNavigationCapabilities(true, false, true, true, limits))
+        val reply = ProtocolCodec.message(ProtocolCodec.StreamDecoder()
+            .append(session.acceptInitialPresetFrame(1)).single().payload)
+        assertEquals(2, reply.type)
+        assertEquals(sid, org.json.JSONObject(reply.json!!).getString("sid"))
+        assertFalse(session.startAccepted)
+        val snapshot = NativePhoneGuidance.Snapshot(1000L, 1, 0, 0, 0, -1,
+            100, 300, -1, "", "", "fixture", false, false)
+        var closed = false
+        val route = object : NativeLiveNavigation.Route {
+            override val parameters = params
+            override val generation = 1L
+            override val token = "fixture-route"
+            override fun observation() = NativeLiveNavigation.Observation(snapshot, null, null)
+            override fun close() { closed = true }
+        }
+        val live = NativeLiveNavigation(session, route)
+        assertNull(live.next(2, 1100))
+        session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", "other")
+            .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
+        assertNull(live.next(3, 1200))
+        session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", sid)
+            .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
+        val write = checkNotNull(live.next(4, 1300))
+        val message = ProtocolCodec.message(ProtocolCodec.StreamDecoder().append(write.packet).single().payload)
+        assertEquals(0x34, message.type)
+        assertEquals("fixture-route", org.json.JSONObject(message.json!!).getString("route_token"))
+        assertNull(live.next(5, 1400))
+        live.written(write, true, 1500)
+        assertNull(live.next(6, 1600))
+        assertNull(live.next(7, 5000))
+        assertNull(live.next(8, 12000))
+        assertNotNull(live.failure)
+        live.close()
+        assertTrue(closed)
     }
 
     @Test fun exactTurnOnlyNeverGuessFromEtaOrConflict() {
