@@ -23,14 +23,48 @@ internal object OfflineRouteProgress {
         val lon=Math.toRadians(longitudeDelta(a.longitude,b.longitude))
         return 2*R*asin(sqrt((sin(lat/2).pow(2)+cos(Math.toRadians(a.latitude))*cos(Math.toRadians(b.latitude))*sin(lon/2).pow(2)).coerceIn(0.0,1.0)))
     }
-    fun match(route: OfflineWalkingRoute.Route, fix: Fix, nowMs: Long): Progress? {
+    data class Assessment(val progress: Progress?, val confidentlyOffRoute: Boolean = false,
+                          val arrivalCandidate: Boolean = false)
+    enum class Terminal { ARRIVED, OFF_ROUTE }
+    /** Three distinct consecutive recent measurements spanning two seconds.
+     * A poor/ambiguous fix resets the candidate. Initial conservative policy. */
+    class TerminalTracker {
+        private var kind: Terminal? = null
+        private var first = -1L
+        private var last = -1L
+        private var count = 0
+        fun reset() { kind = null; first = -1L; last = -1L; count = 0 }
+        fun observe(assessment: Assessment, stamp: Long, now: Long): Terminal? {
+            if (stamp < 0 || now < stamp || now-stamp >= NativePhoneGuidance.VALID_FOR_MS) {
+                reset(); return null
+            }
+            if (stamp <= last) return null
+            val candidate = when {
+                assessment.arrivalCandidate -> Terminal.ARRIVED
+                assessment.confidentlyOffRoute -> Terminal.OFF_ROUTE
+                else -> null
+            }
+            if (candidate == null) { reset(); last = stamp; return null }
+            if (candidate != kind || last < 0 || stamp-last > 3_000L) {
+                kind = candidate; first = stamp; count = 0
+            }
+            last = stamp; ++count
+            return candidate.takeIf { count >= 3 && stamp-first >= 2_000L }
+        }
+    }
+    fun match(route: OfflineWalkingRoute.Route, fix: Fix, nowMs: Long): Progress? =
+        assess(route, fix, nowMs).progress
+
+    /** Absence of a match is not proof of deviation: ambiguous crossings,
+     * poor GPS and incomplete geometry must never trigger a new route. */
+    fun assess(route: OfflineWalkingRoute.Route, fix: Fix, nowMs: Long): Assessment {
         if (fix.observedAtMs < 0 || nowMs < fix.observedAtMs ||
             nowMs-fix.observedAtMs >= NativePhoneGuidance.VALID_FOR_MS ||
             !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..25.0 ||
             !fix.point.latitude.isFinite() || !fix.point.longitude.isFinite() ||
-            fix.point.latitude !in -90.0..90.0 || fix.point.longitude !in -180.0..180.0) return null
+            fix.point.latitude !in -90.0..90.0 || fix.point.longitude !in -180.0..180.0) return Assessment(null)
         val points=route.course.points
-        if (points.size !in 2..30_000) return null
+        if (points.size !in 2..30_000) return Assessment(null)
         val prefix=DoubleArray(points.size)
         val candidates=ArrayList<Candidate>()
         val scale=cos(Math.toRadians(fix.point.latitude))
@@ -38,22 +72,28 @@ internal object OfflineRouteProgress {
             R*Math.toRadians(longitudeDelta(fix.point.longitude,p.longitude))*scale,
             R*Math.toRadians(p.latitude-fix.point.latitude))
         val maxLateral=minOf(30.0,fix.accuracyMeters+12.0)
+        var minLateral=Double.POSITIVE_INFINITY
+        var incomplete=false
         for(i in 0 until points.lastIndex) {
             val length=distance(points[i],points[i+1])
             prefix[i+1]=prefix[i]+length
-            if(length < 0.01 || length > 1000.0) continue
+            if(length > 1000.0) { incomplete=true; continue }
+            if(length < 0.01) continue
             val (ax,ay)=xy(points[i]); val (bx,by)=xy(points[i+1])
             val dx=bx-ax; val dy=by-ay; val squared=dx*dx+dy*dy
             if(squared < 0.0001) continue
             val f=(-(ax*dx+ay*dy)/squared).coerceIn(0.0,1.0)
             val lateral=hypot(ax+f*dx,ay+f*dy)
+            minLateral=minOf(minLateral,lateral)
             if(lateral<=maxLateral) candidates.add(Candidate(i,f,lateral,prefix[i]+f*length))
         }
-        val best=candidates.minByOrNull { it.lateral } ?: return null
+        val best=candidates.minByOrNull { it.lateral } ?: return Assessment(null,
+            !incomplete && minLateral.isFinite() && fix.accuracyMeters <= 15.0 &&
+                minLateral > 45.0 + fix.accuracyMeters)
         // Adjacent projections of the same junction are equivalent; a
         // materially different along-route position within GPS error is not.
         if(candidates.any { abs(it.along-best.along)>maxOf(25.0,2*fix.accuracyMeters) &&
-                it.lateral<=best.lateral+fix.accuracyMeters }) return null
+                it.lateral<=best.lateral+fix.accuracyMeters }) return Assessment(null)
         val remaining=(prefix.last()-best.along).coerceAtLeast(0.0)
         // If a fix is near a turn, retain it until the measured progress
         // exceeds its location by the uncertainty margin; never declare arrival.
@@ -70,6 +110,12 @@ internal object OfflineRouteProgress {
             val elapsed=times[best.segment]+best.fraction*(times[best.segment+1]-times[best.segment])
             (times.last()-elapsed).takeIf { it.isFinite() && it in 0.0..604800.0 }?.roundToInt()
         } else null
-        return Progress(fix.observedAtMs,remaining.roundToInt(),next,nextDistance,estimate,best.lateral.roundToInt(),following)
+        // Require both requested and snapped endpoint, including GPS uncertainty.
+        val end = route.requestedEnd
+        val nearDestination = !incomplete && end != null && fix.accuracyMeters <= 10.0 &&
+            remaining <= 20.0 && distance(fix.point, end)+fix.accuracyMeters <= 25.0 &&
+            distance(fix.point, points.last())+fix.accuracyMeters <= 25.0
+        return Assessment(Progress(fix.observedAtMs,remaining.roundToInt(),next,nextDistance,estimate,best.lateral.roundToInt(),following),
+            arrivalCandidate = nearDestination)
     }
 }
