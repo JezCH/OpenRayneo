@@ -34,6 +34,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         // The owner supplies the same truthful feature registry as SPP.
         fun navigationHostSupported(): Boolean = false
         fun onBleHostCapabilityWritten() {}
+        fun onLinkEvidence(category: String, detail: String) {}
     }
 
     private val adapter = context.getSystemService(BluetoothManager::class.java).adapter
@@ -86,7 +87,37 @@ internal class RayneoConnection(private val context: Context, private val listen
     @Volatile private var generation = 0
     private var bondReceiver: BroadcastReceiver? = null
     private var connectionStage = "연결 대기 중"
-    private val timeout = Runnable { fail("연결 시간 초과: $connectionStage") }
+    private val timeout = Runnable { fail("연결 시간 초과: $connectionStage", "connection-timeout") }
+    private var sppAttempt = 0
+
+    // Only fixed labels, counts and booleans. No identities, raw packet data,
+    // error messages or conversation content enter the persistent timeline.
+    private fun evidence(category: String, detail: String) {
+        runCatching {
+            listener.onLinkEvidence(category, "g=$generation spp=$sppAttempt mono=${android.os.SystemClock.elapsedRealtime()} auth=$authenticationHandled gattObject=${gatt != null} socketObject=${socket != null} ready=$ready $detail")
+        }
+    }
+    private fun environmentEvidence(event: String) {
+        fun permission(pkg: String): String = runCatching {
+            context.packageManager.getApplicationInfo(pkg, 0)
+            if (context.packageManager.checkPermission(android.Manifest.permission.BLUETOOTH_CONNECT, pkg) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED) "allowed" else "denied"
+        }.getOrDefault("not-visible")
+        evidence("link-environment", "event=$event globalPermission=${permission("com.rayneo.venus.pub")} chinaPermission=${permission("com.rayneo.venus")} permissionNotConnection=true")
+    }
+    fun observeAcl(device: BluetoothDevice, action: String) {
+        val matches = runCatching {
+            device.address.equals(expectedAddress, true) || device.address.equals(gatt?.device?.address, true)
+        }.getOrDefault(false)
+        if (!matches) return
+        val event = when (action) {
+            BluetoothDevice.ACTION_ACL_CONNECTED -> "connected"
+            BluetoothDevice.ACTION_ACL_DISCONNECTED -> "disconnected"
+            BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED -> "disconnect-requested"
+            else -> return
+        }
+        evidence("link-acl", "event=$event transportAndInitiatorUnknown=true")
+    }
 
     fun showBonded() {
         check(adapter.isEnabled) { "먼저 휴대폰 블루투스를 켜세요" }
@@ -193,12 +224,14 @@ internal class RayneoConnection(private val context: Context, private val listen
 
     fun connect(device: Device, bleOnly: Boolean = false, automatic: Boolean = false) {
         // Internal cleanup must not publish a second, false disconnect during a connection attempt.
-        resetConnection()
+        resetConnection("new-attempt")
         automaticConnection = automatic
         this.bleOnly = bleOnly
         expectedAddress = device.classicAddress
         pairingSequence = 0
         bleDecoder = ProtocolCodec.StreamDecoder()
+        evidence("link-lifecycle", "event=attempt automatic=$automatic bleOnly=$bleOnly")
+        environmentEvidence("attempt")
         // The official SDK and upstream Mac register over BLE before a new
         // system bond. For an existing bond do not create or remove it.
         // openRfcomm verifies/creates the permitted bond after BLE authentication.
@@ -267,8 +300,9 @@ internal class RayneoConnection(private val context: Context, private val listen
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(connection: BluetoothGatt, status: Int, newState: Int) {
             if (connection !== gatt) return
+            evidence("link-gatt", "event=state status=$status newState=$newState")
             if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
-                fail("BLE 연결 종료: status=$status, state=$newState")
+                fail("BLE 연결 종료: status=$status, state=$newState", "gatt-state")
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) guarded {
@@ -322,6 +356,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                 // Keep existing binding; do not replace credentials or remove a bond.
                 identity = if (hasBinding) bound else androidIdentity()
                 connectionPairValue = ProtocolCodec.pairingIntentForLink(automaticConnection, systemBonded)
+                evidence("link-peer", "event=identity state=${value[6].toInt() and 255} hasBinding=$hasBinding systemBonded=$systemBonded pairingMode=$connectionPairValue")
                 log("신원 읽음; 상태=${value[6].toInt() and 255}; 신원 출처=${if (hasBinding) "안경 바인딩" else "이 앱의 Android ID"}; 시스템 페어링=$systemBonded; 연결 모드=$connectionPairValue")
                 val receive = checkNotNull(receiveCharacteristic) { "안경 수신 서비스를 찾을 수 없음" }
                 check(connection.setCharacteristicNotification(receive, true)) { "BLE 알림을 켤 수 없음" }
@@ -335,6 +370,7 @@ internal class RayneoConnection(private val context: Context, private val listen
 
         override fun onDescriptorWrite(connection: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (connection !== gatt || descriptor.uuid != CCCD) return
+            evidence("link-gatt", "event=cccd status=$status")
             guarded {
                 check(status == BluetoothGatt.GATT_SUCCESS) { "BLE 알림 구독 실패: $status" }
                 state("기기 정보 교환 중…", busy = true)
@@ -450,13 +486,15 @@ internal class RayneoConnection(private val context: Context, private val listen
         when (frame.payload.firstOrNull()?.toInt()?.and(255)) {
             22 -> {
                 peerConnectionStatus = ProtocolCodec.pairingStatusBytes(frame.payload)?.joinToString(",")?.let { "$source [$it]" } ?: "$source 형식 미확인"
+                evidence("link-peer", "event=cmd22 source=$source bytes=${frame.payload.size} status=${ProtocolCodec.pairingStatusBytes(frame.payload)?.joinToString(",") ?: "unparsed"}")
                 log("안경 연결 상태 cmd22=$peerConnectionStatus")
             }
             23 -> {
                 peerRegistrationStatus = ProtocolCodec.pairingStatusBytes(frame.payload)?.joinToString(",")?.let { "$source [$it]" } ?: "$source 형식 미확인"
+                evidence("link-peer", "event=cmd23 source=$source bytes=${frame.payload.size} status=${ProtocolCodec.pairingStatusBytes(frame.payload)?.joinToString(",") ?: "unparsed"}")
                 log("안경 등록 상태 cmd23=$peerRegistrationStatus")
             }
-            30 -> log("안경 SPP 연결 요청 cmd30 수신 ($source)")
+            30 -> { evidence("link-peer", "event=cmd30 source=$source bytes=${frame.payload.size}"); log("안경 SPP 연결 요청 cmd30 수신 ($source)") }
         }
     }
 
@@ -481,6 +519,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                 check(fields[17]?.contentEquals(authentication(random)) == true) { "앱 인증이 거부됨" }
                 if (!authenticationHandled) {
                     authenticationHandled = true
+                    evidence("link-peer", "event=cmd25-verified peerRnlinkUnknown=true")
                     log("BLE  앱 인증 통과")
                     if (bleOnly) {
                         main.removeCallbacks(timeout)
@@ -592,6 +631,7 @@ internal class RayneoConnection(private val context: Context, private val listen
         val deadline = initialLauncherWait ?: return
         initialLauncherWait = null
         main.removeCallbacks(deadline)
+        evidence("link-peer", "event=initial-launcher-finished replied=${initialLauncherStatus == "SPP 전 BLE 기기 상태 회신 수신"}")
         log(initialLauncherStatus)
         // Keep existing bond/normal RFCOMM setup and subsequent full readback.
         openRfcomm()
@@ -605,14 +645,17 @@ internal class RayneoConnection(private val context: Context, private val listen
     /** Recover only a previously open SPP socket on the still-authenticated,
      * existing bond. No new registration or guessed wire command. A second
      * loss or a BLE failure falls back to the supervisor's full reconnect. */
-    private fun sppFailed(connection: BluetoothSocket, session: Int, reason: String) {
+    private fun sppFailed(connection: BluetoothSocket, session: Int, reason: String, origin: String, metrics: String = "") {
         if (session != generation || socket !== connection) return
+        evidence("link-spp", "event=failure origin=$origin $metrics")
+        environmentEvidence("spp-failure")
         val peer = runCatching { expectedAddress?.let(adapter::getRemoteDevice) }.getOrNull()
         if (!ready || bleOnly || sppRecoveryUsed || !authenticationHandled || gatt == null ||
             peer == null || runCatching { peer.bondState }.getOrNull() != BluetoothDevice.BOND_BONDED) {
-            fail(reason)
+            fail(reason, "spp-fallback")
             return
         }
+        evidence("link-lifecycle", "event=spp-only-recovery")
         sppRecoveryUsed = true
         ready = false
         socket = null
@@ -636,6 +679,8 @@ internal class RayneoConnection(private val context: Context, private val listen
         state("BLE  인증됨, 연결 중: SPP…", busy = true)
         val session = generation
         log("클래식 블루투스 페어링 상태=${target.bondState}; RFCOMM 서비스 UUID=$SPP")
+        sppAttempt++
+        evidence("link-spp", "event=connect-start bond=${target.bondState}")
         val pending = target.createRfcommSocketToServiceRecord(SPP)
         socket = pending
         main.removeCallbacks(timeout)
@@ -648,12 +693,13 @@ internal class RayneoConnection(private val context: Context, private val listen
                     if (session != generation || socket !== pending) return@post
                     main.removeCallbacks(timeout)
                     ready = true
+                    evidence("link-spp", "event=connect-success")
                     startReader(pending, session)
                     state("연결됨: BLE 인증과 RFCOMM 모두 정상", ready = true)
                     if (session == generation) guarded { replyBleCapability() }
                 }
             } catch (error: Exception) {
-                main.post { if (session == generation && socket === pending) fail("SPP  연결 실패: ${error.message}") }
+                main.post { if (session == generation && socket === pending) { evidence("link-spp", "event=connect-failure error=${error.javaClass.simpleName}"); fail("SPP  연결 실패: ${error.message}", "spp-connect") } }
             }
         }
     }
@@ -662,11 +708,25 @@ internal class RayneoConnection(private val context: Context, private val listen
         Thread({
             val decoder = ProtocolCodec.StreamDecoder()
             val buffer = ByteArray(4096)
+            var readBytes = 0L
+            var parsedFrames = 0L
+            var ackFrames = 0L
+            var lastRead = -1L
+            var eof = false
             try {
                 while (socket === connection) {
                     val count = connection.inputStream.read(buffer)
-                    check(count >= 0) { "안경이 데이터 스트림을 닫음" }
+                    eof = count < 0
+                    check(!eof) { "안경이 데이터 스트림을 닫음" }
+                    if (count > 0) {
+                        val first = readBytes == 0L
+                        readBytes += count
+                        lastRead = android.os.SystemClock.elapsedRealtime()
+                        if (first) main.post { if (session == generation && socket === connection) evidence("link-spp", "event=first-read bytes=$count") }
+                    }
                     val frames = decoder.append(buffer.copyOf(count))
+                    parsedFrames += frames.size
+                    ackFrames += frames.count { it.acknowledgement }
                     // Match upstream transport semantics: reply on the same SPP stream
                     // to frames requesting receipts. ACK frames themselves never get ACKed.
                     val acks = ProtocolCodec.transportAcknowledgements(frames)
@@ -677,7 +737,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                             connection.outputStream.flush()
                         } catch (error: Exception) {
                             main.post {
-                                sppFailed(connection, session, "SPP 확인 응답 전송 실패: ${error.message}")
+                                sppFailed(connection, session, "SPP 확인 응답 전송 실패: ${error.message}", "ack-write", "error=${error.javaClass.simpleName}")
                             }
                         }
                     }
@@ -690,7 +750,10 @@ internal class RayneoConnection(private val context: Context, private val listen
                     }
                 }
             } catch (error: Exception) {
-                main.post { sppFailed(connection, session, "데이터 연결 종료: ${error.message}") }
+                val origin = if (eof) "read-eof" else "read-exception"
+                val age = if (lastRead < 0L) -1L else android.os.SystemClock.elapsedRealtime() - lastRead
+                val metrics = "error=${error.javaClass.simpleName} bytes=$readBytes frames=$parsedFrames acks=$ackFrames lastReadAgeMs=$age"
+                main.post { sppFailed(connection, session, "데이터 연결 종료: ${error.message}", origin, metrics) }
             }
         }, "rayneo-reader").start()
     }
@@ -758,7 +821,7 @@ internal class RayneoConnection(private val context: Context, private val listen
                 main.post {
                     // Invalidate the dead socket before completing the old write;
                     // its callback must not see a healthy link or abort a new one.
-                    sppFailed(connection, session, "데이터 전송 실패: ${error.message}")
+                    sppFailed(connection, session, "데이터 전송 실패: ${error.message}", "business-write", "error=${error.javaClass.simpleName}")
                     completion(Result.failure(error))
                 }
             }
@@ -775,10 +838,12 @@ internal class RayneoConnection(private val context: Context, private val listen
             .onFailure { log("BLE 스캔 정리 실패: ${it.message ?: it.javaClass.simpleName}") }
     }
 
-    fun disconnect() { resetConnection(); state("연결 끊김") }
+    fun disconnect() { resetConnection("explicit-disconnect"); state("연결 끊김") }
 
-    private fun resetConnection() {
+    private fun resetConnection(origin: String) {
+        if (gatt != null || socket != null || authenticationHandled) evidence("link-lifecycle", "event=reset-before-close origin=$origin")
         generation++
+        sppAttempt = 0
         main.removeCallbacks(timeout)
         stopObservingBond()
         stopScan()
@@ -818,10 +883,15 @@ internal class RayneoConnection(private val context: Context, private val listen
     fun close() { disconnect(); io.shutdownNow() }
 
     // Publish the actual failure once, atomically with teardown, so the supervisor can retain it.
-    fun abortConnection(message: String) = fail(message)
-    private fun fail(message: String) { resetConnection(); state(message) }
+    fun abortConnection(message: String) = fail(message, "supervisor-abort")
+    private fun fail(message: String, origin: String = "other") {
+        evidence("link-lifecycle", "event=fail origin=$origin")
+        environmentEvidence("fail")
+        resetConnection(origin)
+        state(message)
+    }
     private fun guarded(action: () -> Unit) {
-        try { action() } catch (error: Exception) { fail(error.message ?: error.javaClass.simpleName) }
+        try { action() } catch (error: Exception) { evidence("link-lifecycle", "event=guard-failure error=${error.javaClass.simpleName}"); fail(error.message ?: error.javaClass.simpleName, "guard") }
     }
     private fun state(text: String, ready: Boolean = false, busy: Boolean = false) {
         if (busy) connectionStage = text

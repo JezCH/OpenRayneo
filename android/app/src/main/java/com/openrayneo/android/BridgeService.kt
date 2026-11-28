@@ -32,6 +32,12 @@ internal class BridgeService : Service() {
         while (diagnosticErrors.size > 30) diagnosticErrors.removeFirst()
     }
     fun diagnosticUiFailure(error: Exception) = diagnosticFailure("UI", error)
+    // User observations are labels, not verified device state. No free-text payload.
+    fun markLinkDiagnostic(observation: String) {
+        if (observation !in setOf("official-only", "own-only", "coexistence-observed", "official-app-required-on-hud", "native-feature-worked-on-hud")) return
+        diagnosticEvent("link-user-observation", "event=$observation userReported=true mono=${SystemClock.elapsedRealtime()} phase=${state.link.phase.name}")
+        if (::diagnosticTrace.isInitialized) runCatching { diagnosticTrace.flush() }
+    }
     fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear(); diagnosticErrors.clear() }
     lateinit var settings: AppSettings; private set
     lateinit var conversations: ConversationController; private set
@@ -1374,7 +1380,8 @@ internal class BridgeService : Service() {
                 if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
             }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog,
             nativeHostSupport = { !destroyed && !state.disconnecting && hasLiveNativeHostSource() },
-            bleHostCapabilityWritten = { if (!destroyed) nativeHostCapabilityDirty = true })
+            bleHostCapabilityWritten = { if (!destroyed) nativeHostCapabilityDirty = true },
+            linkEvidenceEvent = { category, detail -> diagnosticEvent(category, detail) })
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
@@ -4055,7 +4062,7 @@ internal class BridgeService : Service() {
             appendLine("OpenRayneo diagnostic report v1")
             appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
             appendLine("exportedAt=${System.currentTimeMillis()} Android=${android.os.Build.VERSION.SDK_INT}")
-            appendLine("Phone-side evidence only; no physical HUD confirmation. Times are Unix ms.")
+            appendLine("Phone-side evidence only; no physical HUD or device RNLink confirmation. Times are Unix ms; mono is elapsedRealtime ms since boot. g is BLE generation, spp is socket attempt within that generation. Official app permission and ACL broadcasts do not establish current app ownership or disconnect initiator.")
             appendLine("[Recent feature timeline, bounded to 400 events, 40 per category]")
             appendLine(diagnosticTrace.export())
             appendLine("[AI request states, no prompt or payload]")

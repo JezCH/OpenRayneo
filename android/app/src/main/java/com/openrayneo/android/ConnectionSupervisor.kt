@@ -5,6 +5,7 @@ package com.openrayneo.android
 import android.annotation.SuppressLint
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -27,6 +28,7 @@ internal class ConnectionSupervisor(
     private val report: (String) -> Unit,
     private val nativeHostSupport: () -> Boolean = { false },
     private val bleHostCapabilityWritten: () -> Unit = {},
+    private val linkEvidenceEvent: (String, String) -> Unit = { _, _ -> },
 ) : RayneoConnection.Listener {
     val transport = RayneoConnection(context, this)
     var state = LinkState(); private set
@@ -47,7 +49,14 @@ internal class ConnectionSupervisor(
     private val retry = Runnable { watchScheduled = false; startWatch() }
     private val adapterChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (closed || intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            if (closed) return
+            val action = intent.action ?: return
+            if (action != BluetoothAdapter.ACTION_STATE_CHANGED) {
+                if (action in setOf(BluetoothDevice.ACTION_ACL_CONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED)) {
+                    runCatching { intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)?.let { transport.observeAcl(it, action) } }
+                }
+                return
+            }
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
                     main.removeCallbacks(retry); watchScheduled = false; watching = false; transport.stopPresenceWatch()
@@ -64,7 +73,11 @@ internal class ConnectionSupervisor(
         }
     }
     init {
-        context.registerReceiver(adapterChanges, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_EXPORTED)
+        context.registerReceiver(adapterChanges, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED).apply {
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED)
+        }, Context.RECEIVER_EXPORTED)
     }
     private fun publish(next: LinkState) {
         if (state != next) { state = next; changed(state) }
@@ -210,4 +223,5 @@ internal class ConnectionSupervisor(
     override fun onLog(text: String) = report(text)
     override fun navigationHostSupported(): Boolean = nativeHostSupport()
     override fun onBleHostCapabilityWritten() = bleHostCapabilityWritten()
+    override fun onLinkEvidence(category: String, detail: String) = linkEvidenceEvent(category, detail)
 }
