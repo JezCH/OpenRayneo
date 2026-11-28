@@ -17,6 +17,7 @@ internal class OfflineNativeRoute(
     override val parameters: NativeNavigationStartup.Parameters,
     private val wire: Wire,
     internal val requiresProviderSelection: Boolean = false,
+    private val diagnostic: (String) -> Unit = {},
     private val changed: () -> Unit
 ) : NativeLiveNavigation.Route {
     internal class Wire(val travelMode: Int, val guidingState: Int, val unitSystem: Int,
@@ -126,15 +127,18 @@ internal class OfflineNativeRoute(
     private var terminal = false
     init {
         try {
+            diagnostic("gps-watch-start")
             watch = OfflineRouteLocation.watch(context) { fix ->
                 if (!closed && !terminal) {
                     if (fix == null || !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..25.0) {
+                        diagnostic("gps-fix-invalid-or-inaccurate")
                         ++revision
                         terminalTracker.reset()
                         latest = null
                         current = null
                         changed()
                     } else if (fix.observedAtMs > lastSeenAt) {
+                        diagnostic("gps-fix-valid")
                         lastSeenAt = fix.observedAtMs
                         latest = fix
                         process()
@@ -155,14 +159,17 @@ internal class OfflineNativeRoute(
         worker.execute {
             val result = runCatching {
                 val assessment = OfflineRouteProgress.assess(course, fix, SystemClock.elapsedRealtime())
+                diagnostic(if (assessment.progress != null) "gps-route-matched" else if (assessment.confidentlyOffRoute) "gps-off-route-candidate" else "gps-route-match-unavailable")
                 val guidance = assessment.progress?.let { snapshot(it, wire, fix.speedMpsX100) }
+                if (assessment.progress != null && guidance == null) diagnostic("guidance-encoding-rejected")
                 val observation = guidance?.let {
                     val mini = NativeCourseRaster.render(course.course, NativeRasterFrame.View.MINI, fix.point)
                     val full = NativeCourseRaster.render(course.course, NativeRasterFrame.View.OVERVIEW, fix.point)
+                    diagnostic("raster-ready miniBytes=${mini.size} overviewBytes=${full.size}")
                     NativeLiveNavigation.Observation(it, mini, full)
                 }
                 assessment to observation
-            }.getOrNull()
+            }.onFailure { diagnostic("route-observation-failure=" + it.javaClass.simpleName) }.getOrNull()
             main.post {
                 busy = false
                 if (closed) return@post
@@ -172,6 +179,7 @@ internal class OfflineNativeRoute(
                     val decision = terminalTracker.observe(assessment, fix.observedAtMs, now)
                     current = when (decision) {
                         OfflineRouteProgress.Terminal.ARRIVED -> {
+                            diagnostic("arrival-confirmed")
                             // Continue sampling until the session actually sends
                             // the terminal frame and closes. Never freeze a
                             // pre-READY arrival timestamp or renew its TTL.
@@ -179,6 +187,7 @@ internal class OfflineNativeRoute(
                             NativeLiveNavigation.Observation(arrived, null, null)
                         }
                         OfflineRouteProgress.Terminal.OFF_ROUTE -> {
+                            diagnostic("deviation-confirmed")
                             terminal = true
                             failureReason = "실제 경로 이탈 확인 · 안내 종료, 새 경로 요청 필요"
                             null

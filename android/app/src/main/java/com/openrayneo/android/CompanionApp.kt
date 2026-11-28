@@ -785,6 +785,12 @@ private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
             if (enabled) model.service().enableLocationWhileVisible()
         } }, enabled = saved != null && idle && (!enabled || key.isNotBlank()),
             modifier = Modifier.fillMaxWidth()) { Text("선택 및 API 키 저장") }
+        Note("안경이나 GPS 없이 카카오 공식 예제 좌표로 실제 도보 API 1회 호출 및 PNG 생성을 확인합니다. API 쿼터가 소모됩니다.")
+        ToolOutlinedButton(onClick = model::checkKakaoProvider,
+            enabled = unchanged && saved?.configured == true && !model.kakaoProviderCheckBusy && !s.nativeStartTestPending,
+            modifier = Modifier.fillMaxWidth()) { Text("카카오 API 독립 검증") }
+        if (model.kakaoProviderCheckBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Note(model.kakaoProviderCheckStatus)
         TextButton(onClick = actions.locationPermission) { Text("정확한 위치 권한 허용") }
         OutlinedTextField(destination, { destination = it }, label = { Text("목적지 이름 또는 위도, 경도") },
             singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = idle)

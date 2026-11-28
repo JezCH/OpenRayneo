@@ -294,7 +294,8 @@ internal class BridgeService : Service() {
         val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
             wire.travelMode, "ko-KR", "KR", wire.unitSystem, wire.drivingSide, "overseas",
             destination.takeIf { it.toByteArray(Charsets.UTF_8).size <= 96 } ?: "선택한 도보 경로")
-        val route = OfflineNativeRoute(this, course, params, wire, requiresProviderSelection) { pumpNativeNavigation() }
+        val route = OfflineNativeRoute(this, course, params, wire, requiresProviderSelection,
+            diagnostic = { stage -> diagnosticEvent("navigation-observation", stage, true) }) { pumpNativeNavigation() }
         route.remainingAutomaticReroutes = rerouteBudget
         try { setPreparedNativeRoute(route) } catch (error: Exception) { route.close(); throw error }
         queuedNativeDestination = params.destination
@@ -391,6 +392,14 @@ internal class BridgeService : Service() {
     private fun pumpNativeNavigation() {
         val pending = offlinePreparation
         val prepared = preparedNativeRoute as? OfflineNativeRoute
+        if (prepared?.failureReason != null) {
+            val sid = queuedNativePeerSid
+            clearPreparedNativeRoute()
+            nativeStartTestStatus = "순정 내비 시작 전 실제 경로 이탈 · 새 경로 요청 필요"
+            sid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
+            notifyUI()
+            return
+        }
         if ((pending != null && !offlineProviderAvailable(pending.provider)) ||
             (prepared != null && !liveNativeSourceMatches(prepared))) {
             val sid = pending?.peerSid ?: queuedNativePeerSid

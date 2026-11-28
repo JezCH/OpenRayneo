@@ -294,6 +294,35 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var offlineWalkingRoute by mutableStateOf<OfflineWalkingRoute.Route?>(null)
         private set
     private val offlineRouteWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    var kakaoProviderCheckBusy by mutableStateOf(false); private set
+    var kakaoProviderCheckStatus by mutableStateOf("카카오 API 독립 검증 미실행"); private set
+    private var kakaoProviderCheckGeneration = 0L
+    // Explicit one-call check with the public documented example, not personal GPS.
+    fun checkKakaoProvider() = attempt {
+        check(!kakaoProviderCheckBusy) { "카카오 API 확인 진행 중" }
+        val config = KakaoNativeRouteSettings.read(context)
+        check(config.configured) { "카카오 API 키를 먼저 저장하세요." }
+        val ticket = ++kakaoProviderCheckGeneration
+        kakaoProviderCheckBusy = true
+        kakaoProviderCheckStatus = "공식 예제 좌표로 실제 도보 경로 요청 중"
+        offlineRouteWorker.execute {
+            val result = runCatching {
+                val route = KakaoWalkingRoute.calculate(config.key,
+                    NaverWalkingCourse.Point(37.394776627382875, 127.11119669891646),
+                    "37.4199323570413,127.12629039752096")
+                val preview = runCatching { NativeCourseRaster.preview(route.course) }
+                "카카오 실제 경로 성공 · 좌표 ${route.course.points.size}개 · 안내 ${route.turns.size}개 · PNG 생성 ${if (preview.isSuccess) "성공" else "실패"}"
+            }
+            main.post {
+                if (ticket == kakaoProviderCheckGeneration) {
+                    kakaoProviderCheckBusy = false
+                    kakaoProviderCheckStatus = result.getOrElse {
+                        "카카오 독립 검증 실패 · " + ((it as? KakaoWalkingRoute.Failure)?.message ?: "응답 처리 오류")
+                    }
+                }
+            }
+        }
+    }
     var offlineProgress by mutableStateOf<OfflineRouteProgress.Progress?>(null)
         private set
     var offlineProgressBusy by mutableStateOf(false)
@@ -544,6 +573,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                 turns.takeLast(30).forEach { turn -> appendLine("source=$source\nQ: ${turn.question.take(4000)}\nA: ${turn.answer.take(6000)}") }
             }
         }
+        appendLine("[Kakao independent API check] $kakaoProviderCheckStatus")
         if (includeDetails) appendLine("Last UI error: $error")
     }
 
@@ -817,6 +847,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() {
+        ++kakaoProviderCheckGeneration
         clearWalkingCourse()
         cancelSubscription()
         subscriptionWorker.shutdown()
