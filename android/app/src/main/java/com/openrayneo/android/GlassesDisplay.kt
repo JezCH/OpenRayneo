@@ -15,6 +15,7 @@ internal class GlassesDisplay(
     private val onAudio: (Long, ByteArray) -> Unit,
     private val externalPage: (String) -> Unit,
 ) {
+    var diagnostic: (String) -> Unit = {}
     private var session: PageSession? = null
     private var sid: String? = null
     private var generation = 0
@@ -115,6 +116,7 @@ internal class GlassesDisplay(
             if (message.type == 4 && !unmatchedAudioReported) {
                 unmatchedAudioReported = true
                 report("수신: $source 오디오 패킷이지만 세션이 일치하지 않아 디코더로 보내지 않음")
+                diagnostic("audio discarded: session mismatch source=$source")
             }
             return
         }
@@ -224,6 +226,7 @@ internal class GlassesDisplay(
         if (!audioReported) {
             audioReported = true
             report("첫 안경 오디오 패킷 수신: $source, ${packet.size} 바이트")
+            diagnostic("first matching audio packet source=$source bytes=${packet.size}")
         }
         onAudio(id, packet)
     }
@@ -292,8 +295,14 @@ internal class GlassesDisplay(
         if (mode == PageMode.NAVIGATION) require(NavigationFrame.isGrid(content.text)) { "내비게이션 화면은 20열 × 5행을 유지해야 함" }
     }
     private fun send(protocol: Int, type: Int, json: JSONObject, completion: (Result<Unit>) -> Unit) {
-        try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, json.toString()), completion) }
-        catch (error: Exception) { completion(Result.failure(error)) }
+        // Never expose content, session identity or binary payload. Successful
+        // write is not physical display confirmation. Avoid logging each partial.
+        val meta = "0x${protocol.toString(16)} type=$type"
+        if (type != 5) diagnostic("tx $meta")
+        try { write(ProtocolCodec.display(protocol, sequence++ and 65535, type, json.toString())) { result ->
+            diagnostic("write $meta success=${result.isSuccess}")
+            completion(result)
+        } } catch (error: Exception) { diagnostic("write $meta failed"); completion(Result.failure(error)) }
     }
 }
 
