@@ -56,7 +56,7 @@ internal fun OpticalSignature(modifier: Modifier = Modifier) {
 internal fun OpticalActivityHeader(activity: String) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val wide = maxWidth >= 260.dp && LocalDensity.current.fontScale <= 1.3f
-        val artSize = if (maxWidth >= 288.dp) 108.dp else 88.dp
+        val artSize = if (maxWidth >= 288.dp) 76.dp else 64.dp
         if (wide) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -90,10 +90,10 @@ internal fun OpticalQuickPair(first: @Composable (Modifier) -> Unit, second: @Co
 
 @Composable
 internal fun OpticalQuickTile(title: String, subtitle: String, icon: ImageVector, modifier: Modifier, click: () -> Unit) {
-    Surface(onClick = click, modifier = modifier.heightIn(min = 80.dp),
+    Surface(onClick = click, modifier = modifier.heightIn(min = 64.dp),
         shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
             }

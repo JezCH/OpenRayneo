@@ -71,11 +71,22 @@ def editable_node(root):
             return n
     return None
 
-def scroll_content(size):
+def scroll_content(root, size, direction=1):
     width, height = map(int, size.split("x"))
-    adb("shell", "input", "swipe", str(width // 2), str(int(height * .75)),
-        str(width // 2), str(int(height * .34)), "500")
-    time.sleep(1)
+    # Use actual visible scroll container bounds, rather than device fractions
+    # that may fall on a fixed bar, clipped item, or outside the content.
+    candidates = [bounds(n) for n in root.iter("node")
+                  if n.get("package") == PACKAGE and n.get("scrollable") == "true"]
+    candidates = [b for b in candidates if b[2]-b[0] > width * .5 and b[3]-b[1] > height * .15]
+    x1, y1, x2, y2 = max(candidates, key=lambda b: (b[2]-b[0])*(b[3]-b[1])) if candidates else (0, int(height*.26), width, int(height*.84))
+    x = x1 + int((x2-x1)*.32)
+    start = y1 + int((y2-y1)*.72)
+    end = y1 + int((y2-y1)*.44)
+    if direction < 0:
+        start, end = end, start
+    adb("shell", "input", "swipe", str(x), str(start), str(x), str(end), "650")
+    time.sleep(.7)
+    return [x, start, x, end]
 
 def save_check(out, name, raw):
     (out / f"{name}.xml").write_bytes(raw)
@@ -83,35 +94,58 @@ def save_check(out, name, raw):
     assert png.startswith(b"\x89PNG\r\n\x1a\n"), "interaction screenshot PNG missing"
     (out / f"{name}.png").write_bytes(png)
 
-def check_home(root, size, scale):
+def check_home(root, size, scale, out, case):
     targets = ("AI에게 질문", "회의 기록", "실시간 힌트", "한국어 호출", "영상 자막", "한영 통역")
     seen = {target for target in targets if matching_nodes(root, target)}
-    if scale == 1.0:
-        assert set(targets[:4]) <= seen, f"first four shortcuts not visible: {sorted(seen)}"
-    for _ in range(10):
-        if len(seen) == len(targets):
-            return sorted(seen)
-        scroll_content(size)
-        _, root = tree()
-        seen.update(target for target in targets if matching_nodes(root, target))
-    raise RuntimeError(f"missing reachable home shortcuts: {sorted(set(targets) - seen)}")
+    initial = sorted(seen)
+    trace = [{"initial": initial}]
+    try:
+        if scale == 1.0:
+            assert set(targets[:4]) <= seen, f"first four shortcuts not visible: {initial}"
+        for step in range(18):
+            if len(seen) == len(targets):
+                return {"initial": initial, "reachable": sorted(seen)}
+            gesture = scroll_content(root, size, 1 if step < 12 else -1)
+            raw, root = tree()
+            visible = {target for target in targets if matching_nodes(root, target)}
+            seen.update(visible)
+            trace.append({"step": step+1, "gesture": gesture, "visible": sorted(visible),
+                          "labels": sorted(labels(root))[:45]})
+            (out / f"{case}-home-scroll-last.xml").write_bytes(raw)
+        raise RuntimeError(f"missing reachable home shortcuts: {sorted(set(targets) - seen)}")
+    finally:
+        (out / f"{case}-home-scroll-trace.json").write_text(json.dumps(trace, ensure_ascii=False, indent=2))
+        print("HOME_SCROLL_TRACE " + case + " " + json.dumps(trace, ensure_ascii=False))
+        if len(seen) != len(targets):
+            raw, _ = tree()
+            save_check(out, case + "-home-scroll-failure", raw)
 
 def check_ai(root, size, scale, out, case):
-    # The clean test profile starts unconfigured. The setup control, not a
-    # status label, must be available before entering a real AI request.
-    if scale == 1.0:
-        assert matching_nodes(root, "AI 연결 설정"), "setup action not visible on entry"
     setup = bool(matching_nodes(root, "AI 연결 설정"))
-    for _ in range(10):
-        if setup and editable_node(root) is not None:
+    initial = setup
+    trace = [{"initial_setup": setup}]
+    try:
+        for step in range(19):
+            if setup and editable_node(root) is not None:
+                raw, root = tree()
+                assert editable_node(root) is not None
+                save_check(out, case + "-ai-input", raw)
+                if scale == 1.0:
+                    assert initial, "setup action not visible on entry"
+                return {"setup_initial": initial, "setup_reachable": True, "editable_input_reachable": True}
+            gesture = scroll_content(root, size, 1 if step < 12 else -1)
             raw, root = tree()
-            assert editable_node(root) is not None
-            save_check(out, case + "-ai-input", raw)
-            return {"setup_reachable": True, "editable_input_reachable": True}
-        scroll_content(size)
-        _, root = tree()
-        setup = setup or bool(matching_nodes(root, "AI 연결 설정"))
-    raise RuntimeError(f"AI setup/input not reachable: setup={setup}, input={editable_node(root) is not None}")
+            setup = setup or bool(matching_nodes(root, "AI 연결 설정"))
+            trace.append({"step": step+1, "gesture": gesture, "setup": setup,
+                          "editable": editable_node(root) is not None, "labels": sorted(labels(root))[:45]})
+            (out / f"{case}-ai-scroll-last.xml").write_bytes(raw)
+        raise RuntimeError(f"AI setup/input not reachable: setup={setup}, input={editable_node(root) is not None}")
+    finally:
+        (out / f"{case}-ai-scroll-trace.json").write_text(json.dumps(trace, ensure_ascii=False, indent=2))
+        print("AI_SCROLL_TRACE " + case + " " + json.dumps(trace, ensure_ascii=False))
+        if not setup or editable_node(root) is None:
+            raw, _ = tree()
+            save_check(out, case + "-ai-scroll-failure", raw)
 
 def launch(appearance, size, density, scale):
     adb("shell", "am", "force-stop", PACKAGE)
@@ -131,6 +165,7 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     evidence = []
     checks = []
+    failures = []
     try:
         wait_boot()
         adb("shell", "input", "keyevent", "82")
@@ -175,10 +210,17 @@ def main():
                     raise RuntimeError(f"{case}/{tab}: expected destination not visible; labels: {sorted(visible)[:50]}")
                 evidence.append({"case": case, "tab": tab, "file": name + ".png",
                                  "native": True, "check": "actual app, selected tab, destination content"})
-                if index == 0:
-                    checks.append({"case": case, "check": "home-shortcuts", "reachable": check_home(root, size, scale)})
-                elif index == 1:
-                    checks.append({"case": case, "check": "ai-setup-input", **check_ai(root, size, scale, a.out, case)})
+                if index in (0, 1):
+                    check = "home-shortcuts" if index == 0 else "ai-setup-input"
+                    try:
+                        result = (check_home(root, size, scale, a.out, case) if index == 0
+                                  else check_ai(root, size, scale, a.out, case))
+                        checks.append({"case": case, "check": check, "passed": True, **result})
+                    except (AssertionError, RuntimeError, subprocess.SubprocessError) as exc:
+                        failure = {"case": case, "check": check, "passed": False, "error": str(exc)}
+                        checks.append(failure)
+                        failures.append(failure)
+                        print("INTERACTION_FAILURE " + json.dumps(failure, ensure_ascii=False))
     finally:
         (a.out / "manifest.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
         (a.out / "interaction-checks.json").write_text(json.dumps(checks, ensure_ascii=False, indent=2))
@@ -190,6 +232,7 @@ def main():
             pass
     assert len(evidence) == 15, f"captured only {len(evidence)} screens"
     assert len(checks) == 6, f"completed only {len(checks)} interaction checks"
+    assert not failures, f"{len(failures)} interaction checks failed: {failures}"
 
 if __name__ == "__main__":
     main()

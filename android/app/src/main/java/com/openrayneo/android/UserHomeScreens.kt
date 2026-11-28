@@ -123,14 +123,14 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
                 }
             }, second = { tileModifier ->
-                OpticalQuickTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
+                OpticalQuickTile("한국어 호출", "말로 AI 호출", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
             })
         }
         item {
             OpticalQuickPair(first = { tileModifier ->
-                OpticalQuickTile("영상 자막", "휴대폰 소리 → 한국어", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
+                OpticalQuickTile("영상 자막", "휴대폰 소리 번역", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
             }, second = { tileModifier ->
-                OpticalQuickTile("한영 통역", "안경 마이크 · 내장 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
+                OpticalQuickTile("한영 통역", "안경 음성 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
             })
         }
         item {
