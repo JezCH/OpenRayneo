@@ -32,8 +32,9 @@ internal object NaverVoiceCommand {
         val input = prefix.replaceFirst(text, "")
         val match = route.matchEntire(input)
         val place = (match?.groupValues?.get(1) ?: if (explicitMap) search.matchEntire(input)?.groupValues?.get(1) else null)
-            ?.trim()?.takeIf { it.length in 2..120 && it.none(Char::isISOControl) } ?: return null
-        if (place in setOf("여기", "거기", "저기", "어디", "길", "지도", "집", "회사", "이전 목적지")) return null
+            ?.trim()?.takeIf { (it.length in 2..120 || it == "집") && it.none(Char::isISOControl) } ?: return null
+        if (place in setOf("여기", "거기", "저기", "어디", "길", "지도", "이전 목적지")) return null
+        if (place in setOf("집", "회사") && match == null) return null
         val mode = when (match?.groupValues?.get(2)) {
             "걸어서", "도보로" -> Mode.WALK
             "차로", "자동차로" -> Mode.CAR

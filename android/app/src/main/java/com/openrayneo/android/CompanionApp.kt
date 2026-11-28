@@ -696,6 +696,7 @@ private fun NavigationScreen(
                 Note("실제 안내는 네이버지도에서 확인된 신규 알림만 안경에 표시합니다. 실행이 제한된 경우 휴대폰 알림을 사용합니다.")
             }
         }
+        item { NativeNavigationPresetSettings(model) }
         item { NaverPlaceLookupSettings(model) }
         item {
             Note("네이버지도의 시스템 길 안내 알림에서 명확한 방향·거리가 확인될 때만 안경에 표시합니다. 실제 알림 형식은 아직 실기기 검증 전이며, 안내가 없거나 오래되면 휴대폰 네이버지도를 확인하세요.")
@@ -713,6 +714,54 @@ private fun NavigationScreen(
             Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 지도 앱 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
         }
     }
+}
+
+@Composable
+private fun NativeNavigationPresetSettings(model: AppModel) {
+    val context = model.getApplication<android.app.Application>()
+    var saved by remember { mutableStateOf(runCatching { NativeNavigationPresets.read(context) }.getOrNull()) }
+    var home by remember { mutableStateOf(saved?.home?.destination.orEmpty()) }
+    var company by remember { mutableStateOf(saved?.company?.destination.orEmpty()) }
+    var confirm by remember { mutableStateOf(false) }
+    val s = model.state
+    val unchanged = saved != null && home.trim() == saved?.home?.destination.orEmpty() &&
+        company.trim() == saved?.company?.destination.orEmpty()
+    ContentCard {
+        Text("집 · 회사 목적지", style = MaterialTheme.typography.titleMedium)
+        Note("실제 장소 이름 또는 주소를 저장하면 안경 음성 호출에서 '집까지 길찾기 해 줘' 또는 '회사까지 길찾기 해 줘'를 사용할 수 있습니다. 네이버지도에서 목적지와 실제 안내를 확인하세요.")
+        if (saved == null) Note("기존 목적지 설정을 읽지 못했습니다. 덮어쓰지 않았습니다.")
+        OutlinedTextField(home, { home = it }, modifier = Modifier.fillMaxWidth(), label = { Text("집 목적지") }, singleLine = true, enabled = saved != null && !s.nativePresetPending)
+        OutlinedTextField(company, { company = it }, modifier = Modifier.fillMaxWidth(), label = { Text("회사 목적지") }, singleLine = true, enabled = saved != null && !s.nativePresetPending)
+        ToolButton(onClick = { model.attempt {
+            check(!s.nativePresetPending)
+            val next = NativeNavigationPresets.save(context, home, company)
+            saved = next
+            home = next.home?.destination.orEmpty()
+            company = next.company?.destination.orEmpty()
+            runCatching { model.service().cancelVoiceNavigationRequest() }
+        } }, enabled = saved != null && !s.nativePresetPending && !unchanged, modifier = Modifier.fillMaxWidth()) { Text("휴대폰에 목적지 저장") }
+        Note("빈 칸을 저장하면 휴대폰에서만 해당 목적지를 지웁니다. 안경 저장값은 자동 변경하지 않습니다.")
+        HorizontalDivider()
+        Text("순정 목적지 동기화 (개발 검증)", style = MaterialTheme.typography.titleMedium)
+        Note("안경의 집·회사 슬롯을 모두 교체합니다. 주소 대신 목적지 ID만 보냅니다. 순정 경로 공급과 안경 내비 화면 실행은 아직 미완성입니다.")
+        Note(if (s.nativePresetSyncedRevision != null && s.nativePresetSyncedRevision != saved?.revision)
+            "휴대폰 목적지 변경 · 다시 동기화 필요" else s.nativePresetStatus.ifBlank { "안경 연결 후 동기화 가능" })
+        ToolOutlinedButton(onClick = { confirm = true },
+            enabled = s.nativePresetCanSync && !s.nativePresetPending && unchanged && saved?.complete == true,
+            modifier = Modifier.fillMaxWidth()) { Text("두 목적지 안경 동기화") }
+        if (s.nativePresetPending) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("안경의 두 목적지를 교체할까요?") },
+        text = { Text("집: " + saved?.home?.destination.orEmpty() + "\n회사: " + saved?.company?.destination.orEmpty() +
+            "\n\n기존 안경의 집·회사 저장값을 교체하는 개발 검증입니다. 순정 화면 길 안내가 아직 작동한다는 뜻은 아닙니다.") },
+        confirmButton = { TextButton(onClick = {
+            confirm = false
+            model.attempt { model.service().syncNativeNavigationPresets(checkNotNull(saved).revision) }
+        }) { Text("교체 및 동기화") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } }
+    )
 }
 
 @Composable

@@ -31,6 +31,19 @@ class NaverNavigationRegressionTest {
         assertEquals("인천시청", c.parse("인천시청까지 걸어서 안내해 줘")?.destination)
         assertEquals(false, c.parse("네이버지도에서 강남역 검색해 줘")?.routeRequested)
         assertNull(c.parse("서울역으로 안내하지 마"))
+        assertEquals("집", c.parse("집까지 길찾기 해 줘")?.destination)
+        assertEquals("회사", c.parse("회사로 차로 안내해 줘")?.destination)
+        assertNull(c.parse("네이버지도에서 집 검색해 줘"))
+        val frame = ProtocolCodec.StreamDecoder().append(ProtocolCodec.navigationPresetSync(
+            0x6a01, 7, "preset-request", 2, "1234567890abcdef", "fedcba0987654321")).single()
+        assertEquals(0x20, frame.protocol)
+        val message = ProtocolCodec.message(frame.payload)
+        assertEquals(1, message.version)
+        assertEquals(0x10, message.type)
+        assertEquals(7L, message.sequence)
+        assertEquals(1L, message.mode)
+        assertNull(message.audio)
+        assertEquals("""{"request_id":"preset-request","revision":2,"home":{"available":true,"preset_id":"1234567890abcdef"},"company":{"available":true,"preset_id":"fedcba0987654321"}}""", message.json)
     }
 
     @Test fun exactTurnOnlyNeverGuessFromEtaOrConflict() {
