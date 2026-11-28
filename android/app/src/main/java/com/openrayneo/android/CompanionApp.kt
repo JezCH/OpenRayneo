@@ -811,6 +811,21 @@ private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
         ToolButton(onClick = { model.attempt { model.service().startKakaoNativeNavigation(destination) } },
             enabled = idle && unchanged && saved?.configured == true && destination.isNotBlank(),
             modifier = Modifier.fillMaxWidth()) { Text("카카오 실제 도보 경로로 순정 내비 시작") }
+        if (s.kakaoCandidates.isNotEmpty()) {
+            Text("목적지 후보", style = MaterialTheme.typography.titleMedium)
+            Note("실제 검색 결과입니다. 안경에서 '2번 목적지 선택'처럼 말하거나 아래에서 선택하세요. 2분 후 만료됩니다.")
+            s.kakaoCandidates.forEachIndexed { index, candidate ->
+                ToolOutlinedButton(onClick = { model.attempt { model.service().chooseKakaoCandidate(s.kakaoCandidateToken, candidate.id) } },
+                    enabled = idle && unchanged, modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        Text("${index+1}. ${candidate.name}")
+                        if (candidate.address.isNotBlank()) Text(candidate.address, style = MaterialTheme.typography.bodySmall)
+                        candidate.distanceMeters?.let { Text("검색 기준 거리 ${it}m", style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+            TextButton(onClick = { model.attempt { model.service().cancelKakaoChoice() } }) { Text("목적지 선택 취소") }
+        }
         if (s.nativeStartTestPending) ToolOutlinedButton(onClick = { model.attempt { model.service().cancelNativeStartTest() } }) { Text("순정 내비 종료·취소") }
         Note(s.nativeStartTestStatus.ifBlank { "연결 및 경로 준비 대기" })
     }

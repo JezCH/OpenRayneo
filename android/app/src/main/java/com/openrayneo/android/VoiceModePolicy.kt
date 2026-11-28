@@ -73,3 +73,71 @@ internal object NativeExplicitVoicePolicy {
         }
     }
 }
+
+
+/** Direct inference may choose one bounded local navigation action. It does not
+ * receive the Agent tool registry. Only the current explicit utterance can
+ * authorize the destination; history/model output cannot supply a new place. */
+internal object NativeDirectNavigationPolicy {
+    private fun compact(text: String) = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
+        .filterNot(Char::isWhitespace).lowercase(java.util.Locale.ROOT)
+
+    fun eligible(question: String): Boolean {
+        val q = compact(question)
+        if (q.length !in 3..400 || q.contains('"') || q.contains('“') || q.contains('”')) return false
+        // Do not repurpose status, explanation, cancellation, negation, quoted
+        // commands, other-app requests or non-walking modes as a route start.
+        if (listOf("하지마", "하지말", "말아", "않", "취소", "종료", "끄", "상태", "방법", "어떻게",
+                "가능한", "가능해", "가능하", "되니", "되나요", "왜", "설명", "예시", "라고",
+                "라면", "하면", "휴대폰", "핸드폰", "스마트폰", "자동차", "차로", "운전",
+                "대중교통", "버스로", "지하철로", "택시", "자전거").any { q.contains(it) }) return false
+        val navigation = listOf("길찾기", "길안내", "경로", "내비", "네비", "데려다", "안내").any { q.contains(it) }
+        val directive = listOf("해줘", "해주세요", "해봐", "해보", "찾아줘", "찾아봐", "안내해",
+            "시작해", "켜줘", "데려다줘", "검색해", "검색을해", "부탁").any { q.contains(it) }
+        return navigation && directive
+    }
+
+    const val instruction = "\n현재 발화 자체가 특정 실제 목적지로 안경의 도보 길 안내를 시작해 달라는 명시적 요청일 때만 " +
+        "{\"route\":\"native_navigation\",\"destination\":\"현재 발화에 그대로 포함된 장소명\"} JSON 객체를 반환하세요. " +
+        "목적지가 모호하거나 없거나, 단순 검색·상태·방법·가능 여부 질문, 다른 앱 실행, 인용, 취소, 부정 또는 비도보 요청이면 일반 답변을 반환하세요. " +
+        "좌표나 다른 장소명, 공급자, 실행 성공을 추측하지 마세요. 과거 대화에서 목적지를 가져오지 마세요. " +
+        "그 외에는 평소처럼 자연스러운 텍스트 답변만 반환하세요."
+
+    fun decode(raw: String, question: String): NaverVoiceCommand.Request? {
+        if (!eligible(question) || raw.length > 2048) return null
+        val text = raw.trim().let {
+            if (it.startsWith("\u0060\u0060\u0060json\n") && it.endsWith("\n\u0060\u0060\u0060"))
+                it.removePrefix("\u0060\u0060\u0060json\n").removeSuffix("\n\u0060\u0060\u0060").trim()
+            else it
+        }
+        val body = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        if (body.length() != 2 || body.opt("route") != "native_navigation") return null
+        val destination = (body.opt("destination") as? String)?.trim() ?: return null
+        if (destination.length !in 1..120 || destination.any(Char::isISOControl)) return null
+        val d = compact(destination)
+        if (d.isEmpty() || (d.length < 2 && d != "집") ||
+            d in setOf("여기", "거기", "저기", "어디", "길", "지도", "이전목적지", "목적지", "경로", "장소") ||
+            !compact(question).contains(d)) return null
+        return NaverVoiceCommand.Request(destination, NaverVoiceCommand.Mode.WALK,
+            naverRequested = compact(question).contains("네이버"))
+    }
+
+    fun isActionEnvelope(raw: String): Boolean = raw.contains("\"native_navigation\"")
+}
+
+
+/** One terminal navigation acknowledgement, bound to the actual current wake.
+ * Type 11 may arrive twice or not at all; only one exit request is allowed. */
+internal class NativeNavigationExitGate {
+    private var wake: String? = null
+    private var requested = false
+    fun arm(id: String) { wake = id; requested = false }
+    fun reset() { wake = null; requested = false }
+    fun owns(id: String?) = id != null && wake == id
+    fun sent(id: String?) = owns(id) && requested
+    fun take(id: String?): Boolean {
+        if (!owns(id) || requested) return false
+        requested = true
+        return true
+    }
+}
