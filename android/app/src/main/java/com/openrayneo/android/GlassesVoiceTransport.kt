@@ -30,6 +30,15 @@ internal class GlassesVoiceTransport(
     private var advancedReply: String? = null
     /** Wake whose final transcript was already sent; later partials would arrive out of order. */
     private var finalSent: String? = null
+    private val navigationExit = NativeNavigationExitGate()
+    private var navigationExitAllowed: (() -> Boolean)? = null
+    private fun resetNavigationExit() { navigationExit.reset(); navigationExitAllowed = null }
+    private fun exitForNavigation(id: String) {
+        if (!nativeActive || wakeId != id || navigationExitAllowed?.invoke() != true || !navigationExit.take(id)) return
+        // Existing documented ABORT_RECV, corroborated by AIX SDK implementation.
+        // Only the device's type 8 may clear nativeActive.
+        send(0x0d, 7, JSONObject().put("rc", 1))
+    }
     private val client = UUID.randomUUID().toString().replace("-", "")
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     /** Firmware barge-in setting ("대화 끊기"); read when an answer is sent. */
@@ -70,9 +79,10 @@ internal class GlassesVoiceTransport(
      * Do not send an unsolicited stop or alter the physical connection. */
     fun declineUnownedWake() {
         if (source != null) return
+        resetNavigationExit()
         nativeActive = false; wakeId = null; nativeCode = 0; answering = false
     }
-    fun disconnected() { source = null; nativeActive = false; nativeWakeObserved = false; wakeId = null; lifeTask = null; answering = false }
+    fun disconnected() { resetNavigationExit(); source = null; nativeActive = false; nativeWakeObserved = false; wakeId = null; lifeTask = null; answering = false }
     fun receive(frame: ProtocolCodec.Frame) {
         if (frame.protocol == 0x0f) {
             val message = ProtocolCodec.message(frame.payload); val body = message.json?.let(::JSONObject) ?: return
@@ -91,14 +101,18 @@ internal class GlassesVoiceTransport(
             1 -> {
                 val code = body.optInt("rc")
                 if (code !in 1..6) { trace("지원되지 않는 안경 깨우기 이벤트 rc=$code"); return }
+                resetNavigationExit()
                 nativeWakeObserved = true
                 nativeActive = true; nativeCode = code; wakeId = UUID.randomUUID().toString()
                 lastReply = null; advancedReply = null; answering = false
                 wake()
             }
-            3 -> if (source == ConversationSource.NATIVE) message.audio?.let(audio)
-            8 -> { nativeActive = false; answering = false; if (source == ConversationSource.NATIVE) endRound(true) }
-            11 -> if (answering && nativeActive) {
+            3 -> if (source == ConversationSource.NATIVE && !navigationExit.owns(wakeId)) message.audio?.let(audio)
+            8 -> { resetNavigationExit(); nativeActive = false; answering = false; if (source == ConversationSource.NATIVE) endRound(true) }
+            11 -> if (navigationExit.owns(wakeId) && nativeActive) {
+                val sid = body.optString("sid")
+                if (sid.isBlank() || sid == lastReply) wakeId?.let(::exitForNavigation)
+            } else if (answering && nativeActive) {
                 // The answer finished without an interruption; we are already listening for the next turn.
                 val sid = body.optString("sid")
                 if (sid.isBlank() || sid == lastReply) {
@@ -134,7 +148,7 @@ internal class GlassesVoiceTransport(
         }
     }
     fun asr(text: String, expectedWake: String) {
-        if (text.isBlank() || !nativeActive || wakeId != expectedWake) return
+        if (text.isBlank() || !nativeActive || wakeId != expectedWake || navigationExit.owns(expectedWake)) return
         interrupt(text)
         finalSent = expectedWake
         send(0x0d, 4, JSONObject().put("rc", 1))
@@ -143,7 +157,7 @@ internal class GlassesVoiceTransport(
     }
     /** Live, still-changing transcript on the native assistant page, as the official app streams it. */
     fun partial(text: String, expectedWake: String) {
-        if (text.isBlank() || !nativeActive || wakeId != expectedWake || finalSent == expectedWake) return
+        if (text.isBlank() || !nativeActive || wakeId != expectedWake || navigationExit.owns(expectedWake) || finalSent == expectedWake) return
         interrupt(text)
         send(0x0d, 5, JSONObject().put("text", text).put("final", false))
     }
@@ -164,9 +178,15 @@ internal class GlassesVoiceTransport(
         trace("대화 끊기: 답변 중 발화 감지")
         send(0x0d, 9, JSONObject().put("rc", 1))
     }
-    fun reply(text: String, query: String, expectedWake: String): Boolean {
-        if (!nativeActive || wakeId != expectedWake) return false
-        val listen = bargeIn()
+    fun reply(text: String, query: String, expectedWake: String,
+              navigationHandoff: (() -> Boolean)? = null): Boolean {
+        if (!nativeActive || wakeId != expectedWake || navigationExit.owns(expectedWake)) return false
+        if (navigationHandoff != null) {
+            navigationExit.arm(expectedWake)
+            navigationExitAllowed = navigationHandoff
+            answering = false
+        }
+        val listen = navigationHandoff == null && bargeIn()
         // With barge-in, capture stays open through the answer instead of closing and waiting for type 11.
         if (!listen) send(0x0d, 2, JSONObject().put("rc", 2))
         val body = JSONObject().put("sub", "workflow").put("vendor", "OpenRayneo").put("uuid", client)
@@ -176,10 +196,13 @@ internal class GlassesVoiceTransport(
         lastReply = expectedWake.replace("-", "").lowercase()
         send(0x0d, 9, JSONObject().put("rc", 3)); send(0x0d, 32, body); send(0x0d, 12, JSONObject())
         val answered = lastReply
+        // If display-complete is absent, request exit after a short reading window.
+        // A new wake/disconnect or invalidated navigation request cancels the write.
+        if (navigationHandoff != null) main.postDelayed({ exitForNavigation(expectedWake) }, 4_000L)
         if (listen) {
             answerText = text
             main.post {
-                if (!nativeActive || lastReply != answered || advancedReply == answered) return@post
+                if (!nativeActive || wakeId != expectedWake || navigationExit.owns(expectedWake) || lastReply != answered || advancedReply == answered) return@post
                 advancedReply = answered; answering = true; wakeId = UUID.randomUUID().toString(); wake()
             }
             // Neither an interruption nor the glasses' next-turn request: close the mic instead of listening forever.

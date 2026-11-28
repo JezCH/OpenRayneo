@@ -80,6 +80,21 @@ class NaverNavigationRegressionTest {
         assertEquals("""{"request_id":"preset-request","revision":2,"home":{"available":true,"preset_id":"1234567890abcdef"},"company":{"available":true,"preset_id":"fedcba0987654321"}}""", message.json)
     }
 
+    @Test fun nativeNavigationTerminalExitIsSingleUseAndWakeScoped() {
+        val gate = NativeNavigationExitGate()
+        assertFalse(gate.take("old"))
+        gate.arm("first")
+        assertFalse(gate.take("other"))
+        assertTrue(gate.owns("first"))
+        assertTrue(gate.take("first"))
+        assertFalse(gate.take("first"))
+        gate.reset()
+        assertFalse(gate.take("first"))
+        gate.arm("second")
+        assertFalse(gate.take("first"))
+        assertTrue(gate.take("second"))
+    }
+
     @Test fun directNativeNavigationUsesOnlyCurrentExplicitPlace() {
         val p = NativeDirectNavigationPolicy
         val command = "그래? 그러면 니가 직접 한번 버거킹 검색을 해봐. 경로를."

@@ -124,3 +124,19 @@ internal object NativeDirectNavigationPolicy {
 
     fun isActionEnvelope(raw: String): Boolean = raw.contains("\"native_navigation\"")
 }
+
+
+/** One terminal navigation acknowledgement, bound to the actual current wake.
+ * Type 11 may arrive twice or not at all; only one exit request is allowed. */
+internal class NativeNavigationExitGate {
+    private var wake: String? = null
+    private var requested = false
+    fun arm(id: String) { wake = id; requested = false }
+    fun reset() { wake = null; requested = false }
+    fun owns(id: String?) = id != null && wake == id
+    fun take(id: String?): Boolean {
+        if (!owns(id) || requested) return false
+        requested = true
+        return true
+    }
+}
