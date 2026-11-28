@@ -31,6 +31,23 @@ internal object KoreanNavigationText {
         }.distinct()
         return matches.singleOrNull()
     }
+    /** NAVER 6.13.1.2 stock walk notification: separate title and remaining
+     * next-turn distance. Accept only an exact known turn, never infer a turn
+     * from a road/POI/waypoint label, or a distance from an arbitrary subtitle.
+     * The caller must first match the stock package, channel and service category.
+     * This is a partial observation, not full route geometry or route identity. */
+    fun parseNaverWalk(title: String, text: String): Instruction? {
+        val action = KoreanLanguage.normalize(title).trim()
+        val remaining = KoreanLanguage.normalize(text).trim()
+        val ko = Regex("^" + distance + "\\s*남음$").matchEntire(remaining)
+        if (action in directions && ko != null)
+            return instruction(action, ko.groupValues[1], ko.groupValues[2])
+        val en = Regex("^Remaining:\\s*" + distance + "$", RegexOption.IGNORE_CASE).matchEntire(remaining)
+        val englishAction = english[action.lowercase()]
+        return if (englishAction != null && en != null)
+            instruction(englishAction, en.groupValues[1], en.groupValues[2]) else null
+    }
+
     private fun instruction(action: String, value: String, unit: String): Instruction? {
         val n = value.replace(",", "").toDoubleOrNull() ?: return null
         val meters = n * if (unit.lowercase() in setOf("km", "킬로미터", "킬로")) 1000 else 1
