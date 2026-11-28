@@ -755,6 +755,8 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                 val (x, y) = coordinates.first()
                 drawCircle(pointColor, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width / 2f + x * scale, size.height / 2f + y * scale))
             }
+            val geometry = remember(course) { course.nativeGeometry() }
+            Note(if (geometry == null) "순정 장면 규격에 맞지 않는 좌표 수 또는 범위 · 원본 코스는 보존됩니다." else "순정 장면용 경로 형상 준비 · 세션 및 실제 안내 연동 필요")
             Note("파일 좌표의 연결선과 시작점 · 직선 구간 합계이며 지도, 도로 검증, 실시간 위치, ETA가 아닙니다. 앱 메모리에만 유지하며 안경으로 전송하지 않습니다.")
             ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }

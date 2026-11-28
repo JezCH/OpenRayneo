@@ -24,7 +24,11 @@ internal object NaverWalkingCourse {
     class Course internal constructor(val points: List<Point>) {
         val lengthMeters: Double = points.zipWithNext().sumOf { (a, b) -> distance(a, b) }
         // Standard six-decimal encoded polyline, not a completed RayNeo route-scene message.
-        fun polyline6(): String = buildString {
+        fun polyline6(): String = encodePolyline6(points)
+        fun nativeGeometry(): NativeRouteScene.Geometry? = NativeRouteScene.geometry(points)
+        override fun toString() = "Course(points=${points.size})"
+    }
+    internal fun encodePolyline6(points: List<Point>): String = buildString {
             var lastLat = 0L; var lastLon = 0L
             fun appendDelta(delta: Long) {
                 var value = if (delta < 0) (-delta * 2 - 1) else delta * 2
@@ -40,8 +44,6 @@ internal object NaverWalkingCourse {
                 appendDelta(lat - lastLat); appendDelta(lon - lastLon)
                 lastLat = lat; lastLon = lon
             }
-        }
-        override fun toString() = "Course(points=${points.size})"
     }
     private fun distance(a: Point, b: Point): Double {
         val lat = Math.toRadians(b.latitude - a.latitude)

@@ -160,6 +160,12 @@ internal object ProtocolCodec {
         return frame(0x20, sequence, payload)
     }
 
+    /** Stock 0x3C is a mode=0/inner sequence=0 binary message. Zero fields are omitted. */
+    fun navigationSceneFragment(sequence: Int, header: String, binary: ByteArray): ByteArray {
+        require(binary.size in 1..4096)
+        return display(0x20, sequence, 0x3c, header, binary)
+    }
+
     data class Message(val type: Int, val json: String?, val audio: ByteArray?,
                        val version: Int = 0, val sequence: Long = 0, val mode: Long = 0)
 
