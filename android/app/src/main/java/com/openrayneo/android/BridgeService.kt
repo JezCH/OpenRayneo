@@ -193,18 +193,59 @@ internal class BridgeService : Service() {
         if (kakao?.enabled == true) return "kakao"
         return "brouter".takeIf { runCatching { OfflineNativeRouteSettings.read(this).enabled }.getOrDefault(false) }
     }
-    private fun offlineProviderAvailable(provider: String? = selectedNativeProvider()): Boolean {
+    private fun configuredNativeProvider(provider: String? = selectedNativeProvider()): Boolean {
         val selected = provider != null && selectedNativeProvider() == provider
         val accessible = when (provider) {
             "kakao" -> runCatching { KakaoNativeRouteSettings.read(this).configured }.getOrDefault(false)
             "brouter" -> selected && OfflineWalkingRoute.serviceAvailable(this)
             else -> false
         }
-        return OfflineNativeRouteSettings.canAdvertise(selected, accessible,
-            OfflineNativeRoute.verifiedWire() != null,
-            checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED,
-            foreground && (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0, offlineGpsEnabled())
+        return OfflineNativeRouteSettings.supportsConfiguredProvider(selected, accessible, OfflineNativeRoute.verifiedWire() != null)
     }
+    private fun offlineProviderAvailable(provider: String? = selectedNativeProvider()): Boolean =
+        configuredNativeProvider(provider) && offlineLocationAvailable()
+
+    /** No addresses, keys or identifiers. Show exactly which admission and
+     * runtime gates are missing instead of telling the user to upgrade firmware. */
+    val nativeNavigationReadiness: String get() {
+        val provider = selectedNativeProvider()
+        val configured = configuredNativeProvider(provider)
+        val precise = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val locationService = foreground && (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
+        val gps = offlineGpsEnabled()
+        val caps = nativeNavCapabilities
+        return listOf(
+            "공급자: " + when (provider) {
+                "kakao" -> if (configured) "카카오 설정됨 · API 실제 호출 별도 검증" else "카카오 REST API 키 설정 필요"
+                "brouter" -> if (configured) "BRouter 설정됨" else "BRouter 앱/도보 경로 공급 확인 필요"
+                else -> "선택 안 됨 · 카카오 또는 BRouter 설정 필요"
+            },
+            "휴대폰 지원 등록: " + if (configured) {
+                if (nativeHostCapabilitySent && !nativeHostCapabilityPending) "전송 성공 · 안경 적용 미확인" else "등록 전송 대기"
+            } else "미등록 · 경로 공급자 준비 필요",
+            "안경 기능 회신: " + nativeNavCapabilityStatus,
+            "정확한 위치 권한: " + if (precise) "허용" else "필요",
+            "위치 서비스: " + if (locationService) "실행 중" else "앱 화면에서 시작 필요",
+            "GPS: " + if (gps) "켜짐" else "꺼짐",
+            "순정 PNG 프로필: " + if (caps?.raster != null) "지원 회신 확인" else "미확인",
+            "기기 초기 조회: $nativeNavCoreReadbackFinished · 녹음 상태=${deviceSettings.state.initialization.recorder}",
+            "화면/음성 사용 중: " + (state.intent != DisplayIntent.Idle || state.session != null || conversations.state.running || conversations.state.stopping || translator.active || voiceTransport.nativeActive || prompterReserved) + " · 화면 권한=" + state.ownership
+        ).joinToString("\n")
+    }
+
+    fun refreshNativeNavigationSetup(requery: Boolean = false) {
+        if (destroyed) return
+        if (hostVisible && configuredNativeProvider()) runCatching { enableLocationWhileVisible() }
+            .onFailure { diagnosticFailure("navigation-location-service", it) }
+        if (requery && !nativeStartTestPending && pendingNavProbe == null) probeNativeNavigation()
+        // Force an explicit registry resync only on a user request; normal
+        // settings/permission changes use the existing value-change check.
+        if (requery) nativeHostCapabilityDirty = true
+        syncNativeHostCapability()
+        notifyUI()
+    }
+
     fun startKakaoNativeNavigation(destination: String) {
         check(selectedNativeProvider() == "kakao") { "카카오맵 순정 도보 공급자를 먼저 선택하세요." }
         val target = destination.trim()
@@ -775,6 +816,7 @@ internal class BridgeService : Service() {
         if (receiveNativeStartTest(message)) return
         val preset = pendingNativePreset
         if (preset != null) {
+            if (message.type in setOf(0x11,0x40)) diagnosticEvent("navigation-preset-reply", NativeNavigationPresets.resultEvidence(message,preset))
             val code = NativeNavigationPresets.resultCode(message, preset)
             if (code != null) {
                 pendingNativePreset = null
@@ -818,6 +860,7 @@ internal class BridgeService : Service() {
         if (message.type !in setOf(0x31, 0x40)) return
         val expected = pendingNavProbe ?: return
         diagnosticEvent("navigation-reply", NativeNavigationCapabilities.replyEvidence(message, expected.requestId, expected.sequence))
+        if (message.type == 0x31) diagnosticEvent("navigation-schema", NativeNavigationCapabilities.schemaEvidence(message))
         if (!NativeNavigationCapabilities.matchesPending(message, expected.requestId, expected.sequence)) {
             diagnosticEvent("navigation-reply", "rejected: request correlation")
             return
@@ -965,7 +1008,9 @@ internal class BridgeService : Service() {
      * A manual, genuine prepared/session route retains its previous guarded support.
      * No NAVER provider, diagnostic probe, GPX preview or notification is invented. */
     private fun hasLiveNativeHostSource(): Boolean {
-        if (offlineProviderAvailable()) return true
+        // A configured routing handler is a versioned host capability.
+        // GPS/foreground-location is checked at START and throughout guidance.
+        if (configuredNativeProvider()) return true
         if (nativeNavCapabilities?.raster == null) return false
         nativeStartProbe?.takeIf { !it.closing }?.live?.let { return liveNativeSourceMatches(it.route) }
         val route = preparedNativeRoute ?: return false
@@ -1021,6 +1066,7 @@ internal class BridgeService : Service() {
         if (hostVisible == visible) return
         hostVisible = visible
         syncHostVisibility()
+        if (visible && configuredNativeProvider()) refreshNativeNavigationSetup()
     }
     private fun syncHostVisibility() {
         if (destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting) return
@@ -1407,7 +1453,8 @@ internal class BridgeService : Service() {
     }
 
     fun enableLocationWhileVisible() {
-        if (foreground && PhoneLocation.allowed(this))
+        if (foreground && PhoneLocation.allowed(this) &&
+            (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) == 0)
             startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
     }
 
@@ -1790,7 +1837,8 @@ internal class BridgeService : Service() {
             nativeStartProbe != null -> nativeStartTestStatus
             nativeNavCapabilities == null -> {
                 // A rejected or missing capability reply is not a firmware upgrade decision.
-                negotiateNativeNavigation()
+                if (nativeNavQuerySettled && pendingNavProbe == null && !nativeRouteWaiting) probeNativeNavigation()
+                else negotiateNativeNavigation()
                 "순정 내비 연결 규격 확인 필요 · " + nativeNavCapabilityStatus
             }
             nativeNavCapabilities?.raster == null ->
@@ -2480,8 +2528,12 @@ internal class BridgeService : Service() {
                         ?.takeIf { it.matches(Regex("[0-9A-Za-z._-]{1,64}")) }
                         ?.let { "현재 연결된 안경 펌웨어는 $it 입니다." }
                         ?: "현재 연결에서 펌웨어 버전 회신을 확인하지 못했습니다."
-                    NativeStatusQuestion.Kind.NAVIGATION -> "현재 안경 연결 정상. " + nativeNavCapabilityStatus +
-                        if (nativeNavCapabilities?.raster != null) " · " + nativeStartTestStatus else ""
+                    NativeStatusQuestion.Kind.NAVIGATION -> when {
+                        !configuredNativeProvider() -> "안경 연결은 정상입니다. 카카오 또는 BRouter 경로 공급자를 먼저 설정하세요."
+                        nativeNavCapabilities?.raster == null -> "안경 연결 정상. " + nativeNavCapabilityStatus
+                        !offlineLocationAvailable() -> "순정 지도 지원 회신 확인. 정확한 위치 권한, GPS, 위치 서비스를 확인하세요."
+                        else -> "순정 지도 지원 및 공급자 설정 확인. " + nativeStartTestStatus
+                    }
                 }
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
                 deliverExternalVoice(request.text, answer, input)
@@ -3756,6 +3808,7 @@ internal class BridgeService : Service() {
             diagnosticEvent("navigation", "queryAttempts=$nativeNavQueryAttempts settled=$nativeNavQuerySettled raster=${nativeNavCapabilities?.raster != null} hostWrite=$nativeHostCapabilitySent hostPending=$nativeHostCapabilityPending prepared=${preparedNativeRoute != null} calculating=${offlinePreparation != null} waiting=$nativeRouteWaiting phase=${probe?.session?.phase} accepted=${probe?.session?.startAccepted} ready=${probe?.session?.glassReady} reject=${probe?.session?.rejectionCode} rasterState=${probe?.session?.rasterState} closing=${probe?.closing}", true)
             diagnosticEvent("navigation-status", nativeStartTestStatus, true)
             diagnosticEvent("navigation-capability", nativeNavCapabilityStatus, true)
+            diagnosticEvent("navigation-setup", "provider=${selectedNativeProvider() ?: "none"} configured=${configuredNativeProvider()} operational=${offlineProviderAvailable()} precise=${checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED} locationService=${foreground && (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0} gps=${offlineGpsEnabled()} coreRead=${nativeNavCoreReadbackFinished} recorder=${deviceSettings.state.initialization.recorder} idle=${nativeNavigationMutationIdle()} ownership=${state.ownership}", true)
             diagnosticEvent("recording", "source=${c.source} mode=${c.mode} running=${c.running} stopping=${c.stopping} modelReady=${c.modelReady} firstFinalMs=${firstLiveFinalMs ?: -1} decoded=${c.decodedSeconds > 0} activeRecord=${c.activeRecord != null} transcriptOnly=${c.liveTranscriptOnly} error=${c.error != null}", true)
             diagnosticEvent("caption", "active=${translator.active} caption=${translator.captionOnly} partial=${translator.diagnosticPartialSeen} final=${translator.diagnosticFinalSeen} asrStarted=${translator.diagnosticRoundStarted} retries=${translator.diagnosticFailures} media=${mediaCaptionState.phase} mediaPCM=${mediaCaptionState.samples > 0} mediaFinal=${translator.mediaFinalCount > 0}", true)
             diagnosticEvent("ai", "phoneRunning=${agent.running} computerRunning=${codex.running} voicePending=$voiceAiPending hintPending=${pendingNativeHint != null} stream=${realtimeStreamId != null} preview=${realtimePreviewRequest != 0L} answerPresent=${state.answer != null}", true)

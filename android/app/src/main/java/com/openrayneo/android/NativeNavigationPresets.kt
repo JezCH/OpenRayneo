@@ -67,6 +67,12 @@ internal object NativeNavigationPresets {
         if (text.length !in 1..8192) return null
         return runCatching { JSONObject(text) }.getOrNull()
     }
+    fun resultEvidence(message: ProtocolCodec.Message, pending: Pending): String {
+        val json = body(message)
+        return "type=${message.type} mode=${message.mode} seqMatch=${message.sequence == pending.sequence}" +
+            " idPresent=${json?.has("request_id") == true} idMatch=${json?.opt("request_id") == pending.requestId}" +
+            " revisionMatch=${json?.opt("revision") == pending.revision} code=${json?.opt("code") as? Int}"
+    }
     /** PRESET_SYNC_REPLY is mode=1 and echoes request ID, sequence and revision.
      * Error type 0x40 has mode=2, failed_type and the same positive sequence. */
     fun resultCode(message: ProtocolCodec.Message, pending: Pending): Int? {
