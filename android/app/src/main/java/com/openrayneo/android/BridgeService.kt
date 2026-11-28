@@ -58,8 +58,11 @@ internal class BridgeService : Service() {
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
-        if (nativePresetSyncedRevision != config.revision) {
-            noteNativeMenu(0x20, "현재 연결에서 목적지 동기화 확인 필요")
+        // The incoming request has already matched the current saved opaque
+        // slot ID. That is stronger evidence than a historical sync ACK and
+        // remains valid after reconnect; never require rewriting both slots.
+        if (pendingNativePreset != null || config.resolve(request.alias) == null) {
+            noteNativeMenu(0x20, "현재 목적지 변경 처리 중 · 순정 요청 시작 보류")
             return
         }
         val status = requestOfflineNativeRoute(request.alias, NaverVoiceCommand.Mode.WALK, request.sid)
@@ -294,7 +297,7 @@ internal class BridgeService : Service() {
     }
     fun runNativeStartTest(expectedEpoch: String) {
         check(Looper.myLooper() == Looper.getMainLooper())
-        check(expectedEpoch == nativePresetConsentEpoch && nativeStartTestCanRun) {
+        check(expectedEpoch == nativePresetConsentEpoch && nativeStartTestCanRun && !nativeRouteWaiting) {
             "현재 연결의 PNG 프로파일 회신과 유휴 상태를 확인하세요."
         }
         val capabilities = checkNotNull(nativeNavCapabilities)
@@ -552,9 +555,8 @@ internal class BridgeService : Service() {
                 val config = runCatching { NativeNavigationPresets.read(this) }.getOrNull()
                 val matched = config?.let { NativeNavigationPresets.initialRequest(message, it) }
                 if (matched != null && matched.sid in handledPresetSids) return
-                noteNativeMenu(0x20, if (matched == null) "시작 요청 수신 ($source) · 순정 시작 계약 미완성"
-                    else "${matched.alias} 목적지 요청 확인 ($source) · 순정 경로 공급 미연동")
                 if (matched != null && config != null) offerPresetHandoff(matched, config)
+                else noteNativeMenu(0x20, "시작 요청 수신 ($source) · 저장 목적지 ID 또는 시작 형식 불일치")
             }
             3 -> {
                 val sid = offlinePreparation?.peerSid ?: queuedNativePeerSid
@@ -1376,15 +1378,16 @@ internal class BridgeService : Service() {
             val queued = nativeRouteWaiting
             clearPreparedNativeRoute()
             if (active) { cancelNativeStartTest(); "순정 내비 종료 요청을 전송합니다." }
-            else if (queued) "순정 내비 시작 대기를 취소했습니다."
-            else if (navigation.enabled || state.navigation.enabled) {
-                stopNavigation(); "안경 알림 HUD를 종료했습니다. 휴대폰 지도는 변경하지 않았습니다."
+            else if (queued) {
+                nativeStartTestStatus = "순정 내비 시작 대기 취소"
+                notifyUI()
+                nativeStartTestStatus
             } else "순정 내비가 실행 중이지 않습니다."
         }
         NaverVoiceCommand.Control.STOP_HUD -> {
             val active = navigation.enabled || state.navigation.enabled
-            stopNavigation()
-            if (active) "안경 길 안내를 종료했습니다. 네이버지도 안내는 휴대폰에서 계속됩니다."
+            if (active && nativeStartProbe == null) stopNavigation()
+            if (active && nativeStartProbe == null) "안경 알림 안내를 종료했습니다. 네이버지도 안내는 휴대폰에서 계속됩니다."
             else "안경 길 안내가 실행 중이지 않습니다."
         }
         NaverVoiceCommand.Control.START_HUD -> {
@@ -1406,10 +1409,11 @@ internal class BridgeService : Service() {
         }
         NaverVoiceCommand.Control.CANCEL_REQUEST -> {
             clearVoiceNavigation()
-            navigationSwitchStatus = "길 안내 요청 취소 · 이미 열린 지도 앱은 변경하지 않습니다."; notifyUI()
+            if (nativeRouteWaiting) cancelNativeStartTest()
+            navigationSwitchStatus = "길 안내 요청 취소 · 이미 시작된 순정 세션이나 휴대폰 지도는 변경하지 않습니다."; notifyUI()
             navigationSwitchStatus
         }
-        NaverVoiceCommand.Control.STATUS -> if (nativeStartProbe != null) nativeStartTestStatus
+        NaverVoiceCommand.Control.STATUS -> if (nativeStartProbe != null || nativeRouteWaiting) nativeStartTestStatus
             else if (navigation.enabled) "알림 HUD · " + navigation.status
             else if (voiceNavigationLookup != null || voiceNavigation != null) "목적지 또는 신규 안내 확인 중"
             else "안경 길 안내가 실행 중이지 않습니다."
@@ -1427,8 +1431,14 @@ internal class BridgeService : Service() {
         voiceNavigation = null
         NaverVoiceLaunch.clear(this)
     }
-    fun cancelVoiceNavigationRequest() { clearVoiceNavigation(); notifyUI() }
+    fun cancelVoiceNavigationRequest() {
+        clearVoiceNavigation()
+        if (nativeRouteWaiting) cancelNativeStartTest()
+        notifyUI()
+    }
     private fun voiceNavigationBlock(): String? {
+        if (nativeStartProbe != null || nativeRouteWaiting)
+            return "순정 내비를 먼저 종료하세요."
         if (!foreground || destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting)
             return "안경 연결 상태를 먼저 확인하세요."
         // Refresh even rejected/unsupported current notifications before accepting a new route.
@@ -1441,14 +1451,13 @@ internal class BridgeService : Service() {
     }
     private fun launchVoiceNavigation(request: NaverVoiceCommand.Request, place: NaverPlacePolicy.Place? = null): String {
         voiceNavigationBlock()?.let { return it }
-        val requestedAt = System.currentTimeMillis()
         val result = NaverVoiceLaunch.open(this, request, place,
             NaverCompanionAccess.allowed(this, authenticatedNavigationDevice))
-        if (request.routeRequested && result.opened && navigation.connected)
-            voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
+        // Explicit PHONE map requests do not implicitly start an eyewear HUD.
+        // A HUD is attached only by a separately selected feed/start command.
         navigationSwitchStatus = result.message
-        if (request.routeRequested && !navigation.connected)
-            navigationSwitchStatus += " · 안경 안내를 위해 알림 접근 연결 필요"
+        if (request.routeRequested && result.opened)
+            navigationSwitchStatus += " · 휴대폰 지도 실행, 안경 HUD/순정 내비 미시작"
         notifyUI()
         return navigationSwitchStatus
     }

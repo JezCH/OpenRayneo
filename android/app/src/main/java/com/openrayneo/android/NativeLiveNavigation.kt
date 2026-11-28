@@ -47,6 +47,9 @@ internal class NativeLiveNavigation(
         }
         if (arrivalSent || observation == null) return null
         val guidance = observation.guidance
+        // Send the newest actual guidance before a map fragment; each completed
+        // write re-enters the pump, so route observations cannot queue multiple
+        // independent transport writes. Map requests are still peer-correlated.
         val write = if (guidance.observedAtMs > lastGuidance) {
             val packet = session.guidanceFrame(sequence, route.generation, route.token, guidance, now)
             lastGuidance = guidance.observedAtMs
