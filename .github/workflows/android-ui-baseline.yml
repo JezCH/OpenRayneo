@@ -1,0 +1,77 @@
+name: Android V3 native baseline
+
+on:
+  push:
+    branches: [wearable/ui-optical-baseline]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.repository == 'JezCH/OpenRayneo'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify exact V3 Android source
+        run: |
+          set -eu
+          git diff --exit-code 648965d43a0fef23a32306fc5920be231a1d51a1 HEAD -- android ThirdParty
+          echo "Baseline app commit: 648965d43a0fef23a32306fc5920be231a1d51a1"
+      - name: Install screenshot emulator
+        run: |
+          set -eu
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin"
+          "$sdk/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          echo no | "$sdk/avdmanager" create avd -n optical-evidence -k "system-images;android-35;google_apis;x86_64" --force
+      - name: Build actual app debug UI (not a distribution APK)
+        working-directory: android
+        run: |
+          # UI evidence only: omit gigabyte-scale bundled model weights, never use
+          # this APK for release or installation on the user's device.
+          ./gradlew :app:assembleDebug -Popenrayneo.abis=x86_64 -x :app:prepareBundledSpeech -x :app:prepareBundledTranslation --console=plain
+      - name: Capture real Android screens
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/optical-ui"
+          "$ANDROID_HOME/emulator/emulator" -avd optical-evidence -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/optical-ui/emulator.log" 2>&1 &
+          timeout 420 adb wait-for-device
+          python3 scripts/capture-android-ui.py --apk android/app/build/outputs/apk/debug/app-debug.apk --out "$RUNNER_TEMP/optical-ui"
+      - name: Upload native UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optical-v3-baseline-${{ github.sha }}
+          path: ${{ runner.temp }}/optical-ui/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Emit compact actual screenshots for visual review
+        if: always()
+        run: |
+          set -eu
+          python3 -m venv "$RUNNER_TEMP/evidence-venv"
+          "$RUNNER_TEMP/evidence-venv/bin/pip" -q install pillow==11.3.0
+          "$RUNNER_TEMP/evidence-venv/bin/python" - <<'PY'
+          import os, base64, io
+          from pathlib import Path
+          from PIL import Image
+          for path in sorted((Path(os.environ["RUNNER_TEMP"]) / "optical-ui").glob("*.png")):
+              img = Image.open(path).convert("RGB")
+              img.thumbnail((540, 1170), Image.Resampling.LANCZOS)
+              out = io.BytesIO()
+              img.save(out, format="JPEG", quality=75, optimize=True)
+              b64 = base64.b64encode(out.getvalue()).decode()
+              for i in range(0,len(b64),1800):
+                  print(f"EVIDENCE_JPEG {path.stem} {i//1800:04d} {b64[i:i+1800]}")
+          PY
