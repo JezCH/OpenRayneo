@@ -3,6 +3,7 @@ package com.openrayneo.android
 
 import android.content.Context
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Bounded, content-free chronological evidence. No raw protocol bytes, text,
  * GPS coordinates, credentials, device IDs, recording data or request IDs. */
@@ -44,4 +45,45 @@ internal class DiagnosticTrace(context: Context) {
     fun flush() { main.removeCallbacks(write); pending = false; save() }
     fun export() = timeline.entries().joinToString("\n")
     fun clear() { main.removeCallbacks(write); pending = false; timeline.clear(); prefs.edit().remove("events").apply() }
+}
+
+/** Report wire structure rather than raw JSON or arbitrary capability names. */
+internal object DiagnosticCapabilityShape {
+    private val versionPattern = Regex("""[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}""")
+    fun describe(payload: ByteArray): String {
+        if (payload.size !in 1..8192) return "size-invalid"
+        val body = runCatching { JSONObject(payload.toString(Charsets.UTF_8)) }.getOrNull()
+            ?: return "json-invalid"
+        val type = (body.opt("type") as? Int)?.takeIf { it in 1..3 }?.toString() ?: "invalid"
+        val ret = when (val value = body.opt("ret")) {
+            null -> "absent"
+            "OK", "TEMP_UNAVAILABLE", "UNSUPPORTED_TYPE", "INVALID_REQUEST", "INTERNAL_ERROR" -> value.toString()
+            else -> "other"
+        }
+        val list = body.optJSONArray("capabilities")
+        if (list == null) return "type=$type ret=$ret entries=absent"
+        if (list.length() > 64) return "type=$type ret=$ret entries=oversize"
+        var objects = 0
+        var pairs = 0
+        var other = 0
+        val versions = linkedSetOf<String>()
+        fun navVersion(value: Any?) {
+            versions.add((value as? String)?.takeIf { versionPattern.matches(it) } ?: "invalid")
+        }
+        for (i in 0 until list.length()) {
+            when (val entry = list.opt(i)) {
+                is JSONObject -> {
+                    val key = entry.keys().let { if (it.hasNext()) it.next() else "" }
+                    if (entry.length() == 1 && entry.opt(key) is String) objects++ else other++
+                    if (entry.has("app.navigation.main")) navVersion(entry.opt("app.navigation.main"))
+                }
+                is JSONArray -> {
+                    if (entry.length() == 2 && entry.opt(0) is String && entry.opt(1) is String) pairs++ else other++
+                    if (entry.opt(0) == "app.navigation.main") navVersion(entry.opt(1))
+                }
+                else -> other++
+            }
+        }
+        return "type=$type ret=$ret entries=${list.length()} objects=$objects pairs=$pairs other=$other navVersion=${versions.joinToString(",").ifEmpty { "absent" }}"
+    }
 }

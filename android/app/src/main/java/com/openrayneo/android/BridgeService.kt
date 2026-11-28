@@ -908,8 +908,15 @@ internal class BridgeService : Service() {
             notifyUI()
         }
         runCatching {
-            connection.sendFrame(ProtocolCodec.navigationHostCapabilities(capabilitySequence++ and 65535,
-                reply, supported)) { result -> finish(result.isSuccess) }
+            val frame = ProtocolCodec.navigationHostCapabilities(capabilitySequence++ and 65535, reply, supported)
+            runCatching {
+                val decoded = ProtocolCodec.StreamDecoder().append(frame).single()
+                diagnosticEvent("wire-capability-tx", "SPP " + DiagnosticCapabilityShape.describe(decoded.payload))
+            }
+            connection.sendFrame(frame) { result ->
+                diagnosticEvent("wire-capability-tx-result", "SPP reply=$reply supported=$supported success=${result.isSuccess}")
+                finish(result.isSuccess)
+            }
         }.onFailure { finish(false) }
         notifyUI()
     }
@@ -3588,14 +3595,7 @@ internal class BridgeService : Service() {
         if (frame.acknowledgement || frame.protocol !in setOf(0x06, 0x20, 0x13, 0x17)) return
         if (frame.payload.size > 65531) return
         if (frame.protocol == 0x06) {
-            val body = runCatching { JSONObject(frame.payload.toString(Charsets.UTF_8)) }.getOrNull() ?: return
-            val type = body.optInt("type", -1)
-            if (type !in 1..3) return
-            val list = body.optJSONArray("capabilities")
-            val nav = list != null && (0 until minOf(list.length(), 64)).any {
-                list.optJSONArray(it)?.optString(0) == "app.navigation.main"
-            }
-            diagnosticEvent("wire-capability", "rx=$source type=$type entries=${list?.length() ?: 0} nav=$nav", true)
+            diagnosticEvent("wire-capability", "rx=$source " + DiagnosticCapabilityShape.describe(frame.payload), true)
             return
         }
         val message = runCatching { ProtocolCodec.message(frame.payload) }.getOrNull() ?: return
