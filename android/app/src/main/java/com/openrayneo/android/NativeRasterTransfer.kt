@@ -35,6 +35,11 @@ internal class NativeRasterTransfer(
     // An outstanding transport callback survives a superseding view. Do not
     // issue a new frame until the old write has completed.
     private var outstanding: Write? = null
+    private var writeDeadline = 0L
+    internal class MapReport(val frameReady: Boolean, val committedSequence: Long,
+                             val guidanceSequence: Long, val errorCode: Int)
+    var mapReport: MapReport? = null
+        private set
     private var blockedTransport = false
     var failureCode: Long? = null
         private set
@@ -72,7 +77,25 @@ internal class NativeRasterTransfer(
         return ViewRequest(generation, view, size.width, size.height)
     }
 
-    /** Return true only for a correlated new request or a correlated frame reply.
+    // 0x38 is status telemetry, not the CRC-correlated 0x36 commit.
+    private fun readMapReport(message: ProtocolCodec.Message): MapReport? {
+        if (message.version != 1 || message.type != 0x38 || message.mode != 1L ||
+            message.sequence != 0L || message.audio?.isNotEmpty() == true) return null
+        val text = message.json ?: return null
+        if (text.length !in 1..8192) return null
+        val body = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        val view = viewRequest ?: return null
+        if (body.opt("sid") != route.sid || body.opt("route_token") != route.token ||
+            uint(body, "route_revision") != route.revision || uint(body, "route_generation") != route.generation ||
+            uint(body, "view_generation") != view.generation || body.opt("view_mode") != view.view.name) return null
+        val committed = uint(body, "last_committed_frame_seq") ?: return null
+        val guidance = uint(body, "last_guidance_seq") ?: return null
+        val ready = body.opt("frame_ready") as? Boolean ?: return null
+        val code = body.opt("error_code") as? Int ?: return null
+        return MapReport(ready, committed, guidance, code)
+    }
+
+    /** Return true only for a correlated new request, map status or frame reply.
      * An old or duplicate request must never restart an already processed view. */
     fun receive(message: ProtocolCodec.Message): Boolean {
         if (state == State.CLOSED || blockedTransport) return false
@@ -80,6 +103,7 @@ internal class NativeRasterTransfer(
             val request = request(message) ?: return false
             if (request.generation <= (viewRequest?.generation ?: 0L)) return false
             viewRequest = request
+            mapReport = null
             encoded = null
             nextFragment = 0
             nextFrameSequence = 1L
@@ -87,6 +111,10 @@ internal class NativeRasterTransfer(
             statusQueries = 0
             failureCode = null
             state = State.WAITING_IMAGE
+            return true
+        }
+        if (message.type == 0x38) {
+            mapReport = readMapReport(message) ?: return false
             return true
         }
         if (state !in setOf(State.AWAITING_COMMIT, State.QUERYING)) return false
@@ -128,7 +156,15 @@ internal class NativeRasterTransfer(
      * policy, not a recovered firmware timing constant. No blind fragment retry. */
     fun nextWrite(transportSequence: Int, nowMs: Long): Write? {
         require(transportSequence in 0..65535 && nowMs in 0..Long.MAX_VALUE - REPLY_TIMEOUT_MS)
-        if (blockedTransport || outstanding != null || state == State.CLOSED) return null
+        if (blockedTransport || state == State.CLOSED) return null
+        if (outstanding != null) {
+            if (nowMs >= writeDeadline) {
+                outstanding = null
+                blockedTransport = true
+                finish(State.FAILED)
+            }
+            return null
+        }
         val request = viewRequest ?: return null
         val frame = encoded ?: return null
         val write = when (state) {
@@ -166,6 +202,7 @@ internal class NativeRasterTransfer(
             else -> return null
         }
         outstanding = write
+        writeDeadline = nowMs + REPLY_TIMEOUT_MS
         return write
     }
 
@@ -190,6 +227,7 @@ internal class NativeRasterTransfer(
         finish(State.CLOSED)
         viewRequest = null
         outstanding = null
+        mapReport = null
     }
 
     private fun finish(next: State, code: Long? = null) {

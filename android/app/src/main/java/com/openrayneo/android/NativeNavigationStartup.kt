@@ -79,6 +79,7 @@ internal object NativeNavigationStartup {
 
         val rasterView get() = raster?.viewRequest
         val rasterState get() = raster?.state
+        val rasterMapReport get() = raster?.mapReport
         fun submitRaster(request: NativeRasterTransfer.ViewRequest, png: ByteArray): Boolean =
             raster?.submit(request, png) == true
         fun nextRasterWrite(sequence: Int, nowMs: Long) = raster?.nextWrite(sequence, nowMs)
