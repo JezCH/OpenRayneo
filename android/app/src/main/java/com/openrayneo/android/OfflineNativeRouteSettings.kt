@@ -15,6 +15,12 @@ internal object OfflineNativeRouteSettings {
         }
         override fun toString() = "OfflineNativeRouteSettings(enabled=$enabled)"
     }
+    // Host support is independent of a particular route, GPS fix or peer raster reply.
+    // A missing local dependency must not advertise a working routing handler.
+    fun canAdvertise(selected: Boolean, serviceAvailable: Boolean, wireAvailable: Boolean,
+                     preciseLocation: Boolean, locationService: Boolean, gpsEnabled: Boolean): Boolean =
+        selected && serviceAvailable && wireAvailable && preciseLocation && locationService && gpsEnabled
+
     private fun settings(context: Context) = AppSettings(context, "offline_native_navigation")
     fun read(context: Context): Config {
         val value = settings(context).readStored()

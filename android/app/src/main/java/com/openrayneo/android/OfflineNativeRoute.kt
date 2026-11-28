@@ -16,6 +16,7 @@ internal class OfflineNativeRoute(
     private val course: OfflineWalkingRoute.Route,
     override val parameters: NativeNavigationStartup.Parameters,
     private val wire: Wire,
+    internal val requiresProviderSelection: Boolean = false,
     private val changed: () -> Unit
 ) : NativeLiveNavigation.Route {
     internal class Wire(val travelMode: Int, val guidingState: Int, val unitSystem: Int,

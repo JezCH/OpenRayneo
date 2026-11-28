@@ -19,6 +19,15 @@ import kotlin.math.*
  * background location or automatic provider switch in OpenRayneo. */
 internal object OfflineWalkingRoute {
     private val component = ComponentName("btools.routingapp", "btools.routingapp.BRouterService")
+    /** Only checks the public service is installed and accessible; local map
+     * coverage and actual route calculation remain per-request checks. */
+    @Suppress("DEPRECATION")
+    fun serviceAvailable(context: Context): Boolean = runCatching {
+        val info = context.packageManager.getServiceInfo(component, 0)
+        info.enabled && info.exported && info.applicationInfo.enabled &&
+            (info.permission.isNullOrEmpty() || context.checkSelfPermission(info.permission) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }.getOrDefault(false)
     data class Turn(val pointIndex: Int, val sourceCode: Int, val exit: Int,
                     val nextDistanceMeters: Double, val angleDegrees: Int)
     class Route(val course: NaverWalkingCourse.Course, val turns: List<Turn>,
