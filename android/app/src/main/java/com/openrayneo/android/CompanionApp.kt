@@ -729,8 +729,8 @@ private fun NativeNavigationStartTest(model: AppModel) {
     val s = model.state
     var consentEpoch by remember { mutableStateOf<String?>(null) }
     ContentCard {
-        Text("순정 내비 시작·종료 시험", style = MaterialTheme.typography.titleMedium)
-        Note("정지한 상태에서만 실행하세요. 공식 앱 없이 안경의 0x20 시작·준비 회신을 확인합니다. 실제 방향, 거리, 지도 이미지나 위치는 전송하지 않습니다.")
+        Text("순정 내비 상태 · 시작 시험", style = MaterialTheme.typography.titleMedium)
+        Note("시작 시험 버튼은 정지 상태에서 연결만 확인합니다. 실제 경로 내비와 구분됩니다.")
         Note(s.nativeStartTestStatus.ifBlank { "안경 연결 및 순정 PNG 프로파일 회신 필요" })
         ToolOutlinedButton(onClick = { consentEpoch = s.nativePresetConsentEpoch },
             enabled = s.nativeStartTestCanRun && !s.nativeStartTestPending,
@@ -738,9 +738,9 @@ private fun NativeNavigationStartTest(model: AppModel) {
         if (s.nativeStartTestPending) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             ToolOutlinedButton(onClick = { model.attempt { model.service().cancelNativeStartTest() } },
-                modifier = Modifier.fillMaxWidth()) { Text("시험 종료") }
+                modifier = Modifier.fillMaxWidth()) { Text("순정 내비/시험 종료") }
         }
-        Note("실제 길 안내 기능이 아닙니다. 시작 회신 확인 또는 시간 초과 시 종료를 전송합니다. 종료 후 안경의 실제 화면을 확인하세요.")
+        Note("시작 시험만 자동 종료합니다. 실제 경로 내비의 상태는 위의 회신·전송 정보로 확인하세요.")
     }
     consentEpoch?.let { epoch -> AlertDialog(
         onDismissRequest = { consentEpoch = null },
@@ -791,7 +791,17 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                 ToolButton(onClick = { if(model.offlineTracking) model.stopOfflineTracking() else model.startOfflineTracking() },
                     enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
                     modifier = Modifier.fillMaxWidth()) { Text(if(model.offlineTracking) "실시간 위치 갱신 종료" else "실시간 위치 갱신 시작") }
-                Note("이 화면에서 사용자가 시작한 동안만 GPS를 사용합니다. 안경 전송·자동 재탐색은 아직 연결되지 않습니다.")
+                Note("위 위치 갱신은 휴대폰 미리보기입니다. 순정 내비는 별도로 시작합니다.")
+                val wireReady = runCatching { model.service().nativeOfflineWireAvailable }.getOrDefault(false)
+                ToolButton(onClick = { model.attempt {
+                    model.stopOfflineTracking()
+                    model.service().startCalculatedOfflineNativeRoute(offline)
+                } }, enabled = wireReady && model.state.nativeStartTestCanRun &&
+                    !model.state.nativeStartTestPending && !model.walkingCourseBusy && !model.offlineProgressBusy,
+                    modifier = Modifier.fillMaxWidth()) { Text("계산한 경로로 안경 순정 도보 내비 시작") }
+                Note(if (wireReady)
+                    "BRouter 계산 경로와 실측 GPS를 사용합니다. 사용자가 종료할 때까지 전경 위치 서비스에서 GPS를 사용하며, 자동 재탐색·배경지도는 제공하지 않습니다."
+                    else "순정 도보 이동수단·안내 상태의 정확한 통신값 확인 전에는 안경 전송을 차단합니다.")
                 if(model.offlineTracking && model.offlineLiveMini==null) Note("유효한 경로상 GPS 위치 대기 중")
                 model.offlineLiveMini?.let { bytes ->
                     val live = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)?.asImageBitmap() }
@@ -835,7 +845,7 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
             } else Note("순정 크기 PNG를 생성하지 못했습니다. 원본 코스 좌표는 유지됩니다.")
             val geometry = remember(course) { course.nativeGeometry() }
             Note(if (geometry == null) "순정 장면 규격에 맞지 않는 좌표 수 또는 범위 · 원본 코스는 보존됩니다." else "순정 장면용 경로 형상 준비 · 세션 및 실제 안내 연동 필요")
-            Note("정적 코스 이미지에는 배경지도와 실시간 위치가 없습니다. 별도 위치 갱신 화면만 실측 위치를 사용하며, 앱은 결과를 메모리에 유지하고 안경으로 전송하지 않습니다.")
+            Note("정적 코스 이미지에는 배경지도와 실시간 위치가 없습니다. 명시적으로 순정 내비를 시작한 실제 계산 경로만 안경 전송 대상으로 사용할 수 있습니다.")
             ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }
     }

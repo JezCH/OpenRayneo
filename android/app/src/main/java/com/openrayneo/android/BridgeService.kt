@@ -85,7 +85,7 @@ internal class BridgeService : Service() {
     }
     private var nativeStartProbe: NativeStartProbe? = null
     var nativeStartTestStatus = "순정 시작·종료 시험 미실행"; private set
-    val nativeStartTestPending get() = nativeStartProbe != null
+    val nativeStartTestPending get() = nativeStartProbe != null || queuedNativeDestination != null
     val nativeStartTestCanRun get() = nativePresetCanSync &&
         nativeNavCapabilities?.raster != null && nativeStartProbe == null &&
         state.error == null && pendingNativeHint == null && audioOwner == null &&
@@ -97,6 +97,33 @@ internal class BridgeService : Service() {
     private var preparedNativeRoute: NativeLiveNavigation.Route? = null
     private var queuedNativeDestination: String? = null
     private var queuedNativeDeadline = 0L
+    val nativeRouteWaiting get() = queuedNativeDestination != null
+    val nativeOfflineWireAvailable get() = OfflineNativeRoute.verifiedWire() != null
+    fun startCalculatedOfflineNativeRoute(course: OfflineWalkingRoute.Route) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        check(hostVisible && foreground && !destroyed && nativeStartProbe == null) {
+            "앱 화면에서 연결 상태를 확인한 뒤 시작하세요."
+        }
+        check(nativeStartTestCanRun) { "안경 연결·순정 PNG 지원·다른 기능 종료를 확인하세요." }
+        val wire = checkNotNull(OfflineNativeRoute.verifiedWire()) {
+            "순정 도보 이동수단·안내 상태 규격 확인이 아직 필요합니다."
+        }
+        check(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) { "정확한 위치 권한이 필요합니다." }
+        enableLocationWhileVisible()
+        check(foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0) {
+            "위치 전경 서비스가 실행되어야 합니다."
+        }
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            wire.travelMode, "ko-KR", "KR", wire.unitSystem, wire.drivingSide,
+            "overseas", "선택한 BRouter 도보 경로")
+        val route = OfflineNativeRoute(this, course, params, wire) { pumpNativeNavigation() }
+        setPreparedNativeRoute(route)
+        queuedNativeDestination = params.destination
+        queuedNativeDeadline = SystemClock.elapsedRealtime() + 20_000L
+        nativeStartTestStatus = "실제 도보 경로 · 정확한 경로상 GPS 위치 대기"
+        notifyUI()
+    }
     internal fun setPreparedNativeRoute(route: NativeLiveNavigation.Route) {
         check(Looper.myLooper() == Looper.getMainLooper())
         check(!destroyed && nativeStartProbe == null && route.parameters.profile == NativeNavigationStartup.Profile.RASTER_FRAME)
@@ -157,8 +184,10 @@ internal class BridgeService : Service() {
             if (SystemClock.elapsedRealtime() >= queuedNativeDeadline) {
                 clearPreparedNativeRoute()
                 navigationSwitchStatus = "순정 내비 시작 대기 만료"
+                nativeStartTestStatus = navigationSwitchStatus
                 notifyUI()
-            } else if (nativeStartTestCanRun) {
+            } else if (nativeStartTestCanRun &&
+                preparedNativeRoute?.observation()?.guidance?.freshAt(SystemClock.elapsedRealtime()) == true) {
                 queuedNativeDestination = null
                 navigationSwitchStatus = startPreparedNativeRoute(destination)
                 notifyUI()
@@ -174,6 +203,11 @@ internal class BridgeService : Service() {
         }
         live.failure?.let { closeNativeStartTest(probe, it); return }
         if (live.arrived) { closeNativeStartTest(probe, "경로 공급자 도착 확인"); return }
+        if (probe.session.rasterState == NativeRasterTransfer.State.COMMITTED &&
+            nativeStartTestStatus != "순정 지도 프레임 저장 회신 확인 · 실물 표시 미확인") {
+            nativeStartTestStatus = "순정 지도 프레임 저장 회신 확인 · 실물 표시 미확인"
+            notifyUI()
+        }
         if (write == null) return
         runCatching {
             connection.sendFrame(write.packet) { result ->
@@ -221,6 +255,11 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     fun cancelNativeStartTest() {
+        if (queuedNativeDestination != null || preparedNativeRoute != null) {
+            clearPreparedNativeRoute()
+            nativeStartTestStatus = "순정 내비 시작 대기 취소"
+            notifyUI()
+        }
         nativeStartProbe?.let { closeNativeStartTest(it, "사용자 종료 요청") }
     }
     private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
@@ -988,6 +1027,13 @@ internal class BridgeService : Service() {
         try {
             while (events.isNotEmpty()) {
                 val currentEvent = events.removeFirst()
+                if (queuedNativeDestination != null &&
+                    (currentEvent == GlassesEvent.StopNavigation || currentEvent == GlassesEvent.PauseDisplay ||
+                        currentEvent == GlassesEvent.Disconnect || currentEvent == GlassesEvent.BeginConnection ||
+                        currentEvent is GlassesEvent.ExternalPage ||
+                        (currentEvent is GlassesEvent.LinkChanged && currentEvent.state.phase != LinkPhase.FULL))) {
+                    cancelNativeStartTest()
+                }
                 if (nativeStartProbe != null) {
                     if (currentEvent == GlassesEvent.StopNavigation || currentEvent == GlassesEvent.PauseDisplay) {
                         cancelNativeStartTest()
@@ -1337,7 +1383,8 @@ internal class BridgeService : Service() {
             }
             nativeNavCapabilities?.raster == null ->
                 "현재 연결에서 순정 PNG 내비 프로필을 확인하지 못했습니다."
-            request == null -> "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
+            request == null -> preparedNativeRoute?.let { startPreparedNativeRoute(it.parameters.destination) }
+                ?: "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
             else -> {
                 val destination = if (request.destination in setOf("집", "회사"))
                     runCatching { NativeNavigationPresets.read(this).resolve(request.destination) }.getOrNull()
@@ -3137,7 +3184,8 @@ internal class BridgeService : Service() {
         when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
                 .put("notificationPresent", navigation.selected != null)
-                .put("nativeSessionPending", nativeStartProbe != null).put("nativeStatus", nativeStartTestStatus)
+                .put("nativeSessionPending", nativeStartProbe != null || queuedNativeDestination != null)
+                .put("nativeStatus", nativeStartTestStatus)
                 .put("status", if (nativeStartProbe != null) nativeStartTestStatus else navigation.status)))
             "native_navigation_start" -> {
                 check(!destroyed && requests.permission()()) { "안경 내비 요청이 취소되었습니다." }

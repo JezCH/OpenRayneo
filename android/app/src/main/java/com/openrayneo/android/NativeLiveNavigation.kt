@@ -45,16 +45,16 @@ internal class NativeLiveNavigation(
             failure = "순정 지도 전송 거부 또는 시간 초과"
             return null
         }
-        if (arrivalSent) return null
-        val guidance = observation?.guidance
-        val write = if (guidance != null && guidance.observedAtMs > lastGuidance) {
+        if (arrivalSent || observation == null) return null
+        val guidance = observation.guidance
+        val write = if (guidance.observedAtMs > lastGuidance) {
             val packet = session.guidanceFrame(sequence, route.generation, route.token, guidance, now)
             lastGuidance = guidance.observedAtMs
             arrivalSent = guidance.arrival
             Write(packet)
         } else {
             val view = session.rasterView
-            if (view != null && observation != null &&
+            if (view != null &&
                 (view.generation != lastView || observation.guidance.observedAtMs > lastMapAt)) {
                 val png = if (view.view == NativeRasterFrame.View.MINI) observation.miniPng else observation.overviewPng
                 if (png != null && session.submitRaster(view, png)) {
