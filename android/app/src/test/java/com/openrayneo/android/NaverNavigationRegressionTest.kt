@@ -54,6 +54,51 @@ class NaverNavigationRegressionTest {
         assertEquals("""{"request_id":"preset-request","revision":2,"home":{"available":true,"preset_id":"1234567890abcdef"},"company":{"available":true,"preset_id":"fedcba0987654321"}}""", message.json)
     }
 
+    @Test fun liveSessionUsesPeerSidAndNeverRefreshesStaleGuidance() {
+        val sid = "0123456789abcdef0123456789abcdef"
+        val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            1, "ko-KR", "KR", 1, 1, "overseas", "JVM fixture")
+        val limits = NativeNavigationCapabilities.RasterLimits(4096,
+            NativeNavigationCapabilities.ViewLimits(184, 90, 65536, 16),
+            NativeNavigationCapabilities.ViewLimits(540, 220, 262144, 64))
+        val session = NativeNavigationStartup.Session(params, sid)
+        session.configureRaster(NativeNavigationCapabilities(true, false, true, true, limits))
+        val reply = ProtocolCodec.message(ProtocolCodec.StreamDecoder()
+            .append(session.acceptInitialPresetFrame(1)).single().payload)
+        assertEquals(2, reply.type)
+        assertEquals(sid, org.json.JSONObject(reply.json!!).getString("sid"))
+        assertFalse(session.startAccepted)
+        val snapshot = NativePhoneGuidance.Snapshot(1000L, 1, 0, 0, 0, -1,
+            100, 300, -1, "", "", "fixture", false, false)
+        var closed = false
+        val route = object : NativeLiveNavigation.Route {
+            override val parameters = params
+            override val generation = 1L
+            override val token = "fixture-route"
+            override fun observation() = NativeLiveNavigation.Observation(snapshot, null, null)
+            override fun close() { closed = true }
+        }
+        val live = NativeLiveNavigation(session, route)
+        assertNull(live.next(2, 1100))
+        session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", "other")
+            .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
+        assertNull(live.next(3, 1200))
+        session.receive(ProtocolCodec.Message(4, params.profileJson().put("sid", sid)
+            .put("runtime_version", "fixture").toString(), null, 1, 0, 2))
+        val write = checkNotNull(live.next(4, 1300))
+        val message = ProtocolCodec.message(ProtocolCodec.StreamDecoder().append(write.packet).single().payload)
+        assertEquals(0x34, message.type)
+        assertEquals("fixture-route", org.json.JSONObject(message.json!!).getString("route_token"))
+        assertNull(live.next(5, 1400))
+        live.written(write, true, 1500)
+        assertNull(live.next(6, 1600))
+        assertNull(live.next(7, 5000))
+        assertNull(live.next(8, 12000))
+        assertNotNull(live.failure)
+        live.close()
+        assertTrue(closed)
+    }
+
     @Test fun exactTurnOnlyNeverGuessFromEtaOrConflict() {
         val p = KoreanNavigationText
         assertEquals(KoreanNavigationText.Instruction("우회전", 300), p.parse(listOf("300m 앞에서 우회전")))

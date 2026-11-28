@@ -80,6 +80,7 @@ internal object NativeNavigationStartup {
         val startupEvidence: String get() =
             "START_REPLY " + when {
                 startAccepted -> "확인"
+                presetReplySent -> "응답 송신"
                 rejectionCode != null -> "거부($rejectionCode)"
                 incompatibleStartReply -> "규격 불일치"
                 else -> "미수신"

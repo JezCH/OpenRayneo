@@ -1246,7 +1246,10 @@ internal class BridgeService : Service() {
         NaverVoiceCommand.Control.START_NATIVE -> requestNativeNavigation(null)
         NaverVoiceCommand.Control.STOP_NATIVE -> {
             val active = nativeStartProbe != null
+            val queued = queuedNativeDestination != null
+            clearPreparedNativeRoute()
             if (active) { cancelNativeStartTest(); "순정 내비 종료 요청을 전송합니다." }
+            else if (queued) "순정 내비 시작 대기를 취소했습니다."
             else if (navigation.enabled || state.navigation.enabled) {
                 stopNavigation(); "안경 알림 HUD를 종료했습니다. 휴대폰 지도는 변경하지 않았습니다."
             } else "순정 내비가 실행 중이지 않습니다."
