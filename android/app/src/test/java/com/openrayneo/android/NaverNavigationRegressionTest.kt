@@ -297,6 +297,31 @@ class NaverNavigationRegressionTest {
         assertEquals("우회전",progress.nextTurn?.instruction)
         assertNull(progress.followingTurn)
         assertEquals(130, progress.remainingEstimateSeconds)
+        // JVM fixture values intentionally do not claim stock enum semantics.
+        val params=NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,
+            1,"ko-KR","KR",1,1,"overseas","JVM fixture")
+        val wire=object: OfflineNativeRoute.WireMapping {
+            override val walkingMode=1
+            override val enrouteState=1
+            override val noManeuver=0
+            override fun maneuver(value: OfflineWalkingRoute.Maneuver): Int? =
+                if(value==OfflineWalkingRoute.Maneuver.RIGHT) 3 else null
+        }
+        val mini=byteArrayOf(1)
+        val overview=byteArrayOf(2)
+        var sample: OfflineNativeRoute.Sample?=OfflineNativeRoute.Sample(route,progress,fix,mini,overview)
+        val producer=OfflineNativeRoute(route,params,wire) { sample }
+        val observation=checkNotNull(producer.observation())
+        assertEquals(1000L,observation.guidance.observedAtMs)
+        assertEquals("우회전",observation.guidance.instruction)
+        assertEquals(3,observation.guidance.maneuver)
+        assertEquals(-1,observation.guidance.speedMpsX100)
+        assertArrayEquals(mini,observation.miniPng)
+        sample=OfflineNativeRoute.Sample(OfflineWalkingRoute.Route(route.course,route.turns,null,null),progress,fix,mini,overview)
+        assertNull(producer.observation())
+        sample=OfflineNativeRoute.Sample(route,progress,fix,mini,overview)
+        producer.close()
+        assertNull(producer.observation())
         assertNull(OfflineRouteProgress.match(route,fix,4000L))
         assertNull(OfflineRouteProgress.match(route,fix.copy(accuracyMeters=40.0),1200L))
         assertNull(OfflineRouteProgress.match(route,fix.copy(point=pt(37.0005,127.01)),1200L))

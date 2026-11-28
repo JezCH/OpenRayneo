@@ -310,7 +310,13 @@ internal class AppModel(application: Application) : AndroidViewModel(application
                                            wire: OfflineNativeRoute.WireMapping): OfflineNativeRoute {
         val route=checkNotNull(offlineWalkingRoute)
         check(offlineTracking && hostVisible)
-        return OfflineNativeRoute(route,parameters,wire) { offlineNativeSample }
+        val ticket=offlineTrackingGeneration
+        return OfflineNativeRoute(route,parameters,wire) {
+            offlineNativeSample.takeIf {
+                offlineTracking && hostVisible && ticket==offlineTrackingGeneration &&
+                    offlineWalkingRoute===route
+            }
+        }
     }
     private var offlineWatch: AutoCloseable? = null
     private var offlineTrackingGeneration=0L
