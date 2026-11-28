@@ -522,8 +522,29 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         try {
             action()
         } catch (failure: Exception) {
+            bridge?.diagnosticUiFailure(failure)
             error = failure.message ?: "작업이 완료되지 않았습니다. 다시 시도하세요"
         }
+    }
+
+    fun diagnosticReport(includeDetails: Boolean, includeAi: Boolean): String = buildString {
+        val current = bridge
+        if (current != null) appendLine(current.diagnosticReport(includeDetails, includeAi))
+        else {
+            appendLine("OpenRayneo diagnostic report v1 · service unavailable")
+            appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
+            appendLine("Persisted metadata only; current service state unavailable.")
+            appendLine(DiagnosticTrace(context).export())
+        }
+        if (includeAi) {
+            appendLine("[Optional visible phone and PC AI conversation, retained only]")
+            val mobile = phoneHistory + if (!state.phoneEphemeral && state.phoneQuestion.isNotBlank()) listOf(ChatRecord(state.phoneQuestion, state.phoneAnswer)) else emptyList()
+            val computer = computerHistory + if (state.computerQuestion.isNotBlank()) listOf(ChatRecord(state.computerQuestion, state.computerAnswer)) else emptyList()
+            listOf("phone" to mobile, "computer" to computer).forEach { (source, turns) ->
+                turns.takeLast(30).forEach { turn -> appendLine("source=$source\nQ: ${turn.question.take(4000)}\nA: ${turn.answer.take(6000)}") }
+            }
+        }
+        if (includeDetails) appendLine("Last UI error: $error")
     }
 
     fun service(): BridgeService = checkNotNull(bridge) { "연결 서비스를 준비 중입니다. 잠시 후 다시 시도하세요" }

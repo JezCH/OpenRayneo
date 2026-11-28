@@ -26,6 +26,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private companion object { const val UNCLAIMED_TASK_MS = 120_000L }
     private val lock = Object()
     private val requests = linkedMapOf<String, Request>()
+    @Volatile var diagnostic: (String) -> Unit = {}
+    private val lastDiagnostic = mutableMapOf<String, String>()
     init {
         val saved = repository.readAgentOutbox()
         var historicalCancelled = false
@@ -49,7 +51,11 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val finished = requests.values.filter { it.state !in setOf("queued", "running") }
         val prune = finished.filter { it.hintDeadline == 0L }.dropLast(64) +
             finished.filter { it.hintDeadline > 0L }.dropLast(16)
-        prune.forEach { requests.remove(it.id) }
+        prune.forEach { requests.remove(it.id); lastDiagnostic.remove(it.id) }
+        requests.values.forEach { r ->
+            val stage = "createdAt=${r.createdAt} kind=${r.kind} state=${r.state} direct=${r.direct} delivered=${r.delivered}"
+            if (lastDiagnostic.put(r.id, stage) != stage) runCatching { diagnostic(stage) }
+        }
         repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L && !it.direct }.map { it.json() }))
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,
@@ -288,6 +294,20 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         }
         if (request.state == "running") persist()
         status(id)
+    }
+    /** Explicit export only. Never include input/context, IDs, references,
+     * automatic/passive hints or no-retention questions. Does not mutate outbox. */
+    fun diagnosticRequests(includeText: Boolean): String = synchronized(lock) {
+        val rows = requests.values.toList().takeLast(40)
+        if (!includeText) rows.joinToString("\n") { r ->
+            "at=${r.createdAt} kind=${r.kind} state=${r.state} direct=${r.direct} delivered=${r.delivered}"
+        } else rows.filter { r ->
+            val input = r.input
+            (r.kind == "task" && (input == null || input.optString("source") == "NATIVE") && input?.optBoolean("backfill") != true) ||
+                (input?.optString("purpose") == "explicit_question" && input.optJSONArray("history") != null)
+        }.joinToString("\n\n") { r ->
+            "at=${r.createdAt} kind=${r.kind} state=${r.state}\nQ: ${r.text.take(4000)}\nA: ${r.answer.orEmpty().take(6000)}"
+        }
     }
     fun hasOutstanding(): Boolean = synchronized(lock) { expireHints(); requests.values.any { it.state in setOf("queued", "running") } }
     fun closeDirect() { directInference.close() }

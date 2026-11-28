@@ -16,6 +16,23 @@ internal class BridgeService : Service() {
     val observers = mutableSetOf<() -> Unit>()
     val devices = linkedMapOf<String, RayneoConnection.Device>()
     val logs = ArrayDeque<String>()
+    private lateinit var diagnosticTrace: DiagnosticTrace
+    private fun diagnosticEvent(category: String, detail: String, snapshot: Boolean = false) {
+        if (!::diagnosticTrace.isInitialized || destroyed) return
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { diagnosticEvent(category, detail, snapshot) }; return }
+        runCatching { diagnosticTrace.event(category, detail, snapshot) }
+    }
+    private val diagnosticErrors = ArrayDeque<String>()
+    private fun diagnosticFailure(category: String, error: Throwable) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { diagnosticFailure(category, error) }; return }
+        diagnosticEvent(category, "failure=" + error.javaClass.simpleName)
+        // Exact exception messages can contain private provider details. Keep
+        // only a small volatile buffer for explicitly selected preview/export.
+        diagnosticErrors.addLast("$category: " + error.message.orEmpty().take(500))
+        while (diagnosticErrors.size > 30) diagnosticErrors.removeFirst()
+    }
+    fun diagnosticUiFailure(error: Exception) = diagnosticFailure("UI", error)
+    fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear(); diagnosticErrors.clear() }
     lateinit var settings: AppSettings; private set
     lateinit var conversations: ConversationController; private set
     lateinit var voiceTransport: GlassesVoiceTransport; private set
@@ -190,7 +207,8 @@ internal class BridgeService : Service() {
         val target = destination.trim()
         require(target.length in 1..120 && target.none(Char::isISOControl)) { "목적지 이름 또는 위도, 경도를 입력하세요." }
         if (hostVisible) enableLocationWhileVisible()
-        requestNativeNavigation(NaverVoiceCommand.Request(target, NaverVoiceCommand.Mode.WALK))
+        val result = requestNativeNavigation(NaverVoiceCommand.Request(target, NaverVoiceCommand.Mode.WALK))
+        if (!nativeRouteWaiting && nativeStartProbe == null) { nativeStartTestStatus = result; notifyUI() }
     }
     private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null): String? {
         val provider = selectedNativeProvider() ?: return null
@@ -218,6 +236,7 @@ internal class BridgeService : Service() {
         if (!offlineProviderAvailable(provider)) return "선택한 경로 공급자 설정 및 정확한 GPS를 확인하세요."
         val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L, provider)
         offlinePreparation = pending
+        diagnosticEvent("route-provider", "request=$provider")
         nativeStartTestStatus = if (provider == "kakao") "카카오맵 실제 도보 경로 요청 중" else "실제 현재 위치와 BRouter 도보 경로 계산 중"
         pending.future = nativeRouteWorker.submit {
             val result = runCatching {
@@ -238,13 +257,17 @@ internal class BridgeService : Service() {
                     return@post
                 }
                 result.fold({ course ->
+                    diagnosticEvent("route-provider", "success=$provider points=${course.course.points.size} steps=${course.turns.size}")
                     runCatching { prepareCalculatedRoute(course, destination, wire, pending.peerSid, requiresProviderSelection = true) }
                         .onFailure {
+                            diagnosticFailure("navigation-prepare", it)
                             nativeStartTestStatus = "순정 경로 준비 실패 · GPS/연결 상태 확인"
                             pending.peerSid?.let { rejectNativePresetStart(it, nativeStartTestStatus) }
                             notifyUI()
                         }
                 }, {
+                    diagnosticFailure("navigation-calculate", it)
+                    diagnosticEvent("route-provider", "failure=$provider" + if (it is KakaoWalkingRoute.Failure) " ${it.message}" else "")
                     nativeStartTestStatus = if (provider == "kakao") "카카오 도보 경로 실패 · " +
                         ((it as? KakaoWalkingRoute.Failure)?.message ?: "GPS 또는 연결 상태 확인")
                         else "오프라인 경로 계산 실패 · BRouter 설치·데이터·GPS 확인"
@@ -638,6 +661,7 @@ internal class BridgeService : Service() {
         runCatching {
             connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence, probe.requestId)) { result ->
                 if (!current()) return@sendFrame
+                diagnosticEvent("navigation-wire", "0x30 query write success=${result.isSuccess}")
                 if (result.isFailure) finishWithoutReply("순정 내비 조회 전송 실패", true)
                 else {
                     writeCompleted = true
@@ -768,6 +792,9 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     private fun noteNativeMenu(protocol: Int, status: String) {
+        // Malformed peer tokens/JSON keys are not safe persistent metadata.
+        val safe = if (" · 거부:" in status) status.substringBefore(" · 거부:") + " · 규격 거부" else status
+        diagnosticEvent("native-menu-" + protocol.toString(16), safe, snapshot = true)
         nativeMenuEvidence[protocol] = status
         notifyUI()
     }
@@ -824,6 +851,7 @@ internal class BridgeService : Service() {
     // Current-link last successful host capability write, not a peer ACK.
     private var nativeHostCapabilitySent = false
     private var nativeHostCapabilityPending = false
+    private var nativeHostCapabilityDirty = false
     private var nativeHostCapabilityRetryAt = 0L
     private var peerCapabilityRevision = 0L
     var peerCapabilityStatus = "현재 연결의 기능 조회 대기"; private set
@@ -891,8 +919,10 @@ internal class BridgeService : Service() {
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
             nativeHostCapabilityPending || SystemClock.elapsedRealtime() < nativeHostCapabilityRetryAt) return
         val supported = hasLiveNativeHostSource()
-        if (supported != nativeHostCapabilitySent)
+        if (supported != nativeHostCapabilitySent || nativeHostCapabilityDirty) {
+            nativeHostCapabilityDirty = false
             sendNativeHostCapability(reply = false, supported = supported)
+        }
     }
     private fun sendNativeHostCapability(reply: Boolean, supported: Boolean) {
         val revision = ++capabilityRevision
@@ -909,14 +939,22 @@ internal class BridgeService : Service() {
                 capabilityStatus = if (supported) "app.navigation.main 1.0.0.0 전송 · 안경 적용 미확인"
                     else "실제 경로 공급 미확인 · 빈 지원 목록 전송 · 안경 적용 미확인"
             } else {
+                nativeHostCapabilityDirty = true
                 nativeHostCapabilityRetryAt = SystemClock.elapsedRealtime() + 5_000L
                 capabilityStatus = "휴대폰 기능 협상 전송 실패"
             }
             notifyUI()
         }
         runCatching {
-            connection.sendFrame(ProtocolCodec.navigationHostCapabilities(capabilitySequence++ and 65535,
-                reply, supported)) { result -> finish(result.isSuccess) }
+            val frame = ProtocolCodec.navigationHostCapabilities(capabilitySequence++ and 65535, reply, supported)
+            runCatching {
+                val decoded = ProtocolCodec.StreamDecoder().append(frame).single()
+                diagnosticEvent("wire-capability-tx", "SPP " + DiagnosticCapabilityShape.describe(decoded.payload))
+            }
+            connection.sendFrame(frame) { result ->
+                diagnosticEvent("wire-capability-tx-result", "SPP reply=$reply supported=$supported success=${result.isSuccess}")
+                finish(result.isSuccess)
+            }
         }.onFailure { finish(false) }
         notifyUI()
     }
@@ -1114,6 +1152,7 @@ internal class BridgeService : Service() {
             // retry per authenticated connection; explicit rejects are terminal.
             negotiateNativeNavigation()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
+            collectFeatureDiagnostics()
             updateNotification()
             main.postDelayed(this, 1_000)
         }
@@ -1121,6 +1160,8 @@ internal class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        diagnosticTrace = DiagnosticTrace(this)
+        diagnosticEvent("service", "start version=" + BuildConfig.VERSION_CODE + " commit=" + BuildConfig.GIT_COMMIT)
         settings = AppSettings(this)
         nativePresetHandoffEnabled = runCatching { NativeNavigationPresets.handoffEnabled(this) }.getOrDefault(false)
         runCatching { ChatGptSubscription.initialize(this) }
@@ -1130,6 +1171,7 @@ internal class BridgeService : Service() {
         supervisor = ConnectionSupervisor(this, main,
             { dispatch(GlassesEvent.LinkChanged(it)) }, { devices[it.bluetooth.address] = it; notifyUI() },
             { frame, source -> runCatching {
+                runCatching { traceIncomingFeature(frame, source) }
                 if (frame.protocol == 0x06) {
                     handleCapability(frame)
                     return@runCatching
@@ -1145,11 +1187,13 @@ internal class BridgeService : Service() {
                 requests.receive(frame)
                 // Assistant control events (not audio) go to the app log, to see how the firmware behaves around barge-in.
                 if (frame.protocol == 0x0d) ProtocolCodec.message(frame.payload).let { m ->
-                    if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} ${m.json.orEmpty().take(160)}")
+                    if (m.type !in setOf(3, 163, 164)) onLog("음성 이벤트 수신 type=${m.type} · binary=${m.audio?.size ?: 0}")
                 }
                 voiceTransport.receive(frame)
                 if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
-            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
+            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog,
+            nativeHostSupport = { !destroyed && !state.disconnecting && hasLiveNativeHostSource() },
+            bleHostCapabilityWritten = { if (!destroyed) nativeHostCapabilityDirty = true })
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
@@ -1201,7 +1245,8 @@ internal class BridgeService : Service() {
                 voiceAlwaysOnStart.nativeEnded(conversations.state.activeRecord?.id)
                 conversations.stop()
             } else { voiceAudio.stop(); conversations.voiceRoundBoundary(); conversations.endRound() }
-        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog)
+        }, { voiceAudio.accept(it) }, { conversations.voiceActivity(it) }, { conversations.transportError(it) }, ::onLog,
+            { stage -> diagnosticEvent("voice-wire", stage, true) })
         // Only when the posted next turn will really start (auto answer on, native session running); otherwise capture closes as before.
         voiceTransport.answeringChanged = { on ->
             val cfg = settings.read()
@@ -1223,6 +1268,7 @@ internal class BridgeService : Service() {
             { id, signal -> dispatch(GlassesEvent.SessionSignal(id, signal)) },
             { id, packet -> if (audioOwner == id && state.session?.id == id) audio.accept(packet) },
             { dispatch(GlassesEvent.ExternalPage(it)) })
+        display.diagnostic = { stage -> diagnosticEvent("display-wire", stage, true) }
         display.phonePromptLanguages = {
             val cfg = settings.read()
             val answer = KoreanLanguage.answerLanguage(cfg.optString("answerLanguage"))
@@ -1251,6 +1297,7 @@ internal class BridgeService : Service() {
         // deferred launch. The notification HUD requires an explicit selection.
         NaverVoiceLaunch.onOpened = null
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
+        agent.harness.diagnostic = { stage -> diagnosticEvent("agent-request", stage) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
         }
@@ -1364,6 +1411,7 @@ internal class BridgeService : Service() {
                     capabilityRevision++
                     nativeHostCapabilitySent = false
                     nativeHostCapabilityPending = false
+                    nativeHostCapabilityDirty = false
                     nativeHostCapabilityRetryAt = 0L
                     peerCapabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
@@ -1675,6 +1723,7 @@ internal class BridgeService : Service() {
         return navigationSwitchStatus
     }
     private fun requestNativeNavigation(request: NaverVoiceCommand.Request?): String {
+        diagnosticEvent("navigation-action", "explicit start; destinationSpecified=${request != null}")
         val status = when {
             destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting ->
                 "안경 연결을 먼저 확인하세요."
@@ -1702,6 +1751,7 @@ internal class BridgeService : Service() {
             }
         }
         navigationSwitchStatus = status
+        diagnosticEvent("navigation-result", status)
         notifyUI()
         return status
     }
@@ -1991,6 +2041,7 @@ internal class BridgeService : Service() {
         updateNotification(); notifyUI()
     }
     private fun nativeWake() {
+        diagnosticEvent("ai-action", "native wake received")
         nativeWakeStatus = "안경 기본 호출 이벤트 수신"
         // An unsolicited wake while auto-answer is disabled is not an owned
         // audio session. Do not leave all settings locked until a type-8 exit
@@ -2084,6 +2135,7 @@ internal class BridgeService : Service() {
         runCatching { startConversation(resume.mode, ConversationSource.ALWAYS_ON, resumeOnReconnect = resume.reconnect) }.onFailure { conversations.report(it.message ?: "종일 기록 재개 실패") }
     }
     private fun conversationCapture(source: ConversationSource, start: Boolean) {
+        diagnosticEvent("recording-action", "source=$source captureStart=$start")
         if (source != ConversationSource.NATIVE) resetAmbientWake()
         if (start) {
             requirePrompterFree()
@@ -2394,6 +2446,7 @@ internal class BridgeService : Service() {
             if (!isRealtimeStreamCurrent(input) || !passiveInputGate.accept("REALTIME", request.recordId.orEmpty(), request.text, SystemClock.elapsedRealtime())) {
                 request.retainInAgentContext = false; return true
             }
+            diagnosticEvent("hint-action", "realtime request submitted")
             realtimeStreamId = agent.harness.submit(request.text, KoreanLanguage.withAnswerPolicy(conversations.modePolicy.proactiveHintPrompt + limit, settings.read().optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = lifetime, preview = if (stream) ({ text: String ->
                     if (isRealtimeStreamCurrent(input)) {
@@ -2544,15 +2597,19 @@ internal class BridgeService : Service() {
             dispatch(GlassesEvent.StandbyText(TranslationView("AI 힌트", "듣는 중")))
     }
     private fun finishRealtimeStream(input: JSONObject, result: Result<String>) {
+        diagnosticEvent("hint-result", "success=${result.isSuccess} nonempty=${!result.getOrNull().isNullOrBlank()}")
+        result.exceptionOrNull()?.let { diagnosticFailure("hint-result", it) }
         val sequence = input.optLong("realtimeRequest")
-        if (sequence != latestRealtimeRequest) return
+        if (sequence != latestRealtimeRequest) { diagnosticEvent("hint-result", "discarded: superseded request"); return }
         if (!isRealtimeStreamCurrent(input)) {
+            diagnosticEvent("hint-result", "discarded: expired or ownership changed")
             cancelRealtimeStream()
             return
         }
         realtimeStreamId = null
         val answer = result.getOrNull()?.trim().orEmpty()
         val displayText = HintStreamPolicy.preview(answer.take(HintStreamPolicy.MAX_CHARS).trimEnd())
+        diagnosticEvent("hint-result", "displayEligible=${displayText != null} pass=${answer == "[PASS]"}")
         if (displayText != null) {
             conversations.repository.applyDerived(RecordDerived(id = input.getString("derivedId"), recordId = input.getString("recordId"),
                 sourceRevision = input.optInt("sourceRevision", 1), kind = "analysis", text = answer, agent = "phone-local-agent"))
@@ -2677,6 +2734,7 @@ internal class BridgeService : Service() {
             if (nativeSubtitleRequests.size > 64) nativeSubtitleRequests.remove(nativeSubtitleRequests.first())
             noteNativeMenu(0x13, "세션 시작 · 요청 언어 ${request.source} → 적용 ${negotiated.source} · 안경 표시 확인 필요")
         }.onFailure { error ->
+            diagnosticFailure("native-caption-start", error)
             if (state.session?.nativeSubtitle?.sid == request.sid) {
                 translator.stop(); dispatch(GlassesEvent.PauseDisplay)
             } else if (starting && translator.active) translator.stop()
@@ -2729,6 +2787,7 @@ internal class BridgeService : Service() {
                 }
             }, 3_000)
         }.onFailure { error ->
+            diagnosticFailure("native-hint-start", error)
             if (pendingNativeHint?.sid == request.sid) pendingNativeHint = null
             if (starting && conversations.state.running && conversations.state.source == ConversationSource.REALTIME) conversations.stop()
             noteNativeMenu(0x17, "시작 보류 · 연결/마이크/AI 준비 확인")
@@ -3279,6 +3338,7 @@ internal class BridgeService : Service() {
         invalidateAnswer(AnswerSource.COMPUTER_CODEX); codex.newConversation()
     }
     private fun completed(source: AnswerSource, question: String, text: String) {
+        diagnosticEvent("ai-result", "source=$source nonempty=${text.isNotBlank()}")
         val permit = pendingAnswers.remove(source) ?: return
         val delivery = voiceReply?.takeIf { it.ref == permit.ref }
         if (text.isBlank()) {
@@ -3488,8 +3548,19 @@ internal class BridgeService : Service() {
         FollowUpRecords.dismiss(conversations.repository, recordId, row.item.id, row.item.revision)
         conversations.refreshRecords()
     }
-    private fun executeTool(name: String, args: JSONObject, completion: (Result<JSONObject>) -> Unit) {
-        when (name) {
+    private fun executeTool(name: String, args: JSONObject, done: (Result<JSONObject>) -> Unit) {
+        val known = name.takeIf { it in setOf("navigation_status", "native_navigation_start", "stop_navigation_mirroring", "show_notification", "record_query", "record_annotate", "about_you_read", "memory_reference", "memory_search", "teleprompter_start", "teleprompter_control", "display_clear", "device_read") } ?: "other"
+        diagnosticEvent("ai-tool", "request=$known")
+        val completion: (Result<JSONObject>) -> Unit = { result ->
+            val body = result.getOrNull()
+            val flags = listOf("started", "pending", "queued", "persisted", "following").mapNotNull { key ->
+                (body?.opt(key) as? Boolean)?.let { "$key=$it" }
+            }.joinToString(" ")
+            diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess} $flags")
+            result.exceptionOrNull()?.let { diagnosticFailure("ai-tool", it) }
+            done(result)
+        }
+        try { when (name) {
             "navigation_status" -> completion(Result.success(JSONObject().put("following", state.navigation.enabled)
                 .put("notificationPresent", navigation.selected != null)
                 .put("nativeSessionPending", nativeStartProbe != null || nativeRouteWaiting)
@@ -3557,8 +3628,86 @@ internal class BridgeService : Service() {
             "device_read" -> requests.perform({ deviceSettings.readForTool() }, completion)
             else -> if (name.startsWith("device_")) deviceSettings.tool(name, args, completion)
                 else content.execute(name, args, completion)
+        } } catch (error: Exception) { diagnosticFailure("ai-tool", error); throw error }
+    }
+    /** Inspect only protocol type/mode/version and known integer result codes.
+     * Voice data, JSON payloads and identifiers are never recorded. */
+    private fun traceIncomingFeature(frame: ProtocolCodec.Frame, source: String) {
+        if (frame.acknowledgement || frame.protocol !in setOf(0x06, 0x20, 0x13, 0x17)) return
+        if (frame.payload.size > 65531) return
+        if (frame.protocol == 0x06) {
+            diagnosticEvent("wire-capability", "rx=$source " + DiagnosticCapabilityShape.describe(frame.payload), true)
+            return
+        }
+        val message = runCatching { ProtocolCodec.message(frame.payload) }.getOrNull() ?: return
+        if (frame.protocol in setOf(0x13, 0x17) && message.type !in 1..5) return
+        if (message.audio?.isNotEmpty() == true) return
+        val body = message.json?.takeIf { it.length <= 8192 }?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val codes = listOf("code", "reason_code", "failed_type", "protocol_version").mapNotNull { key ->
+            (body?.opt(key) as? Int)?.let { "$key=$it" }
+        }.joinToString(" ")
+        diagnosticEvent("wire-0x" + frame.protocol.toString(16),
+            "rx=$source type=${message.type} mode=${message.mode} version=${message.version} $codes", true)
+    }
+
+    private fun collectFeatureDiagnostics() {
+        if (!initialized || destroyed) return
+        runCatching {
+            val c = conversations.state
+            val a = audioLevels
+            val page = state.session
+            diagnosticEvent("connection", "link=${state.link.phase} disconnecting=${state.disconnecting} foreground=$foreground readback=${deviceSettings.state.readback} mic=${deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")} ", true)
+            diagnosticEvent("link-negotiation", connection.linkEvidence, true)
+            diagnosticEvent("host-capability", capabilityStatus, true)
+            diagnosticEvent("display", "intent=${state.intent.javaClass.simpleName} owner=${state.ownership} mode=${page?.mode} phase=${page?.phase} written=${page != null && page.writtenContent == page.content} error=${state.error != null}", true)
+            diagnosticEvent("audio", "phase=${a.coordinatorState().phase} channels=${a.channels} firstPacket=${a.firstPacketAt > 0} firstPCM=${a.firstPcmAt > 0} dropped=${a.dropped > 0} error=${a.error != null}", true)
+            val probe = nativeStartProbe
+            diagnosticEvent("navigation", "queryAttempts=$nativeNavQueryAttempts settled=$nativeNavQuerySettled raster=${nativeNavCapabilities?.raster != null} hostWrite=$nativeHostCapabilitySent hostPending=$nativeHostCapabilityPending prepared=${preparedNativeRoute != null} calculating=${offlinePreparation != null} waiting=$nativeRouteWaiting phase=${probe?.session?.phase} accepted=${probe?.session?.startAccepted} ready=${probe?.session?.glassReady} reject=${probe?.session?.rejectionCode} rasterState=${probe?.session?.rasterState} closing=${probe?.closing}", true)
+            diagnosticEvent("navigation-status", nativeStartTestStatus, true)
+            diagnosticEvent("navigation-capability", nativeNavCapabilityStatus, true)
+            diagnosticEvent("recording", "source=${c.source} mode=${c.mode} running=${c.running} stopping=${c.stopping} modelReady=${c.modelReady} firstFinalMs=${firstLiveFinalMs ?: -1} decoded=${c.decodedSeconds > 0} activeRecord=${c.activeRecord != null} transcriptOnly=${c.liveTranscriptOnly} error=${c.error != null}", true)
+            diagnosticEvent("caption", "active=${translator.active} caption=${translator.captionOnly} partial=${translator.diagnosticPartialSeen} final=${translator.diagnosticFinalSeen} asrStarted=${translator.diagnosticRoundStarted} retries=${translator.diagnosticFailures} media=${mediaCaptionState.phase} mediaPCM=${mediaCaptionState.samples > 0} mediaFinal=${translator.mediaFinalCount > 0}", true)
+            diagnosticEvent("ai", "phoneRunning=${agent.running} computerRunning=${codex.running} voicePending=$voiceAiPending hintPending=${pendingNativeHint != null} stream=${realtimeStreamId != null} preview=${realtimePreviewRequest != 0L} answerPresent=${state.answer != null}", true)
         }
     }
+
+    fun diagnosticReport(includeDetails: Boolean, includeAi: Boolean): String {
+        collectFeatureDiagnostics()
+        return buildString {
+            appendLine("OpenRayneo diagnostic report v1")
+            appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
+            appendLine("exportedAt=${System.currentTimeMillis()} Android=${android.os.Build.VERSION.SDK_INT}")
+            appendLine("Phone-side evidence only; no physical HUD confirmation. Times are Unix ms.")
+            appendLine("[Recent feature timeline, bounded to 400 events, 40 per category]")
+            appendLine(diagnosticTrace.export())
+            appendLine("[AI request states, no prompt or payload]")
+            appendLine(agent.harness.diagnosticRequests(false))
+            if (includeDetails) {
+                appendLine("[Optional current error/status and recent raw app logs: review before sharing]")
+                appendLine(connectionHealth)
+                appendLine(connection.linkEvidence)
+                appendLine(capabilityStatus); appendLine(peerCapabilityStatus); appendLine(nativeMenuDiagnostics)
+                appendLine(nativeStartTestStatus); appendLine(navigationSwitchStatus)
+                appendLine(conversations.state.status); appendLine(conversations.state.error.orEmpty())
+                appendLine(audioLevels.summary()); appendLine(audioLevels.timingSummary()); appendLine(captureTimingStatus)
+                appendLine(translator.status); appendLine(mediaCaptionState.detail)
+                appendLine(agent.status); appendLine(codex.status)
+                appendLine(diagnosticErrors.joinToString("\n"))
+                appendLine(logs.takeLast(120).joinToString("\n"))
+            }
+            if (includeAi) {
+                appendLine("[Optional existing explicit AI task records]")
+                appendLine(agent.harness.diagnosticRequests(true))
+                appendLine("[Optional saved ordinary conversation]")
+                chatContinuity.state.turns.forEach { t ->
+                    appendLine("source=${t.source}\nQ: ${t.question}\nA: ${t.answer}")
+                }
+                appendLine("[Optional recent explicit glasses conversation]")
+                nativeChatHistory.forEach { (q, a) -> appendLine("Q: $q\nA: $a") }
+            }
+        }
+    }
+
     private fun onLog(text: String) {
         android.util.Log.i("OpenRayneo", text)
         logs.addLast("${LocalTime.now().withNano(0)} $text")
@@ -3579,6 +3728,7 @@ internal class BridgeService : Service() {
     private fun notifyUI() {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { notifyUI() }; return }
         if (initialized && !destroyed) {
+            collectFeatureDiagnostics()
             updateNotification()
             observers.toList().forEach { it() }
         }
@@ -3650,6 +3800,8 @@ internal class BridgeService : Service() {
         }
     }
     override fun onDestroy() {
+        diagnosticEvent("service", "stop")
+        if (::diagnosticTrace.isInitialized) runCatching { diagnosticTrace.flush() }
         if (mediaCaptionState.busy) stopMediaCaption("안경 연결 서비스 종료")
         agentProbeToken = null; agentProbeRequest = null; agentProbe.reset()
         nativeStartProbe?.live?.close()
