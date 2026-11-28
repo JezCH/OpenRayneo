@@ -2820,7 +2820,7 @@ internal class BridgeService : Service() {
         try {
             nativeChatRequest = agent.harness.submit(request.text,
                 KoreanLanguage.withAnswerPolicy(NativeExplicitVoicePolicy.prompt(routeTools) + limit +
-                     (if (auto != null) "\n" + OrdinaryContextPolicy.INSTRUCTION else ""), cfg.optString("answerLanguage")),
+                    (if (auto != null) "\n" + OrdinaryContextPolicy.INSTRUCTION else ""), cfg.optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS, automaticContext = auto) { result ->
                 if (token != nativeChatGeneration) return@submit
                 nativeChatRequest = null
@@ -3534,7 +3534,7 @@ internal class BridgeService : Service() {
         check(source != AnswerSource.COMPUTER_CODEX || (allowTools && retainHistory)) { "PC 작업은 도구와 세션 기록을 사용합니다. 질문 전용은 휴대폰 AI를 선택하세요" }
         if (source == AnswerSource.MOBILE_AGENT) {
             check(aiConfigured() && aiReady()) { "모델 선택에서 선택한 AI 연결을 설정하고 상태를 확인하세요" }
-         } else check(AiModelSelection.legacy(settings.read())) {
+        } else check(AiModelSelection.legacy(settings.read())) {
             "선택 모델과 별도의 Codex 실행은 기존 연결 모드에서만 가능합니다"
         }
         when (source) {
@@ -3861,11 +3861,14 @@ internal class BridgeService : Service() {
         conversations.refreshRecords()
     }
     private fun executeTool(name: String, args: JSONObject, done: (Result<JSONObject>) -> Unit) {
-        val known = name.takeIf { it in setOf("navigation_status", "native_navigation_start", "stop_navigation_mirroring", "show_notification", "record_query", "record_annotate", "about_you_read", "memory_reference", "memory_search", "teleprompter_start", "teleprompter_control", "display_clear", "device_read") } ?: "other"
+        val registered = CompanionTools.definitions()
+        val known = name.takeIf { candidate -> (0 until registered.length()).any {
+            registered.getJSONObject(it).getJSONObject("function").getString("name") == candidate
+        } } ?: "other"
         diagnosticEvent("ai-tool", "request=$known")
         val completion: (Result<JSONObject>) -> Unit = { result ->
             val body = result.getOrNull()
-            val flags = listOf("started", "pending", "queued", "persisted", "following").mapNotNull { key ->
+            val flags = listOf("started", "pending", "acceptedNewRoute", "queued", "persisted", "following", "readBack").mapNotNull { key ->
                 (body?.opt(key) as? Boolean)?.let { "$key=$it" }
             }.joinToString(" ")
             diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess} $flags")
@@ -3891,8 +3894,14 @@ internal class BridgeService : Service() {
                     require(it.length <= 120 && it.none(Char::isISOControl))
                     NaverVoiceCommand.Request(it, NaverVoiceCommand.Mode.UNSPECIFIED)
                 }
+                val wasWaiting = nativeRouteWaiting
+                val previousChoice = kakaoChoice
+                val previousProbe = nativeStartProbe
                 val status = requestNativeNavigation(request)
+                val acceptedNewRoute = !wasWaiting && previousProbe == null &&
+                    (nativeRouteWaiting || (kakaoChoice != null && kakaoChoice !== previousChoice))
                 completion(Result.success(JSONObject()
+                    .put("acceptedNewRoute", acceptedNewRoute)
                     .put("started", nativeStartProbe?.let { it.live != null && it.readyObserved && !it.closing } == true)
                     .put("pending", nativeRouteWaiting || kakaoChoice != null || nativeStartProbe?.let { it.live != null && !it.readyObserved && !it.closing } == true)
                     .put("status", status)))

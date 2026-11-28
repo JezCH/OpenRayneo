@@ -98,7 +98,7 @@ internal class DirectModelInference {
                 // correlated assistant exit with a second cloud answer.
                 if (tool.name == "native_navigation_start") return Answer(
                     value.optString("status").ifBlank { "내비 요청 결과를 확인하세요." },
-                    modelAnswer.reportedModel, true, value.optBoolean("pending"))
+                    modelAnswer.reportedModel, true, value.optBoolean("acceptedNewRoute"))
                 check(value.toString().length <= 80_000) { "도구 결과 길이 초과 · 조회 범위를 좁혀 주세요" }
                 messages.put(JSONObject().put("role", "assistant").put("content", modelAnswer.text))
                 messages.put(JSONObject().put("role", "user").put("content",

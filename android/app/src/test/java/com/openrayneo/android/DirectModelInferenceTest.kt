@@ -75,6 +75,8 @@ class DirectModelInferenceTest {
             assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"native_navigation_start","arguments":{"destination":"버거킹"}}""", "오늘 날씨") }.isFailure)
             assertNotNull(SelectedModelToolTransport.decode("""{"tool":"native_navigation_start","arguments":{"destination":"버거킹"}}""", "버거킹을 길 안내 해줘").call)
             assertEquals("그냥 답변", SelectedModelToolTransport.decode("그냥 답변", "질문").answer)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"device_read","arguments":{}} {"answer":"other"}""", "안경 상태") }.isFailure)
+            assertTrue(runCatching { SelectedModelToolTransport.decode("""{"tool":"todo_add","arguments":{"title":"x","request_id":"fake"}}""", "할 일") }.isFailure)
         } finally {
             inference.close()
             server.shutdown()

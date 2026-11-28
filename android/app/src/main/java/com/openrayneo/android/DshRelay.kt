@@ -78,7 +78,7 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
             "선택 모델 연결 설정이 필요합니다."
         } else null
         check(!useDirect || (kind == "hint" && hintLifetimeMs > 0)) {
-            "선택 모델은 질문·요약 전용입니다. 외부 업무 실행 연결은 아직 지원하지 않습니다."
+            "선택 모델은 현재 대화 기반 앱 도구를 지원합니다. 별도 외부 Agent 작업은 기존 연결 방식에서 실행하세요."
         }
         require(toolPermission == null || (useDirect && ordinaryChat && input?.has("references") != true &&
             (input?.optString("source").orEmpty() in setOf("", "NATIVE")) && input?.optBoolean("backfill") != true)) { "명시적인 현재 대화만 도구를 사용할 수 있습니다" }

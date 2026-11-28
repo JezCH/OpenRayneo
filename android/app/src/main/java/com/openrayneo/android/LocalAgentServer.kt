@@ -46,7 +46,7 @@ internal class LocalAgentServer(private val main: Handler, private val settings:
     private val reviewMs = 40_000L
     private val taskMs = 120_000L
     val reviews: List<Review> get() = tasks.values.filter { it.state == "running" && it.phase == "awaiting_approval" &&
-        SystemClock.elapsedRealtime() - it.startedAt < reviewMs }.map {
+        it.ownerAllowed() && SystemClock.elapsedRealtime() - it.startedAt < reviewMs }.map {
         Review(it.id, it.name, it.args.toString(2), it.createdAt + reviewMs)
     }
     // Recent receipts contain only the operation name and status, not private arguments/results.
