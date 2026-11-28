@@ -251,9 +251,12 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
      * An explicit BLE diagnostic stays BLE-only for outgoing requests. */
     private fun readLauncherSnapshot(type: Int, command: String, field: String, overBle: Boolean = false,
                                      prefer: (JSONObject) -> Boolean = { true }): JSONObject? {
-        fun read(ble: Boolean): JSONObject? =
+        fun read(ble: Boolean, accept: (JSONObject) -> Boolean = { true }): JSONObject? =
             requests.request(15, type, envelope(command), overBle = ble) { reply, body ->
-                reply == type && body.optJSONObject(field)?.length()?.let { it > 0 } == true
+                if (reply != type) false else {
+                    val snapshot = body.optJSONObject(field)
+                    snapshot != null && snapshot.length() > 0 && accept(snapshot)
+                }
             }?.optJSONObject(field)
         if (overBle) return read(true)
         // A partial SPP settings snapshot may omit the microphone flag required
@@ -262,7 +265,17 @@ internal class GlassesDeviceSettings(private val requests: GlassesRequests, priv
         // value, never a reason to retry or to change microphone permission.
         val primary = runCatching { read(false) }.getOrNull()
         if (primary != null && prefer(primary)) return primary
-        return runCatching { read(true) }.getOrNull() ?: primary
+        // Both transports can deliver late/partial snapshots. Do not end the
+        // existing bounded BLE request until its required field is observed.
+        // Observe still merges every report; preserve partial readback on timeout.
+        val partial = java.util.concurrent.atomic.AtomicReference<JSONObject?>(primary)
+        val complete = runCatching {
+            read(true) { snapshot ->
+                partial.set(snapshot)
+                prefer(snapshot)
+            }
+        }.getOrNull()
+        return complete ?: partial.get()
     }
     private fun readSettingsForVoice(overBle: Boolean = false): JSONObject? =
         readLauncherSnapshot(4, "request_general_settings", "generalSettings", overBle)
