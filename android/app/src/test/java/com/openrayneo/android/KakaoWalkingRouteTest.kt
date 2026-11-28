@@ -33,4 +33,16 @@ class KakaoWalkingRouteTest {
         assertThrows(KakaoWalkingRoute.Failure::class.java) { KakaoWalkingRoute.parse("""{"status":"ROUTE_RESULT_NOT_FOUND"}""",start,end) }
         assertThrows(KakaoWalkingRoute.Failure::class.java) { KakaoWalkingRoute.parse(sample.replace("[[127.1,37.4005],[127.1005,37.4005]]","[[127.11,37.4005],[127.1005,37.4005]]"),start,end) }
     }
+    @Test fun kakaoRouteRetainsRequestedEndpointAndUsesSameTerminalTracker() {
+        val route = KakaoWalkingRoute.parse(sample,start,end)
+        assertEquals(end, route.requestedEnd)
+        val tracker = OfflineRouteProgress.TerminalTracker()
+        for (at in listOf(1000L, 2000L, 3000L)) {
+            val assessment = OfflineRouteProgress.assess(route, OfflineRouteProgress.Fix(end, 3.0, at), at)
+            assertTrue(assessment.arrivalCandidate)
+            val result = tracker.observe(assessment, at, at)
+            if (at == 3000L) assertEquals(OfflineRouteProgress.Terminal.ARRIVED, result)
+            else assertNull(result)
+        }
+    }
 }

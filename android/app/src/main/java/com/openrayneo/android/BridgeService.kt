@@ -295,7 +295,16 @@ internal class BridgeService : Service() {
             wire.travelMode, "ko-KR", "KR", wire.unitSystem, wire.drivingSide, "overseas",
             destination.takeIf { it.toByteArray(Charsets.UTF_8).size <= 96 } ?: "선택한 도보 경로")
         val route = OfflineNativeRoute(this, course, params, wire, requiresProviderSelection,
-            diagnostic = { stage -> diagnosticEvent("navigation-observation", stage, true) }) { pumpNativeNavigation() }
+            diagnostic = { stage ->
+                val category = when {
+                    stage.startsWith("gps-watch") || stage.startsWith("gps-fix") -> "gps"
+                    stage.startsWith("gps-route") || stage.startsWith("gps-off-route") -> "match"
+                    stage.startsWith("raster") -> "raster"
+                    stage.startsWith("arrival") || stage.startsWith("deviation") -> "terminal"
+                    else -> "failure"
+                }
+                diagnosticEvent("navigation-observation-$category", stage, true)
+            }) { pumpNativeNavigation() }
         route.remainingAutomaticReroutes = rerouteBudget
         try { setPreparedNativeRoute(route) } catch (error: Exception) { route.close(); throw error }
         queuedNativeDestination = params.destination

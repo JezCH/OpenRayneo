@@ -764,7 +764,7 @@ private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
     var key by remember { mutableStateOf(saved?.key.orEmpty()) }
     var destination by remember { mutableStateOf("") }
     val s = model.state
-    val idle = s.available && !s.nativeStartTestPending
+    val idle = s.available && !s.nativeStartTestPending && !model.kakaoProviderCheckBusy
     val unchanged = saved?.let { it.enabled == enabled && it.key == key.trim() } == true
     ContentCard {
         Text("카카오맵 순정 도보 내비", style = MaterialTheme.typography.titleMedium)
@@ -780,7 +780,10 @@ private fun KakaoNativeRoutingSettings(model: AppModel, actions: UiActions) {
         Note("카카오디벨로퍼스 앱에서 카카오맵 API를 활성화한 뒤 REST API 키를 입력하세요. 키는 이 휴대폰의 암호화 저장소에만 저장합니다. 유료 API 사용 설정은 하지 않습니다.")
         ToolButton(onClick = { model.attempt {
             check(!model.state.nativeStartTestPending)
-            KakaoNativeRouteSettings.save(context, KakaoNativeRouteSettings.Config(enabled, key.trim()))
+            check(!model.kakaoProviderCheckBusy)
+            val next = KakaoNativeRouteSettings.Config(enabled, key.trim())
+            KakaoNativeRouteSettings.save(context, next)
+            if (saved != next) model.resetKakaoProviderCheck()
             saved = KakaoNativeRouteSettings.read(context)
             if (enabled) model.service().enableLocationWhileVisible()
         } }, enabled = saved != null && idle && (!enabled || key.isNotBlank()),

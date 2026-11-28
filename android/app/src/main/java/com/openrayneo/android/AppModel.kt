@@ -297,6 +297,10 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var kakaoProviderCheckBusy by mutableStateOf(false); private set
     var kakaoProviderCheckStatus by mutableStateOf("카카오 API 독립 검증 미실행"); private set
     private var kakaoProviderCheckGeneration = 0L
+    fun resetKakaoProviderCheck() {
+        check(!kakaoProviderCheckBusy)
+        kakaoProviderCheckStatus = "카카오 API 독립 검증 미실행 · 설정 변경"
+    }
     // Explicit one-call check with the public documented example, not personal GPS.
     fun checkKakaoProvider() = attempt {
         check(!kakaoProviderCheckBusy) { "카카오 API 확인 진행 중" }
