@@ -3,6 +3,8 @@
 package com.openrayneo.android
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -697,6 +699,7 @@ private fun NavigationScreen(
             }
         }
         item { NativeNavigationPresetSettings(model) }
+        item { NaverWalkingCourseSettings(model) }
         item { NaverPlaceLookupSettings(model) }
         item {
             Note("네이버지도의 시스템 길 안내 알림에서 명확한 방향·거리가 확인될 때만 안경에 표시합니다. 실제 알림 형식은 아직 실기기 검증 전이며, 안내가 없거나 오래되면 휴대폰 네이버지도를 확인하세요.")
@@ -712,6 +715,48 @@ private fun NavigationScreen(
             }
             Note("알림 권한과 추종 선택을 유지한 채 리스너를 다시 연결하고 현재 알림을 읽습니다.")
             Note("위의 안경 화면은 전송 결과에 따라서만 갱신되며 지도 앱 알림은 따로 표시됩니다. 종료되거나 연결이 끊기면 이전 화면을 현재 화면으로 간주하지 않습니다.")
+        }
+    }
+}
+
+@Composable
+private fun NaverWalkingCourseSettings(model: AppModel) {
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) model.importWalkingCourse(uri)
+    }
+    val course = model.walkingCourse
+    ContentCard {
+        Text("네이버 도보 코스 파일", style = MaterialTheme.typography.titleMedium)
+        Note("네이버지도 저장 코스에서 내려받은 GPX를 선택하세요. 파일에 기록된 좌표를 가져오며, 파일의 출처나 보행 가능 여부를 자동 검증하지는 않습니다. 현재 실시간 길 안내 또는 안경 순정 내비 시작 기능은 아닙니다.")
+        ToolButton(onClick = { picker.launch("*/*") }, enabled = !model.walkingCourseBusy, modifier = Modifier.fillMaxWidth()) { Text("GPX 코스 가져오기") }
+        if (model.walkingCourseBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (course != null) {
+            Text("${course.points.size}개 좌표 · ${"%.2f".format(java.util.Locale.KOREA, course.lengthMeters / 1000.0)} km", style = MaterialTheme.typography.titleLarge)
+            val color = MaterialTheme.colorScheme.primary
+            val pointColor = MaterialTheme.colorScheme.tertiary
+            val coordinates = remember(course) {
+                val center = course.points.map { it.latitude }.average()
+                val longitudeScale = kotlin.math.cos(Math.toRadians(center))
+                val xy = course.points.map { (it.longitude * longitudeScale) to it.latitude }
+                val minX = xy.minOf { it.first }; val maxX = xy.maxOf { it.first }
+                val minY = xy.minOf { it.second }; val maxY = xy.maxOf { it.second }
+                val span = maxOf(maxX - minX, maxY - minY).coerceAtLeast(0.000001)
+                xy.map { ((it.first - (minX + maxX) / 2.0) / span).toFloat() to (((minY + maxY) / 2.0 - it.second) / span).toFloat() }
+            }
+            Canvas(Modifier.fillMaxWidth().height(160.dp)) {
+                val scale = minOf(size.width, size.height) * 0.8f
+                val path = androidx.compose.ui.graphics.Path()
+                coordinates.forEachIndexed { index, (x, y) ->
+                    val px = size.width / 2f + x * scale
+                    val py = size.height / 2f + y * scale
+                    if (index == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                }
+                drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+                val (x, y) = coordinates.first()
+                drawCircle(pointColor, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width / 2f + x * scale, size.height / 2f + y * scale))
+            }
+            Note("파일 좌표의 연결선과 시작점 · 직선 구간 합계이며 지도, 도로 검증, 실시간 위치, ETA가 아닙니다. 앱 메모리에만 유지하며 안경으로 전송하지 않습니다.")
+            ToolOutlinedButton(onClick = model::clearWalkingCourse, modifier = Modifier.fillMaxWidth()) { Text("불러온 코스 지우기") }
         }
     }
 }

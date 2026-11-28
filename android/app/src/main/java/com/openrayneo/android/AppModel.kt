@@ -283,6 +283,34 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     var wantsScan = false
     private val files = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    // Only the explicitly selected file's coordinates; no disk copy, network or GPS.
+    var walkingCourse by mutableStateOf<NaverWalkingCourse.Course?>(null)
+        private set
+    var walkingCourseBusy by mutableStateOf(false)
+        private set
+    private var walkingCourseGeneration = 0L
+    fun importWalkingCourse(uri: android.net.Uri) {
+        if (walkingCourseBusy) return
+        val generation = ++walkingCourseGeneration
+        walkingCourseBusy = true
+        files.execute {
+            val result = runCatching {
+                checkNotNull(context.contentResolver.openInputStream(uri)) { "GPX 파일을 열 수 없습니다." }
+                    .use(NaverWalkingCourse::read)
+            }
+            main.post {
+                if (generation == walkingCourseGeneration) {
+                    walkingCourseBusy = false
+                    result.fold({ walkingCourse = it }, { error = "GPX를 가져오지 못했습니다. UTF-8, 1MB 이하의 연속 코스 파일을 확인하세요." })
+                }
+            }
+        }
+    }
+    fun clearWalkingCourse() {
+        ++walkingCourseGeneration
+        walkingCourseBusy = false
+        walkingCourse = null
+    }
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
         files.execute {
@@ -604,6 +632,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() {
+        clearWalkingCourse()
         cancelSubscription()
         subscriptionWorker.shutdown()
         updateCheck.close()
