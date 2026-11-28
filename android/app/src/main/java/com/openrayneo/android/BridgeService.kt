@@ -32,6 +32,12 @@ internal class BridgeService : Service() {
         while (diagnosticErrors.size > 30) diagnosticErrors.removeFirst()
     }
     fun diagnosticUiFailure(error: Exception) = diagnosticFailure("UI", error)
+    // User observations are labels, not verified device state. No free-text payload.
+    fun markLinkDiagnostic(observation: String) {
+        if (observation !in setOf("official-only", "own-only", "coexistence-observed", "official-app-required-on-hud", "native-feature-worked-on-hud")) return
+        diagnosticEvent("link-user-observation", "event=$observation userReported=true mono=${SystemClock.elapsedRealtime()} phase=${state.link.phase.name}")
+        if (::diagnosticTrace.isInitialized) runCatching { diagnosticTrace.flush() }
+    }
     fun clearDiagnosticTrace() { if (::diagnosticTrace.isInitialized) diagnosticTrace.clear(); diagnosticErrors.clear() }
     lateinit var settings: AppSettings; private set
     lateinit var conversations: ConversationController; private set
