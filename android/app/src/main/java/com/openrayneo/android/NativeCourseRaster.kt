@@ -22,7 +22,8 @@ internal object NativeCourseRaster {
         render(course, NativeRasterFrame.View.MINI),
         render(course, NativeRasterFrame.View.OVERVIEW))
 
-    fun render(course: NaverWalkingCourse.Course, view: NativeRasterFrame.View): ByteArray {
+    fun render(course: NaverWalkingCourse.Course, view: NativeRasterFrame.View,
+               measured: NaverWalkingCourse.Point? = null): ByteArray {
         val width = if (view == NativeRasterFrame.View.MINI) 184 else 540
         val height = if (view == NativeRasterFrame.View.MINI) 90 else 220
         val upperBound = if (view == NativeRasterFrame.View.MINI) 65_536 else 262_144
@@ -47,12 +48,22 @@ internal object NativeCourseRaster {
         val minX = xy.minOf { it.first }; val maxX = xy.maxOf { it.first }
         val minY = xy.minOf { it.second }; val maxY = xy.maxOf { it.second }
         val margin = if (view == NativeRasterFrame.View.MINI) 9.0 else 14.0
-        val scale = minOf(
+        val position=measured?.let {
+            val first=xy.first().first/longitudeScale
+            var lon=it.longitude
+            while(lon-first>180) lon-=360
+            while(lon-first< -180) lon+=360
+            lon*longitudeScale to it.latitude
+        }
+        val moving=position!=null && view==NativeRasterFrame.View.MINI
+        val scale = if(moving) 111_195.0 * 0.8 else minOf(
             (width - 2 * margin) / (maxX - minX).coerceAtLeast(1e-12),
             (height - 2 * margin) / (maxY - minY).coerceAtLeast(1e-12))
+        val centerX=if(moving) checkNotNull(position).first else (minX+maxX)/2.0
+        val centerY=if(moving) checkNotNull(position).second else (minY+maxY)/2.0
         fun pixel(point: Pair<Double, Double>) =
-            (width / 2.0 + (point.first - (minX + maxX) / 2.0) * scale).toFloat() to
-                (height / 2.0 - (point.second - (minY + maxY) / 2.0) * scale).toFloat()
+            (width / 2.0 + (point.first - centerX) * scale).toFloat() to
+                (height / 2.0 - (point.second - centerY) * scale).toFloat()
         val path = Path()
         xy.forEachIndexed { index, point ->
             val (x, y) = pixel(point)
@@ -78,6 +89,13 @@ internal object NativeCourseRaster {
                 val radius = if (view == NativeRasterFrame.View.MINI) 4f else 6f
                 canvas.drawCircle(sx, sy, radius, paint)
                 canvas.drawRect(ex - radius, ey - radius, ex + radius, ey + radius, paint)
+                position?.let {
+                    val (px,py)=pixel(it)
+                    paint.style=Paint.Style.FILL
+                    canvas.drawCircle(px,py,3f,paint)
+                    paint.style=Paint.Style.STROKE
+                    canvas.drawCircle(px,py,6f,paint)
+                }
                 return ByteArrayOutputStream().use { output ->
                     check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
                     output.toByteArray()

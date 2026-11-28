@@ -784,10 +784,20 @@ private fun NaverWalkingCourseSettings(model: AppModel) {
                 Note("BRouter / © OpenStreetMap contributors · 네이버 경로가 아닙니다.")
                 Note("실제 계산된 회전 지점 ${offline.turns.size}개 · " +
                     (offline.estimatedSeconds?.let { "엔진 예상 소요 시간 ${kotlin.math.ceil(it / 60).toInt()}분" } ?: "예상 시간 미제공"))
+                DisposableEffect(model) { onDispose { model.stopOfflineTracking() } }
                 ToolOutlinedButton(onClick = { model.checkOfflineRoutePosition() },
-                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
+                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy && !model.offlineTracking,
                     modifier = Modifier.fillMaxWidth()) { Text("현재 위치로 경로 진행 확인 (1회)") }
-                Note("이미 허용된 정확한 위치 권한만 사용합니다. 경로 진행 확인은 한 번의 GPS 측정이며 자동 추적이나 안경 안내가 아닙니다.")
+                ToolButton(onClick = { if(model.offlineTracking) model.stopOfflineTracking() else model.startOfflineTracking() },
+                    enabled = !model.walkingCourseBusy && !model.offlineProgressBusy,
+                    modifier = Modifier.fillMaxWidth()) { Text(if(model.offlineTracking) "실시간 위치 갱신 종료" else "실시간 위치 갱신 시작") }
+                Note("이 화면에서 사용자가 시작한 동안만 GPS를 사용합니다. 안경 전송·자동 재탐색은 아직 연결되지 않습니다.")
+                if(model.offlineTracking && model.offlineLiveMini==null) Note("유효한 경로상 GPS 위치 대기 중")
+                model.offlineLiveMini?.let { bytes ->
+                    val live = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)?.asImageBitmap() }
+                    live?.let { Image(it, contentDescription="실측 위치 중심 경로", modifier=Modifier.width(184.dp).aspectRatio(184f/90f)) }
+                    Note("실측 위치 중심 · 북쪽 위 · 배경지도 없음")
+                }
                 if(model.offlineProgressBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 model.offlineProgress?.let { progress ->
                     var current by remember(progress) { mutableStateOf(true) }

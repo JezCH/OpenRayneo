@@ -17,6 +17,29 @@ import java.util.concurrent.atomic.AtomicReference
  * use cached five-minute weather fixes or request background access. */
 internal object OfflineRouteLocation {
     @SuppressLint("MissingPermission")
+    fun watch(context: Context, receive: (OfflineRouteProgress.Fix?) -> Unit): AutoCloseable {
+        check(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED) {
+            "정확한 위치 권한이 필요합니다."
+        }
+        val manager=checkNotNull(context.getSystemService(LocationManager::class.java))
+        check(manager.isLocationEnabled && manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            "GPS를 활성화하세요."
+        }
+        val listener=object : android.location.LocationListener {
+            override fun onLocationChanged(location: Location) { receive(toFix(location)) }
+            override fun onProviderDisabled(provider: String) { receive(null) }
+        }
+        manager.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000L,0f,listener,android.os.Looper.getMainLooper())
+        return AutoCloseable { manager.removeUpdates(listener) }
+    }
+    private fun toFix(value: Location): OfflineRouteProgress.Fix? {
+        if(value.isMock || !value.hasAccuracy()) return null
+        val stamp=value.elapsedRealtimeNanos/1_000_000L
+        val now=SystemClock.elapsedRealtime()
+        if(stamp<0 || now<stamp || now-stamp>=NativePhoneGuidance.VALID_FOR_MS) return null
+        return OfflineRouteProgress.Fix(NaverWalkingCourse.Point(value.latitude,value.longitude),value.accuracy.toDouble(),stamp)
+    }
+    @SuppressLint("MissingPermission")
     fun current(context: Context): OfflineRouteProgress.Fix? {
         if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) return null
         val manager=context.getSystemService(LocationManager::class.java) ?: return null
@@ -30,11 +53,7 @@ internal object OfflineRouteLocation {
             }
             if(!latch.await(12,TimeUnit.SECONDS)) return null
             val value=received.get() ?: return null
-            if(value.isMock || !value.hasAccuracy()) return null
-            val stamp=value.elapsedRealtimeNanos/1_000_000L
-            val now=SystemClock.elapsedRealtime()
-            if(stamp<0 || now<stamp || now-stamp>=NativePhoneGuidance.VALID_FOR_MS) return null
-            return OfflineRouteProgress.Fix(NaverWalkingCourse.Point(value.latitude,value.longitude),value.accuracy.toDouble(),stamp)
+            return toFix(value)
         } finally { cancel.cancel() }
     }
 }
