@@ -137,9 +137,11 @@ internal object ProtocolCodec {
 
     /** Navigation uses the full recovered six-field PbMsg envelope. Keep
      * its inner sequence separate from the transport's 16-bit sequence. */
-    fun navigationCapabilityQuery(sequence: Int, querySequence: Int): ByteArray {
+    fun navigationCapabilityQuery(sequence: Int, querySequence: Int, requestId: String): ByteArray {
         require(querySequence > 0)
-        val json = "{}".toByteArray(Charsets.UTF_8)
+        // UUID-style ASCII identifier, safe to embed without escaping.
+        require(requestId.length in 1..64 && requestId.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' })
+        val json = """{"request_id":"$requestId","required_protocol_version":1}""".toByteArray(Charsets.UTF_8)
         val payload = byteArrayOf(8, 1, 16, 0x30, 26) + varint(json.size) + json +
             byteArrayOf(40) + varint(querySequence) + byteArrayOf(48, 1)
         return frame(0x20, sequence, payload)

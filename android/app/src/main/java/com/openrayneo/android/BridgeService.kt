@@ -38,15 +38,16 @@ internal class BridgeService : Service() {
     private var navProbeRevision = 0L
     private var navProbeSequence = 1
     private var navProbeTransportSequence = 0x6a00
-    private var pendingNavProbe: Long? = null
+    private data class NavigationProbe(val sequence: Long, val requestId: String)
+    private var pendingNavProbe: NavigationProbe? = null
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     private fun resetNativeNavigationProbe() {
         navProbeRevision++
         pendingNavProbe = null
         nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     }
-    /** Explicit read-only device probe. Header is recovered; empty JSON is a
-     * controlled compatibility trial, not a proven full request schema. */
+    /** Explicit read-only device probe using the recovered 1.0.6.11 request
+     * fields. Current firmware support must still be verified by a real reply. */
     fun probeNativeNavigation() {
         if (destroyed || !foreground || state.disconnecting || state.link.phase != LinkPhase.FULL ||
             state.intent != DisplayIntent.Idle || state.session != null || conversations.state.running ||
@@ -60,24 +61,25 @@ internal class BridgeService : Service() {
         val sequence = navProbeSequence
         navProbeSequence = if (sequence == Int.MAX_VALUE) 1 else sequence + 1
         val revision = ++navProbeRevision
-        pendingNavProbe = sequence.toLong()
+        val probe = NavigationProbe(sequence.toLong(), java.util.UUID.randomUUID().toString())
+        pendingNavProbe = probe
         nativeNavCapabilityStatus = "순정 내비 기능 조회 중 · 실제 회신 대기"
         val failed: () -> Unit = {
-            if (!destroyed && navProbeRevision == revision && pendingNavProbe == sequence.toLong()) {
+            if (!destroyed && navProbeRevision == revision && pendingNavProbe == probe) {
                 pendingNavProbe = null
                 nativeNavCapabilityStatus = "순정 내비 조회 전송 실패"
                 notifyUI()
             }
         }
         runCatching {
-            connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence)) {
+            connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence, probe.requestId)) {
                 if (it.isFailure) failed()
             }
         }.onFailure { failed() }
         main.postDelayed({
-            if (!destroyed && navProbeRevision == revision && pendingNavProbe == sequence.toLong()) {
+            if (!destroyed && navProbeRevision == revision && pendingNavProbe == probe) {
                 pendingNavProbe = null
-                nativeNavCapabilityStatus = "순정 내비 기능 조회 · 5초 내 동일 sequence 회신 미확인"
+                nativeNavCapabilityStatus = "순정 내비 기능 조회 · 5초 내 요청에 대응하는 회신 미확인"
                 notifyUI()
             }
         }, 5_000)
@@ -94,28 +96,31 @@ internal class BridgeService : Service() {
         when (message.type) {
             1 -> noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 시작 계약 미완성")
             3 -> noteNativeMenu(0x20, "종료 요청 수신 ($source)")
-            0x31 -> Unit // GLASS_CAPABILITY: the only profile response type.
+            0x31, 0x40 -> Unit // capability response or correlated protocol error
             else -> return
         }
-        if (message.type != 0x31) return
-        val actual = NativeNavigationCapabilities.parse(message) ?: run {
-            // A malformed capability reply is not successful negotiation.
-            if (pendingNavProbe != null && pendingNavProbe == message.sequence) {
-                pendingNavProbe = null
-                nativeNavCapabilityStatus = "순정 내비 기능 회신 · 지원 범위 외 형식"
-                notifyUI()
-            }
-            return
-        }
-        val expected = pendingNavProbe
-        if (expected != null && expected == message.sequence) {
+        if (message.type !in setOf(0x31, 0x40)) return
+        val expected = pendingNavProbe ?: return
+        if (expected.sequence != message.sequence) return
+        if (message.type == 0x40) {
+            val code = NativeNavigationCapabilities.queryError(message, expected.requestId) ?: return
             pendingNavProbe = null
-            nativeNavCapabilityStatus = "순정 내비 동일 sequence 기능 회신 · " + actual.summary +
-                " · 실제 시작/표시 미검증"
-        } else if (expected == null) {
-            nativeNavCapabilityStatus = "순정 내비 기능 데이터 수신 · " + actual.summary +
-                " · 조회 상관관계 미확인"
-        } else return
+            nativeNavCapabilityStatus = when (code) {
+                20 -> "순정 내비 조회 거부 · 요청 규격 오류(20)"
+                else -> "순정 내비 조회 거부 · 오류($code)"
+            }
+        } else {
+            val reply = NativeNavigationCapabilities.correlatedReply(message, expected.requestId) ?: return
+            pendingNavProbe = null
+            val code = reply.opt("code")
+            val actual = NativeNavigationCapabilities.parse(message, expected.requestId)
+            nativeNavCapabilityStatus = when {
+                code == 17 -> "순정 내비 조회 거부 · 지원하지 않는 프로토콜(17)"
+                code is Int && code != 0 -> "순정 내비 조회 거부 · 오류($code)"
+                actual == null -> "순정 내비 기능 회신 · 지원 범위 외 형식"
+                else -> "순정 내비 요청 일치 기능 회신 · " + actual.summary + " · 실제 시작/표시 미검증"
+            }
+        }
         notifyUI()
     }
     private fun noteNativeMenu(protocol: Int, status: String) {
