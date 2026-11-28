@@ -177,6 +177,15 @@ internal class ConnectionSupervisor(
             publish(LinkState(if (bleOnly) LinkPhase.BLE_ONLY else LinkPhase.FULL, text))
             return
         }
+        // The transport may recover only the failed SPP socket while keeping
+        // authenticated BLE. Treat this as a real data-link loss for session
+        // cleanup and capture policy, with normal fallback on failure.
+        if (busy && wasReady && target?.classicAddress != null) {
+            history.event("연결 끊김", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000), active = false)
+            automatic = true; failures = 0
+            publish(LinkState(LinkPhase.CONNECTING, text, text, reconnectWaiting = true))
+            return
+        }
         if (!busy && target?.classicAddress != null && (wasReady || automatic)) {
             if (wasReady) {
                 history.event("연결 끊김", text, ((android.os.SystemClock.elapsedRealtime() - connectedAt).coerceAtLeast(0L) / 1000), active = false)
