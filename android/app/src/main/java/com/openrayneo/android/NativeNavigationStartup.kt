@@ -11,6 +11,14 @@ import java.util.UUID
  * sending guidance or a map. A separately consented, stationary START/READY/END
  * diagnostic may test session negotiation without sending route data. */
 internal object NativeNavigationStartup {
+    /** Close an existing matching peer SID, not a fabricated successful start.
+     * Stock 0x105c91d2 -> 0x10740ea4 validates current SID and normal end reason.
+     * No peer acknowledgement is implied by writing this packet. */
+    fun phoneCloseFrame(sequence: Int, sid: String): ByteArray {
+        require(sid.matches(Regex("(?i)([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")))
+        return ProtocolCodec.display(0x20, sequence, 3, JSONObject().put("sid", sid)
+            .put("reason_code", 2).put("text", "MOBILE_APP_CLOSE").toString())
+    }
     internal enum class Profile(val map: String, val scene: String) {
         RASTER_FRAME("REMOTE_RASTER_FRAME_V1", "NONE"),
         VECTOR_TILE("REMOTE_VECTOR_TILE_V1", "ROUTE_SCENE_V1"),
@@ -199,8 +207,7 @@ internal object NativeNavigationStartup {
             route = null
             raster?.close()
             raster = null
-            val body = JSONObject().put("sid", sid).put("reason_code", 2).put("text", "MOBILE_APP_CLOSE")
-            return ProtocolCodec.display(0x20, sequence, 3, body.toString())
+            return phoneCloseFrame(sequence, sid)
         }
         override fun toString() = "Session(phase=" + phase.name + ")"
     }
