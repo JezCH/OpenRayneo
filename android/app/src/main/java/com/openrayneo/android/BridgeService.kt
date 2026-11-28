@@ -794,6 +794,9 @@ internal class BridgeService : Service() {
     // Current-link last successful host capability write, not a peer ACK.
     private var nativeHostCapabilitySent = false
     private var nativeHostCapabilityPending = false
+    // A BLE reply may have changed the peer registry before or during an SPP
+    // write. Reconcile the latest snapshot even when the cached SPP value matches.
+    private var nativeHostCapabilityDirty = false
     private var nativeHostCapabilityRetryAt = 0L
     private var peerCapabilityRevision = 0L
     var peerCapabilityStatus = "현재 연결의 기능 조회 대기"; private set
@@ -861,8 +864,10 @@ internal class BridgeService : Service() {
         if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
             nativeHostCapabilityPending || SystemClock.elapsedRealtime() < nativeHostCapabilityRetryAt) return
         val supported = hasLiveNativeHostSource()
-        if (supported != nativeHostCapabilitySent)
+        if (supported != nativeHostCapabilitySent || nativeHostCapabilityDirty) {
+            nativeHostCapabilityDirty = false
             sendNativeHostCapability(reply = false, supported = supported)
+        }
     }
     private fun sendNativeHostCapability(reply: Boolean, supported: Boolean) {
         val revision = ++capabilityRevision
@@ -879,6 +884,7 @@ internal class BridgeService : Service() {
                 capabilityStatus = if (supported) "app.navigation.main 1.0.0.0 전송 · 안경 적용 미확인"
                     else "실제 경로 공급 미확인 · 빈 지원 목록 전송 · 안경 적용 미확인"
             } else {
+                nativeHostCapabilityDirty = true
                 nativeHostCapabilityRetryAt = SystemClock.elapsedRealtime() + 5_000L
                 capabilityStatus = "휴대폰 기능 협상 전송 실패"
             }
@@ -1119,7 +1125,9 @@ internal class BridgeService : Service() {
                 }
                 voiceTransport.receive(frame)
                 if (!handleNativeMenuFrame(frame, source)) display.receive(frame, source)
-            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog)
+            }.onFailure { onLog("안경 메시지 파싱 실패: $source") } }, ::onLog,
+            nativeHostSupport = { !destroyed && !state.disconnecting && hasLiveNativeHostSource() },
+            bleHostCapabilityWritten = { if (!destroyed) nativeHostCapabilityDirty = true })
         requests = GlassesRequests(main, connection::sendFrame, connection::sendBleControl)
         deviceSettings = GlassesDeviceSettings(requests, ::notifyUI)
         content = CompanionContent(this, requests, { connection.resolvedClassicAddress?.takeIf { state.link.phase == LinkPhase.FULL } }, ::notifyUI)
@@ -1334,6 +1342,7 @@ internal class BridgeService : Service() {
                     capabilityRevision++
                     nativeHostCapabilitySent = false
                     nativeHostCapabilityPending = false
+                    nativeHostCapabilityDirty = false
                     nativeHostCapabilityRetryAt = 0L
                     peerCapabilityRevision++
                     capabilityStatus = "연결 끊김 · 이전 응답 무효"
