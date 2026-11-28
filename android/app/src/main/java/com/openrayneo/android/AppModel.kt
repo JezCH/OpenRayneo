@@ -290,6 +290,8 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     // Only the explicitly selected file's coordinates; no disk copy, network or GPS.
     var walkingCourse by mutableStateOf<NaverWalkingCourse.Course?>(null)
         private set
+    var walkingCourseRaster by mutableStateOf<NativeCourseRaster.Preview?>(null)
+        private set
     var walkingCourseBusy by mutableStateOf(false)
         private set
     private var walkingCourseGeneration = 0L
@@ -301,11 +303,15 @@ internal class AppModel(application: Application) : AndroidViewModel(application
             val result = runCatching {
                 checkNotNull(context.contentResolver.openInputStream(uri)) { "GPX 파일을 열 수 없습니다." }
                     .use(NaverWalkingCourse::read)
+                    .let { course -> course to runCatching { NativeCourseRaster.preview(course) }.getOrNull() }
             }
             main.post {
                 if (generation == walkingCourseGeneration) {
                     walkingCourseBusy = false
-                    result.fold({ walkingCourse = it }, { error = "GPX를 가져오지 못했습니다. UTF-8, 1MB 이하의 연속 코스 파일을 확인하세요." })
+                    result.fold({ (course, preview) ->
+                        walkingCourse = course
+                        walkingCourseRaster = preview
+                    }, { error = "GPX를 가져오지 못했습니다. UTF-8, 1MB 이하의 연속 코스 파일을 확인하세요." })
                 }
             }
         }
@@ -314,6 +320,7 @@ internal class AppModel(application: Application) : AndroidViewModel(application
         ++walkingCourseGeneration
         walkingCourseBusy = false
         walkingCourse = null
+        walkingCourseRaster = null
     }
     fun exportRecording(id: String, uri: android.net.Uri) {
         val s = service(); val record = s.conversations.repository.records.first { it.id == id }
