@@ -252,7 +252,7 @@ internal class BridgeService : Service() {
     private fun receiveNativeStartTest(message: ProtocolCodec.Message): Boolean {
         val probe = nativeStartProbe ?: return false
         if (message.type !in setOf(2, 3, 4) &&
-            (probe.live == null || message.type !in setOf(0x36, 0x37, 0x38, 0x39))) return false
+            (probe.live == null || message.type !in setOf(0x32, 0x36, 0x37, 0x38, 0x39))) return false
         if (probe.closing) {
             val reason = probe.session.peerEndReason(message)
             if (reason != null) {
@@ -263,7 +263,12 @@ internal class BridgeService : Service() {
             return message.type in setOf(2, 4)
         }
         val before = probe.session.startupEvidence
+        val displayBefore = probe.session.displayEvidence
         probe.session.receive(message)
+        if (probe.live != null && probe.session.displayEvidence != displayBefore) {
+            nativeStartTestStatus = "순정 내비 · " + probe.session.displayEvidence
+            notifyUI()
+        }
         when (probe.session.phase) {
             NativeNavigationStartup.Session.Phase.READY -> if (!probe.readyObserved) {
                 probe.readyObserved = true
@@ -334,7 +339,7 @@ internal class BridgeService : Service() {
         if (nativeStartProbe !== probe) return
         probe.live?.close()
         nativeStartProbe = null
-        nativeStartTestStatus = status
+        nativeStartTestStatus = if (probe.live != null) "$status · " + probe.session.displayEvidence else status
         if (state.intent == DisplayIntent.NativeNavigation) {
             // No implicit competing page when the peer's close is not confirmed.
             dispatch(if (yield && state.link.phase == LinkPhase.FULL)
