@@ -99,13 +99,15 @@ internal class BridgeService : Service() {
     val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
     val nativePresetCanSync get() = nativeNavCoreReadbackFinished &&
         nativeNavCapabilities?.let { it.phoneGuidance && it.guidance } == true &&
-        canQueryNativeNavigation() && state.ownership == DisplayOwnership.APP &&
+        nativeNavigationMutationIdle() && state.ownership == DisplayOwnership.APP &&
         !deviceSettings.state.busy && deviceSettings.state.initialization.recorder == NativeRecorderState.IDLE &&
         !mediaCaptionState.busy && !wakePending &&
         !speechOutput.speaking && !agent.running && !codex.running && !navigation.enabled
     // Actual peer capabilities belong to this authenticated connection only.
     private var nativeNavCapabilities: NativeNavigationCapabilities? = null
-    private var nativeNavAutoQuerySent = false
+    private var nativeNavQueryAttempts = 0
+    private var nativeNavQuerySettled = false
+    private var nativeNavRetryAt = 0L
     private var nativeNavCoreReadbackFinished = false
     private var nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     // One explicitly consented, stationary START/READY/END round trip. It is
@@ -393,55 +395,84 @@ internal class BridgeService : Service() {
         nativePresetSyncedRevision = null
         nativePresetStatus = "안경 목적지 동기화 미실행"
         nativeNavCapabilities = null
-        nativeNavAutoQuerySent = false
+        nativeNavQueryAttempts = 0
+        nativeNavQuerySettled = false
+        nativeNavRetryAt = 0L
         nativeNavCoreReadbackFinished = false
         nativeNavCapabilityStatus = "순정 내비 기능 조회 미실행"
     }
-    /** Read-only peer negotiation, once automatically after core readback and
-     * optionally on explicit retry. Never advertise unimplemented phone profiles. */
+    /** Capability query is read-only. Stock 1.0.6.11 0x105C96A6
+     * parses it independently of recorder/display ownership and caches the
+     * successful request for the later profile-ready gate 0x105C3FB4.
+     * Do not delay negotiation until optional settings/recorder reads finish.
+     * RayneoConnection serializes RFCOMM writes and rejects old-link completions.
+     * Keep actual START/preset mutations subject to the original idle guards. */
     private fun canQueryNativeNavigation() =
         !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+            pendingNavProbe == null && pendingNativePreset == null && pendingPresetHandoff == null &&
+            nativeStartProbe == null
+    private fun nativeNavigationMutationIdle() =
+        canQueryNativeNavigation() &&
             state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
             !conversations.state.stopping && !translator.active && !voiceTransport.nativeActive &&
-            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null && pendingNativePreset == null && pendingPresetHandoff == null
+            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied
     private fun negotiateNativeNavigation() {
-        if (!nativeNavCoreReadbackFinished || nativeNavAutoQuerySent || !canQueryNativeNavigation()) return
-        probeNativeNavigation()
+        if (nativeNavQuerySettled || nativeNavQueryAttempts >= 2 ||
+            SystemClock.elapsedRealtime() < nativeNavRetryAt || !canQueryNativeNavigation()) return
+        sendNativeNavigationProbe()
     }
     fun probeNativeNavigation() {
-        if (!canQueryNativeNavigation()) {
-            nativeNavCapabilityStatus = if (pendingNavProbe != null) nativeNavCapabilityStatus
-                else "순정 내비 조회 보류 · 연결/다른 기능 종료 확인"
+        if (!canQueryNativeNavigation() || preparedNativeRoute != null || queuedNativeDestination != null) {
+            nativeNavCapabilityStatus = if (pendingNavProbe != null || nativeNavCapabilities != null) nativeNavCapabilityStatus
+                else "순정 내비 조회 보류 · 연결/진행 중인 순정 세션 확인"
             notifyUI()
             return
         }
-        nativeNavAutoQuerySent = true
+        // Only a new explicit UI retry reopens a terminal response.
+        nativeNavQueryAttempts = 0
+        nativeNavQuerySettled = false
+        nativeNavRetryAt = 0
+        sendNativeNavigationProbe()
+    }
+    private fun sendNativeNavigationProbe() {
+        ++nativeNavQueryAttempts
         nativeNavCapabilities = null
         val sequence = navProbeSequence
         navProbeSequence = if (sequence == Int.MAX_VALUE) 1 else sequence + 1
         val revision = ++navProbeRevision
         val probe = NavigationProbe(sequence.toLong(), java.util.UUID.randomUUID().toString())
         pendingNavProbe = probe
-        nativeNavCapabilityStatus = "순정 내비 기능 조회 중 · 실제 회신 대기"
-        val failed: () -> Unit = {
-            if (!destroyed && navProbeRevision == revision && pendingNavProbe == probe) {
-                pendingNavProbe = null
-                nativeNavCapabilityStatus = "순정 내비 조회 전송 실패"
-                notifyUI()
-            }
+        nativeNavCapabilityStatus = "순정 내비 기능 조회 중 (${nativeNavQueryAttempts}/2) · 실제 회신 대기"
+        fun current() = !destroyed && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
+            navProbeRevision == revision && pendingNavProbe == probe
+        fun finishWithoutReply(reason: String, retry: Boolean) {
+            if (!current()) return
+            pendingNavProbe = null
+            nativeNavQuerySettled = !retry || nativeNavQueryAttempts >= 2
+            nativeNavRetryAt = SystemClock.elapsedRealtime() + 2_000L
+            nativeNavCapabilityStatus = reason + if (nativeNavQuerySettled)
+                " · 수동 조회 가능" else " · 1회 재시도 대기"
+            notifyUI()
         }
+        var writeCompleted = false
         runCatching {
-            connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence, probe.requestId)) {
-                if (it.isFailure) failed()
+            connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence, probe.requestId)) { result ->
+                if (!current()) return@sendFrame
+                if (result.isFailure) finishWithoutReply("순정 내비 조회 전송 실패", true)
+                else {
+                    writeCompleted = true
+                    // Count the peer response window from the actual socket
+                    // write, not time spent waiting behind other transport work.
+                    main.postDelayed({
+                        finishWithoutReply("순정 내비 조회 · 전송 후 5초 내 일치 회신 미확인", true)
+                    }, 5_000L)
+                }
             }
-        }.onFailure { failed() }
+        }.onFailure { finishWithoutReply("순정 내비 조회 전송 실패", true) }
+        // Do not enqueue a second query behind a write that has not completed.
         main.postDelayed({
-            if (!destroyed && navProbeRevision == revision && pendingNavProbe == probe) {
-                pendingNavProbe = null
-                nativeNavCapabilityStatus = "순정 내비 기능 조회 · 5초 내 요청에 대응하는 회신 미확인"
-                notifyUI()
-            }
-        }, 5_000)
+            if (!writeCompleted) finishWithoutReply("순정 내비 조회 소켓 전송 완료 미확인", false)
+        }, 15_000L)
         notifyUI()
     }
     /** Explicit UI-confirmed two-slot replacement only. No automatic writes or
@@ -527,6 +558,7 @@ internal class BridgeService : Service() {
         if (message.type == 0x40) {
             val code = NativeNavigationCapabilities.queryError(message, expected.requestId) ?: return
             pendingNavProbe = null
+            nativeNavQuerySettled = true
             nativeNavCapabilityStatus = when (code) {
                 20 -> "순정 내비 조회 거부 · 요청 규격 오류(20)"
                 else -> "순정 내비 조회 거부 · 오류($code)"
@@ -534,6 +566,7 @@ internal class BridgeService : Service() {
         } else {
             val reply = NativeNavigationCapabilities.correlatedReply(message, expected.requestId) ?: return
             pendingNavProbe = null
+            nativeNavQuerySettled = true
             val code = reply.opt("code")
             val actual = NativeNavigationCapabilities.parse(message, expected.requestId)
             nativeNavCapabilities = actual
@@ -843,8 +876,8 @@ internal class BridgeService : Service() {
             pumpNativeNavigation()
             pollNavigationVoiceHandoff()
             pollEndedNavigation()
-            // A recovered capture or other busy mode can defer the initial query.
-            // Reconsider eligibility on the existing tick, not by retransmitting a sent query.
+            // A missed read-only negotiation gets at most one correlated
+            // retry per authenticated connection; explicit rejects are terminal.
             negotiateNativeNavigation()
             // Reuse existing tick for loss of recent PCM; no extra monitoring loop.
             updateNotification()
@@ -1119,6 +1152,9 @@ internal class BridgeService : Service() {
                     capabilityStatus = "현재 연결의 SPP 협상 요청 미수신"
                     syncHostVisibility()
                     queryPeerCapabilities()
+                    // Establish the navigation protocol before optional readback
+                    // or always-on recovery delays the glasses' menu request.
+                    negotiateNativeNavigation()
                     content.connected()
                     runCatching { deviceSettings.refresh(initialize = true) {
                         if (reconnectCapture.pending) tryResumeAlwaysOn()
@@ -1403,7 +1439,7 @@ internal class BridgeService : Service() {
             nativeStartProbe != null -> nativeStartTestStatus
             nativeNavCapabilities == null -> {
                 // A rejected or missing capability reply is not a firmware upgrade decision.
-                if (canQueryNativeNavigation()) probeNativeNavigation()
+                negotiateNativeNavigation()
                 "순정 내비 연결 규격 확인 필요 · " + nativeNavCapabilityStatus
             }
             nativeNavCapabilities?.raster == null ->
