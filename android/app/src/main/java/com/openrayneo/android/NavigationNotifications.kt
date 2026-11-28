@@ -78,6 +78,12 @@ internal object NavigationFeed {
         observe(key, pkg, Observation.STATUS_ONLY)
         return null
     }
+    // Explicit route-producer binding only: a single fresh, matching walking
+    // notification may coexist with native route ownership. No generic exemption.
+    fun matchesNativeWalkSource(key: String, now: Long): Boolean =
+        connected && activeNavigationCount == 1 &&
+            observations[key] == (PACKAGE to Observation.WALK_STEP) &&
+            nativeWalkSteps[key]?.freshAt(now) == true
     val activeNavigationCount get() = observations.values.count { it.second != Observation.NON_NAVIGATION }
     fun activeNavigationKey(key: String) = observations[key]?.let { (pkg, observation) ->
         isNavigationSource(pkg) && observation != Observation.NON_NAVIGATION

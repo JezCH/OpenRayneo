@@ -58,6 +58,12 @@ internal class BridgeService : Service() {
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
+        // A physical tap explicitly requests native navigation, not a phone
+        // handoff. Require the current connection's acknowledged preset revision.
+        if (nativePresetSyncedRevision != config.revision) {
+            noteNativeMenu(0x20, "현재 연결에서 목적지 동기화 확인 필요")
+            return
+        }
         val destination = config.resolve(request.alias) ?: return
         val status = startPreparedNativeRoute(destination, request.sid)
         noteNativeMenu(0x20, request.alias + " · " + status)
@@ -86,12 +92,21 @@ internal class BridgeService : Service() {
     private var nativeStartProbe: NativeStartProbe? = null
     var nativeStartTestStatus = "순정 시작·종료 시험 미실행"; private set
     val nativeStartTestPending get() = nativeStartProbe != null
-    val nativeStartTestCanRun get() = nativePresetCanSync &&
+    private val nativeSessionCanStart get() = nativePresetCanSync &&
         nativeNavCapabilities?.raster != null && nativeStartProbe == null &&
         state.error == null && pendingNativeHint == null && audioOwner == null &&
         voiceTransport.source == null && !reconnectCapture.pending && !voiceAlwaysOnStart.pending &&
-        !migration.state.busy && navigation.activeNavigationCount == 0 &&
-        voiceNavigation == null && voiceNavigationLookup == null && pendingPresetHandoff == null
+        !migration.state.busy && voiceNavigation == null &&
+        voiceNavigationLookup == null && pendingPresetHandoff == null
+    val nativeStartTestCanRun get() = nativeSessionCanStart &&
+        navigation.activeNavigationCount == 0 && preparedNativeRoute == null
+    private fun liveNativeCanStart(route: NativeLiveNavigation.Route) =
+        nativeSessionCanStart && liveNativeSourceMatches(route)
+    private fun liveNativeSourceMatches(route: NativeLiveNavigation.Route): Boolean {
+        val key = route.naverWalkNotificationKey
+        return if (key == null) navigation.activeNavigationCount == 0
+        else navigation.matchesNativeWalkSource(key, System.currentTimeMillis())
+    }
     // Only an explicitly requested, actually prepared route from an authorized
     // source may enter the native display. No phone app launch or fallback HUD.
     private var preparedNativeRoute: NativeLiveNavigation.Route? = null
@@ -112,14 +127,17 @@ internal class BridgeService : Service() {
         val route = preparedNativeRoute?.takeIf { it.parameters.destination == destination }
             ?: return "순정 내비 실제 경로 공급 미연동 · 휴대폰 지도 미실행"
         val now = SystemClock.elapsedRealtime()
-        if (route.observation()?.guidance?.freshAt(now) != true) return "순정 내비 최신 경로 정보 대기"
-        if (!nativeStartTestCanRun) {
+        val ready = route.observation()?.guidance?.freshAt(now) == true
+        if (!ready || !liveNativeCanStart(route)) {
             if (peerSid == null) {
-                queuedNativeDestination = destination
-                queuedNativeDeadline = now + 10_000L
-                return "순정 내비 요청 대기 · 음성 세션 및 화면 사용 종료 후 시작"
+                if (queuedNativeDestination != destination) {
+                    queuedNativeDestination = destination
+                    queuedNativeDeadline = now + 10_000L
+                }
+                return if (!ready) "순정 내비 최신 경로 정보 대기"
+                    else "순정 내비 요청 대기 · 경로/화면 사용 상태 확인"
             }
-            return "순정 내비 시작 보류 · 안경 화면 사용 상태 확인"
+            return "순정 내비 시작 보류 · 최신 경로/안경 화면 사용 상태 확인"
         }
         val caps = checkNotNull(nativeNavCapabilities)
         val session = if (peerSid == null) NativeNavigationStartup.Session(route.parameters)
@@ -158,15 +176,23 @@ internal class BridgeService : Service() {
                 clearPreparedNativeRoute()
                 navigationSwitchStatus = "순정 내비 시작 대기 만료"
                 notifyUI()
-            } else if (nativeStartTestCanRun) {
-                queuedNativeDestination = null
-                navigationSwitchStatus = startPreparedNativeRoute(destination)
-                notifyUI()
+            } else {
+                val route = preparedNativeRoute
+                if (route != null && route.parameters.destination == destination &&
+                    liveNativeCanStart(route) &&
+                    route.observation()?.guidance?.freshAt(SystemClock.elapsedRealtime()) == true) {
+                    navigationSwitchStatus = startPreparedNativeRoute(destination)
+                    notifyUI()
+                }
             }
         }
         val probe = nativeStartProbe ?: return
         val live = probe.live ?: return
         if (probe.closing || !probe.readyObserved) return
+        if (!liveNativeSourceMatches(live.route)) {
+            closeNativeStartTest(probe, "실제 경로 원본 상태 변경")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val write = runCatching { live.next(navProbeTransportSequence++ and 65535, now) }.getOrElse {
             closeNativeStartTest(probe, "순정 내비 경로 데이터 규격 오류")
@@ -1337,7 +1363,8 @@ internal class BridgeService : Service() {
             }
             nativeNavCapabilities?.raster == null ->
                 "현재 연결에서 순정 PNG 내비 프로필을 확인하지 못했습니다."
-            request == null -> "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
+            request == null -> preparedNativeRoute?.let { startPreparedNativeRoute(it.parameters.destination) }
+                ?: "순정 내비 목적지와 실제 경로가 필요합니다. 휴대폰 지도 앱은 열지 않았습니다."
             else -> {
                 val destination = if (request.destination in setOf("집", "회사"))
                     runCatching { NativeNavigationPresets.read(this).resolve(request.destination) }.getOrNull()
