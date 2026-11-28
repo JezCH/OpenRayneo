@@ -230,7 +230,7 @@ internal class BridgeService : Service() {
             "GPS: " + if (gps) "켜짐" else "꺼짐",
             "순정 PNG 프로필: " + if (caps?.raster != null) "지원 회신 확인" else "미확인",
             "기기 초기 조회: $nativeNavCoreReadbackFinished · 녹음 상태=${deviceSettings.state.initialization.recorder}",
-            "화면/음성 사용 중: " + (!nativeNavigationMutationIdle() || state.ownership != DisplayOwnership.APP)
+            "화면/음성 사용 중: " + (state.intent != DisplayIntent.Idle || state.session != null || conversations.state.running || conversations.state.stopping || translator.active || voiceTransport.nativeActive || prompterReserved) + " · 화면 권한=" + state.ownership
         ).joinToString("\n")
     }
 
@@ -816,6 +816,7 @@ internal class BridgeService : Service() {
         if (receiveNativeStartTest(message)) return
         val preset = pendingNativePreset
         if (preset != null) {
+            if (message.type in setOf(0x11,0x40)) diagnosticEvent("navigation-preset-reply", NativeNavigationPresets.resultEvidence(message,preset))
             val code = NativeNavigationPresets.resultCode(message, preset)
             if (code != null) {
                 pendingNativePreset = null
@@ -859,6 +860,7 @@ internal class BridgeService : Service() {
         if (message.type !in setOf(0x31, 0x40)) return
         val expected = pendingNavProbe ?: return
         diagnosticEvent("navigation-reply", NativeNavigationCapabilities.replyEvidence(message, expected.requestId, expected.sequence))
+        if (message.type == 0x31) diagnosticEvent("navigation-schema", NativeNavigationCapabilities.schemaEvidence(message))
         if (!NativeNavigationCapabilities.matchesPending(message, expected.requestId, expected.sequence)) {
             diagnosticEvent("navigation-reply", "rejected: request correlation")
             return

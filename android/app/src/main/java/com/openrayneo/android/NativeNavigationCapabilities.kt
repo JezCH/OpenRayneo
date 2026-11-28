@@ -69,6 +69,27 @@ internal data class NativeNavigationCapabilities(
             return "type=${message.type} mode=${message.mode} version=${message.version} seqMatch=${message.sequence == sequence} idPresent=${body?.has("request_id") == true} idMatch=$match engineCount=$engineCount mapCount=$mapCount guidance=${body?.opt("guidance_supported") == true} maps=${body?.opt("map_supported") == true}"
         }
 
+        // Only protocol constants and numeric/boolean field shape; no raw
+        // body, request identifiers, unknown profile strings or destinations.
+        fun schemaEvidence(message: ProtocolCodec.Message): String {
+            val body = readBody(message) ?: return "body unavailable or invalid"
+            fun flag(key: String) = (body.opt(key) as? Boolean)?.toString() ?: "missing/invalid"
+            fun integer(key: String) = (body.opt(key) as? Int)?.toString() ?: "missing/invalid"
+            fun profiles(key: String, allowed: Set<String>): String {
+                val values = body.optJSONArray(key) ?: return "missing/invalid"
+                val known = allowed.filter { name -> (0 until values.length()).any { values.opt(it) == name } }
+                return known.joinToString(",").ifBlank { "none" } + " (total=${values.length()})"
+            }
+            return "engines=" + profiles("supported_engine_profiles", setOf("PHONE_GUIDANCE_V1","AMAP_PB_V1")) +
+                " maps=" + profiles("supported_map_profiles", setOf("REMOTE_RASTER_FRAME_V1","REMOTE_VECTOR_TILE_V1","NONE")) +
+                " guidance=" + flag("guidance_supported") + " map=" + flag("map_supported") +
+                " png=" + (body.opt("map_frame_codec") == "PNG") + " single=" + flag("single_frame_in_flight") +
+                " frag=" + integer("map_frame_fragment_size") +
+                listOf("mini","overview").joinToString("") { prefix ->
+                    " $prefix=" + listOf("map_width","map_height","max_png_bytes","max_fragment_count").joinToString("/") { integer("${prefix}_$it") }
+                }
+        }
+
         fun queryError(message: ProtocolCodec.Message, requestId: String): Int? {
             if (message.version != 1 || message.type != 0x40 || message.mode != 2L) return null
             val body = readBody(message) ?: return null
