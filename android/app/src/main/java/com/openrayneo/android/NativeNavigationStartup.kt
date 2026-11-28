@@ -103,6 +103,44 @@ internal object NativeNavigationStartup {
         private var rasterLimits: NativeNavigationCapabilities.RasterLimits? = null
         private var raster: NativeRasterTransfer? = null
 
+        // Latched, correlated peer milestones; neither is proof of physical pixels.
+        var hudFirstFrameMs: Long? = null
+            private set
+        var mapCommitObserved = false
+            private set
+        val displayEvidence: String get() =
+            "HUD 첫 프레임 회신 " + (hudFirstFrameMs?.let { "확인(${it}ms)" } ?: "미확인") +
+                " / PNG 저장 회신 " + (if (mapCommitObserved) "확인" else "미확인") +
+                " / 실물 화면 미확인"
+
+        private fun uint(body: JSONObject, key: String): Long? = when (val n = body.opt(key)) {
+            is Int -> n.toLong().takeIf { it >= 0 }
+            is Long -> n.takeIf { it in 0..0xffffffffL }
+            else -> null
+        }
+
+        /** Stock 1.0.6.11 0x105C6A40..0x105C6CA4 status serializer,
+         * UI 0x108BFEAC -> 0x10737C5C first-frame milestone. Require
+         * the active route and already emitted guidance, not just a SID. */
+        private fun receiveFirstHudFrame(message: ProtocolCodec.Message) {
+            if (phase != Phase.READY && phase != Phase.SCENE_ACCEPTED) return
+            if (message.version != 1 || message.type != 0x32 || message.mode != 1L ||
+                message.sequence != 0L || message.audio?.isNotEmpty() == true) return
+            val text = message.json ?: return
+            if (text.length !in 1..8192) return
+            val body = runCatching { JSONObject(text) }.getOrNull() ?: return
+            val active = route ?: return
+            if (body.opt("sid") != sid || !parameters.matchesProfile(body) ||
+                uint(body, "route_revision") != active.revision ||
+                uint(body, "route_generation") != active.generation ||
+                body.opt("route_token") != active.token ||
+                body.opt("reason") != "HUD_FIRST_FRAME") return
+            val guidance = uint(body, "last_guidance_seq") ?: return
+            if (guidance !in 1L until nextGuidanceSequence) return
+            val elapsed = uint(body, "hud_first_frame_ms") ?: return
+            if (hudFirstFrameMs == null) hudFirstFrameMs = elapsed
+        }
+
         /** Use only limits from this authenticated connection's actual 0x31 reply. */
         fun configureRaster(capabilities: NativeNavigationCapabilities) {
             check(phase == Phase.NEW && parameters.profile == Profile.RASTER_FRAME)
@@ -153,6 +191,10 @@ internal object NativeNavigationStartup {
         }
         fun receive(message: ProtocolCodec.Message) {
             if (phase == Phase.NEW || phase == Phase.ENDED) return
+            if (message.type == 0x32) {
+                receiveFirstHudFrame(message)
+                return
+            }
             if (message.type == 3) {
                 if (peerEndReason(message) != null) {
                     phase = Phase.ENDED
@@ -194,6 +236,8 @@ internal object NativeNavigationStartup {
                 }
                 if ((startAccepted || presetReplySent) && glassReady) phase = Phase.READY
             } else if (phase == Phase.READY && raster?.receive(message) == true) {
+                if (message.type == 0x36 && raster?.state == NativeRasterTransfer.State.COMMITTED)
+                    mapCommitObserved = true
                 return
             } else if (phase == Phase.SCENE_PENDING && scene?.committed(message) == true) {
                 phase = Phase.SCENE_ACCEPTED
