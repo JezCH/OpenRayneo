@@ -211,6 +211,6 @@ internal object KakaoWalkingRoute {
         val course = NaverWalkingCourse.Course(points.toList())
         if(course.lengthMeters !in 1.0..200_000.0) fail("유효하지 않은 경로 길이")
         val timeValues = times.takeIf { elapsed > 0 && abs(elapsed-total)<=maxOf(10.0,total*.05) }
-        return OfflineWalkingRoute.Route(course, turns, timeValues, total, "kakao")
+        return OfflineWalkingRoute.Route(course, turns, timeValues, total, "kakao", end)
     }
 }
