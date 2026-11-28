@@ -35,11 +35,23 @@ internal class BridgeService : Service() {
     private var pendingNativeHint: NativeHintStart? = null
     // Current-connection evidence only. Never include SID, text, audio, or device identity.
     private val nativeMenuEvidence = linkedMapOf<Int, String>()
+    private val nativePresetServiceId = java.util.UUID.randomUUID().toString()
     private var navProbeRevision = 0L
     private var navProbeSequence = 1
     private var navProbeTransportSequence = 0x6a00
     private data class NavigationProbe(val sequence: Long, val requestId: String)
     private var pendingNavProbe: NavigationProbe? = null
+    private var pendingNativePreset: NativeNavigationPresets.Pending? = null
+    var nativePresetStatus = "안경 목적지 동기화 미실행"; private set
+    var nativePresetSyncedRevision: Int? = null; private set
+    val nativePresetPending get() = pendingNativePreset != null
+    val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
+    val nativePresetCanSync get() = nativeNavCoreReadbackFinished &&
+        nativeNavCapabilities?.let { it.phoneGuidance && it.guidance } == true &&
+        canQueryNativeNavigation() && state.ownership == DisplayOwnership.APP &&
+        !deviceSettings.state.busy && deviceSettings.state.initialization.recorder == NativeRecorderState.IDLE &&
+        !mediaCaptionState.busy && !wakePending &&
+        !speechOutput.speaking && !agent.running && !codex.running && !navigation.enabled
     // Actual peer capabilities belong to this authenticated connection only.
     private var nativeNavCapabilities: NativeNavigationCapabilities? = null
     private var nativeNavAutoQuerySent = false
@@ -48,6 +60,9 @@ internal class BridgeService : Service() {
     private fun resetNativeNavigationProbe() {
         navProbeRevision++
         pendingNavProbe = null
+        pendingNativePreset = null
+        nativePresetSyncedRevision = null
+        nativePresetStatus = "안경 목적지 동기화 미실행"
         nativeNavCapabilities = null
         nativeNavAutoQuerySent = false
         nativeNavCoreReadbackFinished = false
@@ -59,7 +74,7 @@ internal class BridgeService : Service() {
         !destroyed && foreground && !state.disconnecting && state.link.phase == LinkPhase.FULL &&
             state.intent == DisplayIntent.Idle && state.session == null && !conversations.state.running &&
             !conversations.state.stopping && !translator.active && !voiceTransport.nativeActive &&
-            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null
+            !prompterReserved && !deviceSettings.state.initialization.recorder.occupied && pendingNavProbe == null && pendingNativePreset == null
     private fun negotiateNativeNavigation() {
         if (!nativeNavCoreReadbackFinished || nativeNavAutoQuerySent || !canQueryNativeNavigation()) return
         probeNativeNavigation()
@@ -100,6 +115,40 @@ internal class BridgeService : Service() {
         }, 5_000)
         notifyUI()
     }
+    /** Explicit UI-confirmed two-slot replacement only. No automatic writes or
+     * retransmits. Successful transport write is not a saved preset. */
+    fun syncNativeNavigationPresets(expectedRevision: Int, expectedEpoch: String) {
+        check(expectedEpoch == nativePresetConsentEpoch) { "안경 연결 또는 기능 조회 상태가 바뀌었습니다. 다시 확인하세요." }
+        check(nativePresetCanSync) { "순정 내비 기능 회신 및 유휴 연결 상태를 먼저 확인하세요." }
+        val config = NativeNavigationPresets.read(this)
+        check(config.complete && config.revision == expectedRevision) { "두 목적지 설정을 저장하고 다시 확인하세요." }
+        val home = checkNotNull(config.home)
+        val company = checkNotNull(config.company)
+        val sequence = navProbeSequence
+        navProbeSequence = if (sequence == Int.MAX_VALUE) 1 else sequence + 1
+        val pending = NativeNavigationPresets.Pending(sequence.toLong(), java.util.UUID.randomUUID().toString(), config.revision)
+        val frame = ProtocolCodec.navigationPresetSync(navProbeTransportSequence++ and 65535, sequence,
+            pending.requestId, config.revision, home.id, company.id)
+        pendingNativePreset = pending
+        nativePresetSyncedRevision = null
+        nativePresetStatus = "안경 목적지 동기화 요청 중 · 저장 회신 대기"
+        val failure = {
+            if (!destroyed && pendingNativePreset == pending) {
+                pendingNativePreset = null
+                nativePresetStatus = "목적지 전송 실패 · 안경 저장 상태 미확인"
+                notifyUI()
+            }
+        }
+        runCatching { connection.sendFrame(frame) { if (it.isFailure) failure() } }.onFailure { failure() }
+        main.postDelayed({
+            if (!destroyed && pendingNativePreset == pending) {
+                pendingNativePreset = null
+                nativePresetStatus = "목적지 저장 회신 미확인 · 자동 재전송하지 않음"
+                notifyUI()
+            }
+        }, 5_000L)
+        notifyUI()
+    }
     private fun receiveNativeNavigation(frame: ProtocolCodec.Frame, source: String) {
         if (frame.acknowledgement || frame.payload.size !in 1..65531 ||
             destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL) return
@@ -108,8 +157,25 @@ internal class BridgeService : Service() {
             noteNativeMenu(0x20, "지원 범위 외 PbMsg version")
             return
         }
+        val preset = pendingNativePreset
+        if (preset != null) {
+            val code = NativeNavigationPresets.resultCode(message, preset)
+            if (code != null) {
+                pendingNativePreset = null
+                nativePresetSyncedRevision = if (code == 0) preset.revision else null
+                nativePresetStatus = if (code == 0) "안경 목적지 저장 성공 회신 · 실제 내비 시작 미검증"
+                    else "안경 목적지 저장 거부($code) · 저장 상태 미확인"
+                notifyUI()
+                return
+            }
+        }
         when (message.type) {
-            1 -> noteNativeMenu(0x20, "시작 요청 수신 ($source) · 순정 시작 계약 미완성")
+            1 -> {
+                val config = runCatching { NativeNavigationPresets.read(this) }.getOrNull()
+                val matched = config?.let { NativeNavigationPresets.initialPreset(message, it) }
+                noteNativeMenu(0x20, if (matched == null) "시작 요청 수신 ($source) · 순정 시작 계약 미완성"
+                    else "$matched 목적지 요청 확인 ($source) · 순정 경로 공급 미연동")
+            }
             3 -> noteNativeMenu(0x20, "종료 요청 수신 ($source)")
             0x31, 0x40 -> Unit // capability response or correlated protocol error
             else -> return
@@ -150,7 +216,7 @@ internal class BridgeService : Service() {
         val mic = when (deviceSettings.state.settings.optJSONObject("privacyConfig")?.deviceFlag("mic_switch")) {
             true -> "허용"; false -> "꺼짐"; null -> "미확인"
         }
-        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus"
+        return "순정 메뉴: $menu\n기기 응답: ${deviceSettings.state.readback.label} · 마이크 $mic\n$nativeNavCapabilityStatus\n$nativePresetStatus"
     }
     private lateinit var audio: PromptAudio
     private lateinit var voiceAudio: PromptAudio
@@ -947,9 +1013,14 @@ internal class BridgeService : Service() {
     private fun requestVoiceNavigation(request: NaverVoiceCommand.Request): String {
         clearVoiceNavigation()
         voiceNavigationBlock()?.let { return it }
+        val resolved = if (request.destination in setOf("집", "회사")) {
+            val destination = runCatching { NativeNavigationPresets.read(this).resolve(request.destination) }.getOrNull()
+                ?: return "길 안내 화면에서 해당 목적지를 먼저 등록하세요."
+            request.copy(destination = destination)
+        } else request
         val config = runCatching { NaverPlaceLookup.read(this) }.getOrNull()
-        val effective = if (request.mode == NaverVoiceCommand.Mode.UNSPECIFIED && config?.enabled == true)
-            request.copy(mode = config.defaultMode) else request
+        val effective = if (resolved.mode == NaverVoiceCommand.Mode.UNSPECIFIED && config?.enabled == true)
+            resolved.copy(mode = config.defaultMode) else resolved
         if (!request.routeRequested || config?.enabled != true || NaverPlacePolicy.path(effective.mode) == null)
             return launchVoiceNavigation(effective)
         val generation = voiceNavigationGeneration

@@ -147,6 +147,19 @@ internal object ProtocolCodec {
         return frame(0x20, sequence, payload)
     }
 
+    /** Stock PRESET_SYNC: mode=1, positive inner sequence, no binary.
+     * Addresses remain in the phone; IDs are 16 ASCII characters. */
+    fun navigationPresetSync(sequence: Int, querySequence: Int, requestId: String,
+                             revision: Int, homeId: String, companyId: String): ByteArray {
+        require(querySequence > 0 && revision >= 0)
+        require(requestId.length in 1..64 && requestId.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' })
+        require(homeId.matches(Regex("[0-9a-f]{16}")) && companyId.matches(Regex("[0-9a-f]{16}")) && homeId != companyId)
+        val json = """{"request_id":"$requestId","revision":$revision,"home":{"available":true,"preset_id":"$homeId"},"company":{"available":true,"preset_id":"$companyId"}}""".toByteArray(Charsets.UTF_8)
+        val payload = byteArrayOf(8, 1, 16, 0x10, 26) + varint(json.size) + json +
+            byteArrayOf(40) + varint(querySequence) + byteArrayOf(48, 1)
+        return frame(0x20, sequence, payload)
+    }
+
     data class Message(val type: Int, val json: String?, val audio: ByteArray?,
                        val version: Int = 0, val sequence: Long = 0, val mode: Long = 0)
 
