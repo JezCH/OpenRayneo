@@ -118,6 +118,20 @@ internal fun AppUpdateScreen(model: AppModel) {
             Text(BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")", style = MaterialTheme.typography.headlineSmall)
             Note("동일 패키지·서명·높은 버전만 설치합니다. 기존 설정과 기록을 지우지 않습니다.")
         }
+        if (job != null || AppUpdateInstall.sessionId != null) {
+            OpticalPanel {
+                Text("업데이트 설치", style = MaterialTheme.typography.titleMedium)
+                val installProgress = AppUpdateInstall.stagingProgress
+                Text(AppUpdateInstall.status.ifBlank { "설치 파일 확인 중" })
+                if (installProgress != null) {
+                    LinearProgressIndicator(progress = { installProgress }, modifier = Modifier.fillMaxWidth())
+                    Text("설치 파일 준비 " + (installProgress * 100).toInt() + "%")
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                Note("Android 승인 화면이 표시되면 설치를 확인하세요. 실제 설치 및 앱 재시작은 Android가 처리합니다.")
+            }
+        }
         SectionLabel("업데이트 확인")
         Note("자동 확인 대상은 공개 GitHub Releases의 검증 채널입니다. Actions에만 생성된 APK는 자동으로 검색하거나 설치할 수 없습니다.")
         TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/JezCH/OpenRayneo/actions/workflows/android-apk.yml"))) }.onFailure { status = "빌드 목록을 열 수 없습니다" } }) { Text("별도 검증 빌드 목록 열기") }
@@ -131,7 +145,7 @@ internal fun AppUpdateScreen(model: AppModel) {
             Text(updates.summary, style = MaterialTheme.typography.titleMedium)
             if (updates.error.isNotBlank()) Text(updates.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             if (status.isNotBlank()) Text(status)
-            if (AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
+            if (job == null && AppUpdateInstall.sessionId == null && AppUpdateInstall.status.isNotBlank()) Text(AppUpdateInstall.status)
         }
         Button(onClick = {
             pendingInstall = null; status = ""
