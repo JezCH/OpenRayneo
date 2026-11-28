@@ -101,9 +101,9 @@ internal data class NativeSubtitleStart(
  * device-originated packet on 1.0.7.11 remains a hardware acceptance test.
  * Accept only the known conversation mode and directions. */
 internal data class NativeHintStart(val sid: String, val source: String, val target: String, val direction: String,
-                                    val stockLanguageKeys: Boolean = false) {
+                                    val stockLanguageKeys: Boolean = false, val mode: String = "conversation") {
     fun reply() = JSONObject().put("sid", sid).put("code", 1).put("final_settings",
-        JSONObject().put("mode", "conversation")
+        JSONObject().put("mode", mode)
             .put(if (stockLanguageKeys) "src_lang" else "source_language", source)
             .put(if (stockLanguageKeys) "dst_lang" else "target_language", target)
             .put("direction", direction).put("save_audio", false))
@@ -113,7 +113,7 @@ internal data class NativeHintStart(val sid: String, val source: String, val tar
             val alternate = if (settings.has(legacy)) settings.opt(legacy) as? String ?: rejectNative("$legacy type") else null
             if (!primary.isNullOrEmpty() && !alternate.isNullOrEmpty() && primary != alternate)
                 rejectNative("$stock conflicting alias")
-            return primary?.takeIf { it.isNotEmpty() } ?: alternate ?: rejectNative("$stock missing")
+            return primary?.takeIf { it.isNotEmpty() } ?: alternate ?: primary ?: rejectNative("$stock missing")
         }
         fun parse(frame: ProtocolCodec.Frame): NativeHintStart? = parseResult(frame).getOrNull()
         fun parseResult(frame: ProtocolCodec.Frame): Result<NativeHintStart> = runCatching {
@@ -131,7 +131,11 @@ internal data class NativeHintStart(val sid: String, val source: String, val tar
             if (body.has("code") && body.opt("code") !in setOf(0, 1)) rejectNative("code")
             if (body.optBoolean("force", false)) rejectNative("force")
             val settings = body.optJSONObject("settings") ?: rejectNative("settings object")
-            if (settings.opt("mode") != "conversation") rejectNative("hint mode")
+            // Stock local start constructor 0x105a0b7c initializes trigger=2,
+            // code=1, mode=classic, src_lang=auto, dst_lang="", direction=ahead.
+            // This is ConversationAssist (0x17), not the separate 0x13 caption.
+            val mode = settings.opt("mode") as? String ?: rejectNative("hint mode type")
+            if (mode !in setOf("classic", "conversation")) rejectNative("hint mode")
             // Stock serializer 0x105a1d14 emits src_lang/dst_lang. The same
             // settings decoder (0x105a1600, used for start and final_settings)
             // reads these first and falls back to source/target_language.
@@ -141,9 +145,9 @@ internal data class NativeHintStart(val sid: String, val source: String, val tar
             val direction = settings.opt("direction") as? String ?: rejectNative("hint direction type")
             val locale = Regex("[a-z]{2,3}(-[A-Za-z]{2,4})?")
             if (!source.matches(locale) && source != "auto") rejectNative("hint source language")
-            if (!target.matches(locale) && target != "auto") rejectNative("hint target language")
+            if (!target.matches(locale) && target != "auto" && !(mode == "classic" && target.isEmpty())) rejectNative("hint target language")
             if (direction !in setOf("ahead", "around")) rejectNative("hint direction")
-            return NativeHintStart(sid, source, target, direction, stockKeys)
+            return NativeHintStart(sid, source, target, direction, stockKeys, mode)
         }
     }
 }
