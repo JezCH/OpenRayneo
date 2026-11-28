@@ -722,7 +722,7 @@ private fun NativeNavigationPresetSettings(model: AppModel) {
     var saved by remember { mutableStateOf(runCatching { NativeNavigationPresets.read(context) }.getOrNull()) }
     var home by remember { mutableStateOf(saved?.home?.destination.orEmpty()) }
     var company by remember { mutableStateOf(saved?.company?.destination.orEmpty()) }
-    var confirmEpoch by remember { mutableStateOf<Long?>(null) }
+    var confirmEpoch by remember { mutableStateOf<String?>(null) }
     val s = model.state
     val unchanged = saved != null && home.trim() == saved?.home?.destination.orEmpty() &&
         company.trim() == saved?.company?.destination.orEmpty()

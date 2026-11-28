@@ -47,7 +47,7 @@ internal data class CompanionState(
     val nativePresetStatus: String = "",
     val nativePresetPending: Boolean = false,
     val nativePresetCanSync: Boolean = false,
-    val nativePresetConsentEpoch: Long = 0L,
+    val nativePresetConsentEpoch: String = "",
     val nativePresetSyncedRevision: Int? = null,
     val navigationStatus: String = "네이버지도에서 길 안내를 시작하세요",
     val notificationConnected: Boolean = false,
