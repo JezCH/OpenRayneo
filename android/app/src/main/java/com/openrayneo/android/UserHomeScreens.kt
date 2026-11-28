@@ -50,9 +50,9 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
         otherMode -> "안경 화면 사용 중"
         else -> "대기 중"
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            OpticalPanel {
+            OpticalHeroPanel {
                 OpticalActivityHeader(activity)
                 Note("음성 인식: " + when {
                     !s.available -> "서비스 준비 중"
@@ -123,14 +123,14 @@ internal fun HomeScreen(model: AppModel, navigate: (Int) -> Unit, open: (String)
                     else if (!model.aiConfigured || !model.aiReady) open("model") else hintRequested = true
                 }
             }, second = { tileModifier ->
-                OpticalQuickTile("한국어 호출", "내 호출어·말로 AI 사용", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
+                OpticalQuickTile("한국어 호출", "말로 AI 호출", Icons.Outlined.Mic, tileModifier) { open("korean-wake") }
             })
         }
         item {
             OpticalQuickPair(first = { tileModifier ->
-                OpticalQuickTile("영상 자막", "휴대폰 소리 → 한국어", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
+                OpticalQuickTile("영상 자막", "휴대폰 소리 번역", Icons.Outlined.Translate, tileModifier) { open("media-captions") }
             }, second = { tileModifier ->
-                OpticalQuickTile("한영 통역", "안경 마이크 · 내장 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
+                OpticalQuickTile("한영 통역", "안경 음성 번역", Icons.Outlined.Translate, tileModifier) { open("translation") }
             })
         }
         item {
@@ -226,31 +226,21 @@ private data class ToolDestination(
 private fun ToolDestinationGroup(title: String, destinations: List<ToolDestination>) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel(title)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-            Column {
-            destinations.forEachIndexed { index, destination ->
-                if (index > 0) HorizontalDivider(
-                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-                ListItem(
-                    headlineContent = { Text(destination.title, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(destination.subtitle)
-                            destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
-                        }
-                    },
-                    leadingContent = { Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary) },
-                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
-                    modifier = Modifier.fillMaxWidth().clickable(onClick = destination.open),
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
-            }
+        destinations.forEach { destination ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = destination.open)
+                .padding(vertical = 8.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Icon(destination.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(9.dp).size(24.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(destination.title, style = MaterialTheme.typography.titleMedium)
+                    Note(destination.subtitle)
+                    destination.status?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
+                }
+                Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -263,6 +253,7 @@ internal fun ToolsScreen(model: AppModel, open: (String) -> Unit, navigate: (Int
     val recordingStatus = if (visible && (s.conversation.running || s.conversation.stopping || s.alwaysOnResumePending)) recording(s).label else null
     val translationPreparing = visible && s.mediaTranslation.preparing && s.mediaTranslation.language == MediaTranslationRoute.BILINGUAL
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { OpticalWorkspaceHeading("기능 라이브러리", "안경과 휴대폰의 도구", 3) }
         item {
             ToolDestinationGroup("자막 및 번역", listOf(
                 ToolDestination("유튜브·영상 자막", "휴대폰 영상 소리 → 원문 또는 한국어 자막", Icons.Outlined.Translate, status = when {
@@ -443,15 +434,18 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
     )
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            OpticalPanel {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OpticalHeroPanel {
+                OpticalWorkspaceHeading(model.deviceName, connection.label, 4,
+                    detailColor = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(model.deviceName, style = MaterialTheme.typography.headlineSmall)
-                        Text(connection.label, style = MaterialTheme.typography.titleMedium,
-                            color = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurface)
+                        Text(battery?.let { "${it}%" } ?: "배터리 미확인", style = if (battery != null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium)
+                        if (battery != null) Note("기기가 보고한 배터리")
                     }
-                    GlassesArtwork(Modifier.width(92.dp).height(64.dp), MaterialTheme.colorScheme.primary)
+                    if (androidx.compose.ui.platform.LocalDensity.current.fontScale <= 1.3f)
+                        GlassesArtwork(Modifier.width(116.dp).height(66.dp), MaterialTheme.colorScheme.primary)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)
@@ -460,7 +454,6 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
                     linked -> "BLE·SPP 연결 · " + s.deviceSettings.readback.label
                     else -> s.glasses.link.detail
                 })
-                Text(battery?.let { "보고된 배터리 ${it}%" } ?: "배터리 미확인", style = MaterialTheme.typography.titleMedium)
                 if (battery != null) {
                     LinearProgressIndicator(progress = { battery / 100f }, modifier = Modifier.fillMaxWidth())
                 }

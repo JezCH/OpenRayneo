@@ -5,6 +5,9 @@ package com.openrayneo.android
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -30,7 +33,7 @@ import androidx.compose.ui.unit.dp
 internal fun OpticalPanel(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
+        shape = OpticalFrameShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
@@ -52,13 +55,17 @@ internal fun OpticalSignature(modifier: Modifier = Modifier) {
 @Composable
 internal fun OpticalActivityHeader(activity: String) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val showArt = maxWidth >= 240.dp && LocalDensity.current.fontScale <= 1.3f
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val wide = maxWidth >= 260.dp && LocalDensity.current.fontScale <= 1.3f
+        val artSize = if (maxWidth >= 288.dp) 76.dp else 64.dp
+        if (wide) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("현재 활동", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(activity, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(activity, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
             }
-            if (showArt) OpticalSignature(Modifier.size(80.dp))
+            OpticalSignature(Modifier.size(artSize))
+        } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(activity, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
     }
 }
@@ -83,17 +90,14 @@ internal fun OpticalQuickPair(first: @Composable (Modifier) -> Unit, second: @Co
 
 @Composable
 internal fun OpticalQuickTile(title: String, subtitle: String, icon: ImageVector, modifier: Modifier, click: () -> Unit) {
-    Card(
-        onClick = click,
-        modifier = modifier.heightIn(min = 80.dp),
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-    ) {
-        // Keep the icon beside the label: the six home destinations should not
-        // spend a whole extra line on ornament at ordinary font sizes.
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp).size(20.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Surface(onClick = click, modifier = modifier.heightIn(min = 64.dp),
+        shape = OpticalControlShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
