@@ -29,6 +29,8 @@ internal object AppUpdateInstall {
     var sessionId by mutableStateOf<Int?>(null); private set
     var confirmation by mutableStateOf<Intent?>(null); private set
     var status by mutableStateOf(""); private set
+    // Bytes staged by this app, not a guessed Android installation percentage.
+    var stagingProgress by mutableStateOf<Float?>(null); private set
 
     private var confirmationLaunched = false
 
@@ -40,7 +42,7 @@ internal object AppUpdateInstall {
         confirmation = null
         try {
             context.startActivity(intent)
-            status = "Android 설치 승인 화면 요청됨"
+            status = "Android 설치 확인 화면 · 승인 후 설치가 진행됩니다"
         } catch (e: Exception) {
             confirmationLaunched = false
             confirmation = intent
@@ -68,20 +70,32 @@ internal object AppUpdateInstall {
 
     private fun prefs(context: Context) = context.getSharedPreferences("validation_update_install", Context.MODE_PRIVATE)
     private fun clear(context: Context) {
-        prefs(context).edit().remove("session").apply()
-        sessionId = null; confirmation = null; confirmationLaunched = false
+        prefs(context).edit().remove("session").remove("targetVersion").apply()
+        sessionId = null; confirmation = null; confirmationLaunched = false; stagingProgress = null
     }
 
     // Keep only our own session ID, so a restarted process can cancel an interrupted install.
     fun restore(context: Context) {
         if (!AppUpdate.supported || sessionId != null) return
-        val id = prefs(context).getInt("session", -1)
-        if (id < 0) return
+        val stored = prefs(context)
+        val target = stored.getLong("targetVersion", -1L)
+        if (target > 0 && BuildConfig.VERSION_CODE.toLong() >= target) {
+            stored.edit().putLong("lastInstalledVersion", target).apply()
+            clear(context)
+            status = "업데이트 설치 완료 · 현재 버전 " + BuildConfig.VERSION_CODE
+            return
+        }
+        val id = stored.getInt("session", -1)
+        if (id < 0) {
+            if (stored.getLong("lastInstalledVersion", -1L) == BuildConfig.VERSION_CODE.toLong() && status.isBlank())
+                status = "업데이트 설치 완료 · 현재 버전 " + BuildConfig.VERSION_CODE
+            return
+        }
         val session = context.packageManager.packageInstaller.getSessionInfo(id)
-        if (session == null) { clear(context); return }
+        if (session == null) { clear(context); status = "이전 설치가 종료되었습니다 · 현재 버전 " + BuildConfig.VERSION_CODE; return }
         if (session.appPackageName != context.packageName) { clear(context); return }
         sessionId = id
-        status = "이전 설치 요청이 남아 있습니다. 설치 결과를 확인하거나 취소 후 다시 시도하세요."
+        status = "Android 설치 요청 진행 중 · 승인 또는 설치 결과를 확인하세요"
     }
 
     suspend fun install(context: Context, candidate: AppUpdate.Candidate, apk: File, idle: () -> Boolean) {
@@ -96,24 +110,27 @@ internal object AppUpdateInstall {
             setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
         }
         val id = installer.createSession(params)
-        if (!prefs(context).edit().putInt("session", id).commit()) {
+        if (!prefs(context).edit().putInt("session", id).putLong("targetVersion", candidate.code).commit()) {
             installer.abandonSession(id)
             error("설치 요청 상태 저장 실패")
         }
         sessionId = id
-        status = "설치 준비 중"
+        status = "설치 파일 검증 중"
+        stagingProgress = null
         confirmation = null
         confirmationLaunched = false
         var committed = false
         try {
             withContext(Dispatchers.IO) {
                 AppUpdate.verifyArchive(context, candidate, apk)
+                withContext(Dispatchers.Main) { status = "설치 파일 준비 중"; stagingProgress = 0f }
                 val digest = java.security.MessageDigest.getInstance("SHA-256")
                 installer.openSession(id).use { session ->
                     apk.inputStream().use { input ->
                         session.openWrite("base.apk", 0, candidate.size).use { out ->
                             val bytes = ByteArray(64 * 1024)
                             var size = 0L
+                            var lastUpdate = 0L
                             while (true) {
                                 currentCoroutineContext().ensureActive()
                                 val n = input.read(bytes)
@@ -122,8 +139,15 @@ internal object AppUpdateInstall {
                                 check(size <= candidate.size)
                                 digest.update(bytes, 0, n)
                                 out.write(bytes, 0, n)
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (now - lastUpdate >= 200 || size == candidate.size) {
+                                    val progress = (size.toDouble() / candidate.size).toFloat().coerceIn(0f, 1f)
+                                    withContext(Dispatchers.Main) { stagingProgress = progress }
+                                    lastUpdate = now
+                                }
                             }
                             check(size == candidate.size && digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) } == candidate.digest) { "설치 파일 해시 불일치" }
+                            withContext(Dispatchers.Main) { status = "설치 파일 저장 및 최종 검증 중"; stagingProgress = null }
                             session.fsync(out)
                         }
                     }
@@ -135,6 +159,7 @@ internal object AppUpdateInstall {
                 Intent(context, AppUpdateInstallReceiver::class.java).setAction(ACTION).putExtra("updateSessionId", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             installer.openSession(id).use { session -> session.commit(callback.intentSender); committed = true }
+            stagingProgress = null
             status = "Android 설치 승인 대기 중"
         } finally {
             if (!committed) {
@@ -155,7 +180,12 @@ internal object AppUpdateInstall {
                 confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                 status = if (confirmation != null) "Android 설치 확인을 진행하세요" else "설치 확인 정보를 받지 못했습니다. 취소 후 다시 시도하세요."
             }
-            PackageInstaller.STATUS_SUCCESS -> { status = "설치 완료 · 앱을 다시 열어 버전을 확인하세요"; clear(context) }
+            PackageInstaller.STATUS_SUCCESS -> {
+                val target = prefs(context).getLong("targetVersion", -1L)
+                if (target > 0) prefs(context).edit().putLong("lastInstalledVersion", target).apply()
+                status = "설치 완료 · 앱을 다시 열어 버전을 확인하세요"
+                clear(context)
+            }
             else -> {
                 status = "업데이트 설치 실패 또는 취소 · 기존 앱 유지: " +
                     intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty().take(240)
