@@ -33,12 +33,23 @@ import kotlinx.coroutines.flow.collect
 internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: String? = null, statusOpenRequest: Int = 0) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var routeStack by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    val pages = rememberSaveableStateHolder()
     val route = routeStack.lastOrNull().orEmpty()
-    fun openRoute(target: String) {
-        val existing = routeStack.indexOf(target)
-        routeStack = ArrayList(if (existing >= 0) routeStack.take(existing + 1) else routeStack + target)
+    fun changeRoutes(next: List<String>) {
+        // Preserve existing rememberSaveable scroll/selection state only while
+        // a detail remains on the back stack. Popped routes start fresh.
+        CompanionRoutePolicy.removed(routeStack, next).forEach { pages.removeState("route:$it") }
+        routeStack = ArrayList(next)
     }
-    fun backRoute() { routeStack = ArrayList(routeStack.dropLast(1)) }
+    fun openRoute(target: String) {
+        if (target !in CompanionRoutePolicy.titles) {
+            model.notice = "지원되지 않는 화면입니다."
+            return
+        }
+        changeRoutes(CompanionRoutePolicy.open(routeStack, target))
+    }
+    fun backRoute() { changeRoutes(CompanionRoutePolicy.back(routeStack)) }
+    fun closeRoutes() { changeRoutes(emptyList()) }
     var pendingNavigation by remember { mutableStateOf<String?>(null) }
     var devices by rememberSaveable { mutableStateOf(false) }
     var sources by rememberSaveable { mutableStateOf(false) }
@@ -51,7 +62,6 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         }
     }
     val snackbars = remember { SnackbarHostState() }
-    val pages = rememberSaveableStateHolder()
     // Unsaved manuscript stays only in this live composition, not Bundle/disk.
     val manuscript = remember { TeleprompterDraft() }
     val contentDrafts = remember { ContentEditorDrafts() }
@@ -81,33 +91,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 TopAppBar(
                     title = {
                         Text(
-                            when (route) {
-                                "settings" -> "설정"
-                                "feature-controls" -> "자동 기능 관리"
-                                "system-status" -> "시스템 현황"
-                                "app-update" -> "앱 업데이트"
-                                "local-clock" -> "타이머 및 스톱워치"
-                                "about-you" -> "개인화 정보"
-                                "model" -> "AI 모델 선택"
-                                "computer" -> "컴퓨터 연결"
-                                "diagnostics" -> "기기 및 진단"
-                                "voice-settings" -> "음성·기억 설정"
-                                "voice-profiles" -> "목소리 및 인물"
-                                "device-settings" -> "안경 설정"
-                                "content" -> "홈 화면 및 콘텐츠"
-                                "teleprompter" -> "프롬프터 자료"
-                                "agent-api" -> "AI 연결 및 동기화"
-                                "navigation" -> "길 안내"
-                                "display-controls" -> "안경 화면 및 오디오"
-                                "translation" -> "실시간 번역"
-                                "captions" -> "주변 대화 자막"
-                                "media-captions" -> "유튜브·미디어 자막"
-                                "korean-wake" -> "한국어 호출"
-                                "korean-glyphs" -> "한글 표시 검사"
-                                "phone-notifications" -> "휴대폰 알림"
-                                "record-migration" -> "기존 기록 가져오기"
-                                else -> listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
-                            }
+                            CompanionRoutePolicy.titles[route]
+                                ?: listOf("OpenRayneo", "AI", "기억", "도구", "기기")[tab.coerceIn(0, 4)]
                         )
                     },
                     navigationIcon = {
@@ -178,7 +163,8 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-            when (route) {
+            if (route.isNotEmpty()) pages.SaveableStateProvider("route:$route") {
+                when (route) {
                 "settings" ->
                     SettingsScreen(
                         model,
@@ -186,14 +172,14 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                         { openRoute(it) },
                         {
                             model.replaySetup()
-                            routeStack = arrayListOf()
+                            closeRoutes()
                         },
                     )
                 "system-status" -> SystemStatusScreen(model, phoneInput,
-                    { tab = it; routeStack = arrayListOf() }, { openRoute(it) }, { devices = true })
+                    { tab = it; closeRoutes() }, { openRoute(it) }, { devices = true })
                 "feature-controls" -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (model.recommendedPending) item { RecommendedSettingsCard(model) }
-                    item { HomeFeatureDashboard(model, { tab = it; routeStack = arrayListOf() }, { openRoute(it) }, { devices = true }) }
+                    item { HomeFeatureDashboard(model, { tab = it; closeRoutes() }, { openRoute(it) }, { devices = true }) }
                 }
                 "model",
                 "computer" -> ConfigurationScreen(model, route == "model", actions.importConfig)
@@ -218,21 +204,25 @@ internal fun CompanionApp(model: AppModel, actions: UiActions, phoneInput: Strin
                 "korean-glyphs" -> KoreanGlyphScreen(model)
                 "phone-notifications" -> PhoneNotificationScreen(model, actions)
                 "record-migration" -> RecordMigrationScreen(model)
-                "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; routeStack = arrayListOf() },
+                "display-controls" -> GlassesScreen(model, { devices = true }, { tab = it; closeRoutes() },
                     { openRoute("diagnostics") }, { openRoute(it) })
-                else ->
-                    if (model.onboarding)
-                        OnboardingScreen(model, actions, { devices = true }, { openRoute(it) })
-                    else
-                        pages.SaveableStateProvider(tab) {
-                            when (tab) {
-                                0 -> HomeScreen(model, { tab = it }, { openRoute(it) }, { devices = true })
-                                1 -> AssistantScreen(model, actions, keyboardVisible) { openRoute(it) }
-                                2 -> ConversationScreen(model, actions, { openRoute(it) })
-                                3 -> ToolsScreen(model, { openRoute(it) }, { tab = it })
-                                else -> DeviceOverview(model, { devices = true }, { openRoute(it) })
-                            }
-                        }
+                    else -> Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("지원되지 않는 화면입니다.", style = MaterialTheme.typography.titleMedium)
+                        ToolButton(onClick = { closeRoutes() }) { Text("기본 화면으로 돌아가기") }
+                    }
+                }
+            } else if (model.onboarding) {
+                OnboardingScreen(model, actions, { devices = true }, { openRoute(it) })
+            } else {
+                pages.SaveableStateProvider(tab) {
+                    when (tab) {
+                        0 -> HomeScreen(model, { tab = it }, { openRoute(it) }, { devices = true })
+                        1 -> AssistantScreen(model, actions, keyboardVisible) { openRoute(it) }
+                        2 -> ConversationScreen(model, actions, { openRoute(it) })
+                        3 -> ToolsScreen(model, { openRoute(it) }, { tab = it })
+                        else -> DeviceOverview(model, { devices = true }, { openRoute(it) })
+                    }
+                }
             }
         }
     }
