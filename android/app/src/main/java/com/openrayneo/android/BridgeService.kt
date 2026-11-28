@@ -446,8 +446,9 @@ internal class BridgeService : Service() {
                 probe.reroute = null
                 finishNativeStartTest(probe, probe.closeReason +
                     " · 안경 END_REQUEST 확인($reason) · 실제 화면 종료/지도 미검증", false)
-                if (replacement != null && reason == 2 && replacement.epoch == nativePresetConsentEpoch &&
-                    !destroyed && !state.disconnecting && state.link.phase == LinkPhase.FULL) {
+                if (replacement != null && OfflineNativeRoute.mayRestartAfterEnd(reason,
+                    replacement.epoch == nativePresetConsentEpoch,
+                    !destroyed && !state.disconnecting && state.link.phase == LinkPhase.FULL)) {
                     nativeStartTestStatus = requestOfflineNativeRoute(replacement.destination,
                         NaverVoiceCommand.Mode.WALK, reroute = replacement)
                         ?: "재탐색 취소 · 선택한 공급자 해제"
