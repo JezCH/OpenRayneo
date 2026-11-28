@@ -58,10 +58,12 @@ internal class BridgeService : Service() {
     }
     private fun offerPresetHandoff(request: NativeNavigationPresets.InitialRequest, config: NativeNavigationPresets.Config) {
         if (handledPresetSids.size >= 128 || !handledPresetSids.add(request.sid)) return
-        // A physical tap explicitly requests native navigation, not a phone
-        // handoff. Require the current connection's acknowledged preset revision.
-        if (nativePresetSyncedRevision != config.revision) {
-            rejectNativePresetStart(request.sid, "현재 연결에서 목적지 동기화 확인 필요")
+        // A physical tap already matched the saved opaque preset ID and SID
+        // in this authenticated connection. Requiring a fresh write ACK after
+        // every reconnect would reject valid existing presets. Do not start
+        // while an explicit replacement is in flight.
+        if (pendingNativePreset != null) {
+            rejectNativePresetStart(request.sid, "목적지 변경 처리 중")
             return
         }
         val destination = config.resolve(request.alias) ?: return
@@ -978,13 +980,9 @@ internal class BridgeService : Service() {
         navigation.stop()
         navigation.observers.add(navigationObserver)
         NaverVoiceLaunch.authorizeHandoff = { voiceNavigationBlock() == null }
-        NaverVoiceLaunch.onOpened = { requestedAt ->
-            // Recheck the actual current feed before arming after a notification tap.
-            if (!destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
-                navigation.connected && !navigation.enabled && navigation.entries.isEmpty() &&
-                navigation.activeNavigationCount == 0)
-                voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
-        }
+        // An explicit phone-map request remains phone-only, including a
+        // deferred launch. The notification HUD requires an explicit selection.
+        NaverVoiceLaunch.onOpened = null
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
@@ -1310,21 +1308,27 @@ internal class BridgeService : Service() {
             val queued = queuedNativeDestination != null
             clearPreparedNativeRoute()
             if (active) { cancelNativeStartTest(); "순정 내비 종료 요청을 전송합니다." }
-            else if (queued) "순정 내비 시작 대기를 취소했습니다."
-            else if (navigation.enabled || state.navigation.enabled) {
-                stopNavigation(); "안경 알림 HUD를 종료했습니다. 휴대폰 지도는 변경하지 않았습니다."
+            else if (queued) {
+                nativeStartTestStatus = "순정 내비 시작 대기 취소"
+                notifyUI()
+                nativeStartTestStatus
             } else "순정 내비가 실행 중이지 않습니다."
         }
         NaverVoiceCommand.Control.STOP_HUD -> {
-            val active = navigation.enabled || state.navigation.enabled
-            stopNavigation()
-            if (active) "안경 길 안내를 종료했습니다. 네이버지도 안내는 휴대폰에서 계속됩니다."
-            else "안경 길 안내가 실행 중이지 않습니다."
+            if (nativeStartProbe != null) "순정 내비가 실행 중입니다. 알림 HUD를 변경하지 않았습니다."
+            else {
+                val active = navigation.enabled || state.navigation.enabled
+                if (active) stopNavigation()
+                if (active) "안경 알림 안내를 종료했습니다. 네이버지도 안내는 휴대폰에서 계속됩니다."
+                else "안경 알림 안내가 실행 중이지 않습니다."
+            }
         }
         NaverVoiceCommand.Control.START_HUD -> {
             NavigationNotifications.refresh(this)
             val candidates = navigation.entries.values.filter { it.safeInstruction != null }
-            if (!navigation.connected || navigation.activeNavigationCount != 1 || candidates.size != 1)
+            if (nativeStartProbe != null || queuedNativeDestination != null)
+                "순정 내비 또는 시작 대기를 먼저 종료하세요."
+            else if (!navigation.connected || navigation.activeNavigationCount != 1 || candidates.size != 1)
                 "네이버지도의 단일 최신 길 안내를 확인하지 못했습니다. 휴대폰 안내를 확인하세요."
             else if (navigation.enabled && state.intent == DisplayIntent.Navigation)
                 "안경 길 안내가 이미 실행 중입니다."
@@ -1339,11 +1343,12 @@ internal class BridgeService : Service() {
             }
         }
         NaverVoiceCommand.Control.CANCEL_REQUEST -> {
-            clearVoiceNavigation()
-            navigationSwitchStatus = "길 안내 요청 취소 · 이미 열린 지도 앱은 변경하지 않습니다."; notifyUI()
+            cancelVoiceNavigationRequest()
+            navigationSwitchStatus = "길 안내 요청 취소 · 이미 시작된 내비는 변경하지 않습니다."; notifyUI()
             navigationSwitchStatus
         }
         NaverVoiceCommand.Control.STATUS -> if (nativeStartProbe != null) nativeStartTestStatus
+            else if (queuedNativeDestination != null) "순정 내비 시작 대기 중"
             else if (navigation.enabled) "알림 HUD · " + navigation.status
             else if (voiceNavigationLookup != null || voiceNavigation != null) "목적지 또는 신규 안내 확인 중"
             else "안경 길 안내가 실행 중이지 않습니다."
@@ -1361,8 +1366,16 @@ internal class BridgeService : Service() {
         voiceNavigation = null
         NaverVoiceLaunch.clear(this)
     }
-    fun cancelVoiceNavigationRequest() { clearVoiceNavigation(); notifyUI() }
+    fun cancelVoiceNavigationRequest() {
+        clearVoiceNavigation()
+        if (queuedNativeDestination != null) {
+            clearPreparedNativeRoute()
+            nativeStartTestStatus = "순정 내비 시작 대기 취소"
+        }
+        notifyUI()
+    }
     private fun voiceNavigationBlock(): String? {
+        if (nativeStartProbe != null || queuedNativeDestination != null) return "순정 내비를 먼저 종료하세요."
         if (!foreground || destroyed || state.link.phase != LinkPhase.FULL || state.disconnecting)
             return "안경 연결 상태를 먼저 확인하세요."
         // Refresh even rejected/unsupported current notifications before accepting a new route.
@@ -1375,14 +1388,11 @@ internal class BridgeService : Service() {
     }
     private fun launchVoiceNavigation(request: NaverVoiceCommand.Request, place: NaverPlacePolicy.Place? = null): String {
         voiceNavigationBlock()?.let { return it }
-        val requestedAt = System.currentTimeMillis()
         val result = NaverVoiceLaunch.open(this, request, place,
             NaverCompanionAccess.allowed(this, authenticatedNavigationDevice))
-        if (request.routeRequested && result.opened && navigation.connected)
-            voiceNavigation = VoiceNavigation(requestedAt, SystemClock.elapsedRealtime() + 120_000L)
         navigationSwitchStatus = result.message
-        if (request.routeRequested && !navigation.connected)
-            navigationSwitchStatus += " · 안경 안내를 위해 알림 접근 연결 필요"
+        if (request.routeRequested && result.opened)
+            navigationSwitchStatus += " · 휴대폰 지도 실행 · 안경 내비/HUD 미시작"
         notifyUI()
         return navigationSwitchStatus
     }
