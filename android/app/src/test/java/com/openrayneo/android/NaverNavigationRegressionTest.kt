@@ -102,6 +102,15 @@ class NaverNavigationRegressionTest {
         val command = "그래? 그러면 니가 직접 한번 버거킹 검색을 해봐. 경로를."
         val answer = """{"route":"native_navigation","destination":"버거킹"}"""
         assertTrue(p.eligible(command))
+        assertEquals("버거킹", p.explicitRequest("버거킹을길안네해봐.")?.destination)
+        assertEquals("버거킹", p.explicitRequest("버거킹을 길 안내 해줘")?.destination)
+        assertEquals("청라 국제도시역", p.explicitRequest("청라 국제도시역까지 길 안내 해봐")?.destination)
+        assertTrue(p.eligible("버거킹을길안네해봐."))
+        assertNull(p.explicitRequest("버거킹을길안네해봐라고 말했어"))
+        assertNull(p.explicitRequest("버거킹을길안내하지마"))
+        assertNull(p.explicitRequest("네이버로 버거킹을 길 안내 해줘"))
+        assertNull(p.explicitRequest("여기를 길 안내 해줘"))
+        assertNull(p.explicitRequest("버거킹을 차로 길 안내 해줘"))
         assertEquals("버거킹", p.decode(answer, command)?.destination)
         assertEquals(false, p.decode(answer, command)?.phoneApp)
         assertEquals(NaverVoiceCommand.Mode.WALK, p.decode(answer, command)?.mode)
@@ -665,6 +674,10 @@ class NaverNavigationRegressionTest {
 
     @Test fun observedExplicitStatusQuestionsStayLocalAndReadOnly() {
         assertEquals(NativeStatusQuestion.Kind.NAVIGATION, NativeStatusQuestion.parse("아니네비연동상태를파악해봐",ConversationSource.NATIVE,false))
+        assertEquals(NativeStatusQuestion.Kind.NAVIGATION, NativeStatusQuestion.parse("네비게이션연동상태로확인해봐",ConversationSource.NATIVE,false))
+        assertNull(NativeStatusQuestion.parse("네비게이션연동상태로확인해봐",ConversationSource.REALTIME,false))
+        assertEquals(LocalDeviceQuery.Kind.BRIGHTNESS_UP, LocalDeviceQuery.parse("밝기를 올려줘",ConversationSource.NATIVE,false)?.kind)
+        assertNull(LocalDeviceQuery.parse("밝기를 올려줘",ConversationSource.REALTIME,false))
         assertEquals(NativeStatusQuestion.Kind.FIRMWARE, NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.NATIVE,false))
         assertNull(NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.REALTIME,false))
         assertNull(NativeStatusQuestion.parse("지금우리펌웨어는어떤버전인데",ConversationSource.NATIVE,true))

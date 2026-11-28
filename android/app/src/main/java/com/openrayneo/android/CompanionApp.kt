@@ -702,8 +702,6 @@ private fun NavigationScreen(
                 Note("실제 안내는 네이버지도에서 확인된 신규 알림만 안경에 표시합니다. 실행이 제한된 경우 휴대폰 알림을 사용합니다.")
             }
         }
-        item { NativeNavigationStartTest(model) }
-        item { NativeNavigationPresetSettings(model) }
         item {
             ContentCard {
                 Text("순정 내비 연결 상태 · 먼저 확인", style = MaterialTheme.typography.titleMedium)
@@ -716,6 +714,8 @@ private fun NavigationScreen(
             }
         }
         item { KakaoNativeRoutingSettings(model, actions) }
+        item { NativeNavigationStartTest(model) }
+        item { NativeNavigationPresetSettings(model) }
         item { OfflineNativeRoutingSettings(model) }
         item { NaverWalkingCourseSettings(model) }
         item { NaverPlaceLookupSettings(model) }

@@ -1907,6 +1907,18 @@ internal class BridgeService : Service() {
         notifyUI()
         return navigationSwitchStatus
     }
+    private fun nativeNavigationVoiceStatus(): String {
+        if (state.link.phase != LinkPhase.FULL || state.disconnecting) return "안경 연결을 먼저 확인하세요."
+        val missing = mutableListOf<String>()
+        if (!configuredNativeProvider()) missing.add("길 안내 화면에서 카카오맵 선택 및 REST API 키 저장 또는 BRouter 설정")
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            missing.add("정확한 위치 권한 허용")
+        else if (!offlineLocationAvailable()) missing.add("GPS와 위치 서비스 시작")
+        if (missing.isNotEmpty()) return "안경 연결 정상. " + missing.joinToString(", ") + " 필요. 펌웨어 업데이트는 필요하다고 확인되지 않았습니다."
+        if (nativeNavCapabilities?.raster == null) return "순정 지도 지원 회신 미확인. " + nativeNavCapabilityStatus
+        return "순정 지도 지원 및 공급자 설정 확인. " + nativeStartTestStatus
+    }
+
     private fun requestNativeNavigation(request: NaverVoiceCommand.Request?): String {
         diagnosticEvent("navigation-action", "explicit start; destinationSpecified=${request != null}")
         if (request != null && !nativeRouteWaiting) kakaoChoice = null
@@ -1934,7 +1946,7 @@ internal class BridgeService : Service() {
                 if (prepared != null) startPreparedNativeRoute(prepared.parameters.destination)
                 else if (request.naverRequested) "네이버 실시간 순정 경로 공급 미연동 · 다른 공급자로 자동 전환하지 않음"
                 else requestOfflineNativeRoute(request.destination, request.mode)
-                    ?: "순정 도보 경로 공급자를 먼저 설정하세요. 카카오맵 REST API 또는 BRouter를 선택할 수 있습니다."
+                    ?: nativeNavigationVoiceStatus()
             }
         }
         navigationSwitchStatus = status
@@ -2506,7 +2518,8 @@ internal class BridgeService : Service() {
             latestRealtimeRequest = ++nextAnswer
             input.put("displayRevision", state.revision).put("realtimeRequest", latestRealtimeRequest)
         }
-        val navCommand = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.parse(request.text) else null
+        val navCommand = if (request.source == ConversationSource.NATIVE)
+            NaverVoiceCommand.parse(request.text) ?: NativeDirectNavigationPolicy.explicitRequest(request.text) else null
         val navControl = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.control(request.text) else null
         val choiceCommand = if (request.source == ConversationSource.NATIVE) KakaoCandidateVoicePolicy.parse(request.text) else null
         if (navCommand != null || navControl != null || choiceCommand != null) {
@@ -2528,6 +2541,7 @@ internal class BridgeService : Service() {
                     return true
                 }
                 val wasWaiting = nativeRouteWaiting
+                diagnosticEvent("ai-navigation", "local command=" + (if (navCommand != null) "start" else if (navControl != null) "control" else "candidate") + " unmixed=$unmixed")
                 val answer = if (!unmixed) "겹친 발화입니다. 다시 요청하세요."
                     else if (choiceCommand != null) chooseKakaoCandidateNumber(choiceCommand)
                     else if (navControl != null) executeNavigationControl(navControl)
@@ -2637,12 +2651,7 @@ internal class BridgeService : Service() {
                         ?.takeIf { it.matches(Regex("[0-9A-Za-z._-]{1,64}")) }
                         ?.let { "현재 연결된 안경 펌웨어는 $it 입니다." }
                         ?: "현재 연결에서 펌웨어 버전 회신을 확인하지 못했습니다."
-                    NativeStatusQuestion.Kind.NAVIGATION -> when {
-                        !configuredNativeProvider() -> "안경 연결은 정상입니다. 카카오 또는 BRouter 경로 공급자를 먼저 설정하세요."
-                        nativeNavCapabilities?.raster == null -> "안경 연결 정상. " + nativeNavCapabilityStatus
-                        !offlineLocationAvailable() -> "순정 지도 지원 회신 확인. 정확한 위치 권한, GPS, 위치 서비스를 확인하세요."
-                        else -> "순정 지도 지원 및 공급자 설정 확인. " + nativeStartTestStatus
-                    }
+                    NativeStatusQuestion.Kind.NAVIGATION -> nativeNavigationVoiceStatus()
                 }
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
                 deliverExternalVoice(request.text, answer, input)
@@ -2656,12 +2665,20 @@ internal class BridgeService : Service() {
             val wake = request.wakeId
             val contextKey = identity.getString("conversationKey")
             val inheritedPermission = requests.permission()
+            val unmixed = request.hintContext?.optJSONArray("segments")?.let { rows ->
+                rows.length() > 0 && (0 until rows.length()).all { rows.optJSONObject(it)?.optBoolean("mixed") == false }
+            } == true
             val allowed = {
-                !destroyed && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+                val active = conversations.state
+                unmixed && !destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
                     wake != null && wake == voiceTransport.wakeId && voiceTransport.nativeActive &&
+                    voiceTransport.source == ConversationSource.NATIVE && active.running && !active.stopping &&
+                    request.recordId != null && active.activeRecord?.id == request.recordId &&
+                    ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L &&
                     runCatching { inheritedPermission() && settings.read().optString("nativeConversationKey") == contextKey }.getOrDefault(false)
             }
             if (allowed()) {
+                diagnosticEvent("ai-tool", "local-device=${localCommand.kind}")
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
                 requests.withPermission(allowed) {
                     requests.perform({ deviceSettings.executeVoiceCommand(localCommand) }) { result ->
