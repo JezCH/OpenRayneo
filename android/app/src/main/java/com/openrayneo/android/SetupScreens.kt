@@ -626,7 +626,7 @@ private fun DiagnosticExportPanel(model: AppModel) {
     }
     ContentCard {
         Text("전체 기능 진단 내보내기", style = MaterialTheme.typography.titleMedium)
-        Note("문제를 재현한 뒤 보고서를 만들면 연결·순정 내비·라이프로그·실시간 자막·실시간 답변의 단계와 최근 300개 진단 이력이 포함됩니다. 기본 보고서는 음성 원문, 위치, 인증 정보 없이 생성됩니다.")
+        Note("문제를 재현한 뒤 보고서를 만들면 연결·순정 내비·라이프로그·실시간 자막·실시간 답변의 단계와 최근 최대 400개 진단 이력이 포함됩니다. 기본 보고서는 음성 원문, 위치, 인증 정보 없이 생성됩니다.")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(includeDetails, { includeDetails = it })
             Text("현재 오류 메시지와 기존 앱 로그 포함")
@@ -636,7 +636,7 @@ private fun DiagnosticExportPanel(model: AppModel) {
             Text("기존 AI 지시·답변 원문 포함")
         }
         Note("선택 항목에는 개인 정보가 있을 수 있으므로 미리보기를 확인한 뒤 직접 저장하거나 복사하세요. 기존 로그의 오류 내용에 민감 정보가 남아 있을 수 있습니다. 기록하지 않도록 설정한 질문과 원본 녹음은 새로 저장하지 않습니다.")
-        ToolButton(enabled = model.state.available, onClick = {
+        ToolButton(onClick = {
             model.attempt { preview = model.diagnosticReport(includeDetails, includeAi) }
         }) { Text("진단 보고서 미리보기") }
         TextButton(enabled = model.state.available, onClick = { confirmClear = true }) { Text("진단 이력만 초기화") }
@@ -650,8 +650,9 @@ private fun DiagnosticExportPanel(model: AppModel) {
         AlertDialog(onDismissRequest = { preview = null },
             title = { Text("전송 전 보고서 확인") },
             text = {
-                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                    Text(report, style = MaterialTheme.typography.bodySmall)
+                val parts = remember(report) { report.lines().flatMap { line -> if (line.isEmpty()) listOf("") else line.chunked(3000) } }
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(parts.size) { index -> Text(parts[index], style = MaterialTheme.typography.bodySmall) }
                 }
             },
             confirmButton = { TextButton(onClick = {
@@ -660,10 +661,13 @@ private fun DiagnosticExportPanel(model: AppModel) {
             }) { Text("파일 저장") } },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OpenRayneo diagnostics", report))
-                        model.notice = "진단 보고서 복사됨"; preview = null
-                    }) { Text("복사") }
+                    val clipboardSafe = remember(report) { report.toByteArray(Charsets.UTF_8).size <= 180_000 }
+                    TextButton(enabled = clipboardSafe, onClick = {
+                        model.attempt {
+                            context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OpenRayneo diagnostics", report))
+                            model.notice = "진단 보고서 복사됨"; preview = null
+                        }
+                    }) { Text(if (clipboardSafe) "복사" else "파일 저장 필요") }
                     TextButton(onClick = { preview = null }) { Text("닫기") }
                 }
             })

@@ -627,6 +627,7 @@ internal class BridgeService : Service() {
         runCatching {
             connection.sendFrame(ProtocolCodec.navigationCapabilityQuery(navProbeTransportSequence++ and 65535, sequence, probe.requestId)) { result ->
                 if (!current()) return@sendFrame
+                diagnosticEvent("navigation-wire", "0x30 query write success=${result.isSuccess}")
                 if (result.isFailure) finishWithoutReply("순정 내비 조회 전송 실패", true)
                 else {
                     writeCompleted = true
@@ -1220,6 +1221,7 @@ internal class BridgeService : Service() {
             { id, signal -> dispatch(GlassesEvent.SessionSignal(id, signal)) },
             { id, packet -> if (audioOwner == id && state.session?.id == id) audio.accept(packet) },
             { dispatch(GlassesEvent.ExternalPage(it)) })
+        display.diagnostic = { stage -> diagnosticEvent("display-wire", stage, true) }
         display.phonePromptLanguages = {
             val cfg = settings.read()
             val answer = KoreanLanguage.answerLanguage(cfg.optString("answerLanguage"))
@@ -1248,6 +1250,7 @@ internal class BridgeService : Service() {
         // deferred launch. The notification HUD requires an explicit selection.
         NaverVoiceLaunch.onOpened = null
         agent = MobileAgent(settings, conversations.repository, chatContinuity, { question -> ordinaryContextProvider(question, false) }, { question, answer, input -> deliverExternalVoice(question, answer, input) }, ::notifyUI, { name, args, allowed, completion -> requests.withPermission(allowed) { executeTool(name, args, completion) } }) { question, answer -> completed(AnswerSource.MOBILE_AGENT, question, answer) }
+        agent.harness.diagnostic = { stage -> diagnosticEvent("agent-request", stage) }
         if (AiModelSelection.legacy(settings.read()) && settings.read().optBoolean("localAgentEnabled")) {
             runCatching { agentServer.start() }.onFailure { onLog("AI 연결 초기화 실패 · 나머지 기능은 계속 사용 가능") }
         }
@@ -2547,15 +2550,18 @@ internal class BridgeService : Service() {
     }
     private fun finishRealtimeStream(input: JSONObject, result: Result<String>) {
         diagnosticEvent("hint-result", "success=${result.isSuccess} nonempty=${!result.getOrNull().isNullOrBlank()}")
+        result.exceptionOrNull()?.let { diagnosticFailure("hint-result", it) }
         val sequence = input.optLong("realtimeRequest")
-        if (sequence != latestRealtimeRequest) return
+        if (sequence != latestRealtimeRequest) { diagnosticEvent("hint-result", "discarded: superseded request"); return }
         if (!isRealtimeStreamCurrent(input)) {
+            diagnosticEvent("hint-result", "discarded: expired or ownership changed")
             cancelRealtimeStream()
             return
         }
         realtimeStreamId = null
         val answer = result.getOrNull()?.trim().orEmpty()
         val displayText = HintStreamPolicy.preview(answer.take(HintStreamPolicy.MAX_CHARS).trimEnd())
+        diagnosticEvent("hint-result", "displayEligible=${displayText != null} pass=${answer == "[PASS]"}")
         if (displayText != null) {
             conversations.repository.applyDerived(RecordDerived(id = input.getString("derivedId"), recordId = input.getString("recordId"),
                 sourceRevision = input.optInt("sourceRevision", 1), kind = "analysis", text = answer, agent = "phone-local-agent"))
@@ -3498,7 +3504,11 @@ internal class BridgeService : Service() {
         val known = name.takeIf { it in setOf("navigation_status", "native_navigation_start", "stop_navigation_mirroring", "show_notification", "record_query", "record_annotate", "about_you_read", "memory_reference", "memory_search", "teleprompter_start", "teleprompter_control", "display_clear", "device_read") } ?: "other"
         diagnosticEvent("ai-tool", "request=$known")
         val completion: (Result<JSONObject>) -> Unit = { result ->
-            diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess}")
+            val body = result.getOrNull()
+            val flags = listOf("started", "pending", "queued", "persisted", "following").mapNotNull { key ->
+                (body?.opt(key) as? Boolean)?.let { "$key=$it" }
+            }.joinToString(" ")
+            diagnosticEvent("ai-tool", "result=$known success=${result.isSuccess} $flags")
             result.exceptionOrNull()?.let { diagnosticFailure("ai-tool", it) }
             done(result)
         }
@@ -3627,7 +3637,7 @@ internal class BridgeService : Service() {
             appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
             appendLine("exportedAt=${System.currentTimeMillis()} Android=${android.os.Build.VERSION.SDK_INT}")
             appendLine("Phone-side evidence only; no physical HUD confirmation. Times are Unix ms.")
-            appendLine("[Recent feature timeline, bounded to 300 events]")
+            appendLine("[Recent feature timeline, bounded to 400 events, 40 per category]")
             appendLine(diagnosticTrace.export())
             appendLine("[AI request states, no prompt or payload]")
             appendLine(agent.harness.diagnosticRequests(false))

@@ -26,6 +26,8 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
     private companion object { const val UNCLAIMED_TASK_MS = 120_000L }
     private val lock = Object()
     private val requests = linkedMapOf<String, Request>()
+    @Volatile var diagnostic: (String) -> Unit = {}
+    private val lastDiagnostic = mutableMapOf<String, String>()
     init {
         val saved = repository.readAgentOutbox()
         var historicalCancelled = false
@@ -49,7 +51,11 @@ internal class DshRelay(private val main: Handler, private val repository: Conve
         val finished = requests.values.filter { it.state !in setOf("queued", "running") }
         val prune = finished.filter { it.hintDeadline == 0L }.dropLast(64) +
             finished.filter { it.hintDeadline > 0L }.dropLast(16)
-        prune.forEach { requests.remove(it.id) }
+        prune.forEach { requests.remove(it.id); lastDiagnostic.remove(it.id) }
+        requests.values.forEach { r ->
+            val stage = "createdAt=${r.createdAt} kind=${r.kind} state=${r.state} direct=${r.direct} delivered=${r.delivered}"
+            if (lastDiagnostic.put(r.id, stage) != stage) runCatching { diagnostic(stage) }
+        }
         repository.saveAgentOutbox(JSONArray(requests.values.filter { it.hintDeadline == 0L && !it.direct }.map { it.json() }))
     }
     fun submit(text: String, context: String, kind: String = "task", input: JSONObject? = null,

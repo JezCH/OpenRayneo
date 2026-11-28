@@ -16,4 +16,11 @@ class DiagnosticTimelineTest {
         assertTrue(t.entries().isEmpty())
         assertTrue(t.add(6, "audio", "RECEIVING", true))
     }
+    @Test fun noisyCaptionCannotEvictQuietNavigation() {
+        val t = DiagnosticTimeline(limit = 8, categoryLimit = 3)
+        t.add(0, "navigation", "START")
+        repeat(20) { t.add((it + 1).toLong(), "caption", "frame $it") }
+        assertEquals(4, t.entries().size)
+        assertEquals("0 | navigation | START", t.entries().first())
+    }
 }

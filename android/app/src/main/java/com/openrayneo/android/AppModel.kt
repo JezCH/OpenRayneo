@@ -528,7 +528,14 @@ internal class AppModel(application: Application) : AndroidViewModel(application
     }
 
     fun diagnosticReport(includeDetails: Boolean, includeAi: Boolean): String = buildString {
-        appendLine(service().diagnosticReport(includeDetails, includeAi))
+        val current = bridge
+        if (current != null) appendLine(current.diagnosticReport(includeDetails, includeAi))
+        else {
+            appendLine("OpenRayneo diagnostic report v1 · service unavailable")
+            appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) commit=${BuildConfig.GIT_COMMIT}")
+            appendLine("Persisted metadata only; current service state unavailable.")
+            appendLine(DiagnosticTrace(context).export())
+        }
         if (includeAi) {
             appendLine("[Optional visible phone and PC AI conversation, retained only]")
             val mobile = phoneHistory + if (!state.phoneEphemeral && state.phoneQuestion.isNotBlank()) listOf(ChatRecord(state.phoneQuestion, state.phoneAnswer)) else emptyList()
