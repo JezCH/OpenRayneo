@@ -61,12 +61,37 @@ internal class BridgeService : Service() {
         // A physical tap explicitly requests native navigation, not a phone
         // handoff. Require the current connection's acknowledged preset revision.
         if (nativePresetSyncedRevision != config.revision) {
-            noteNativeMenu(0x20, "현재 연결에서 목적지 동기화 확인 필요")
+            rejectNativePresetStart(request.sid, "현재 연결에서 목적지 동기화 확인 필요")
             return
         }
         val destination = config.resolve(request.alias) ?: return
         val status = startPreparedNativeRoute(destination, request.sid)
         noteNativeMenu(0x20, request.alias + " · " + status)
+    }
+    // Only called for a validated, consumed peer preset SID. Never send a
+    // fabricated successful profile or take ownership of another active session.
+    private fun rejectNativePresetStart(sid: String, reason: String) {
+        if (destroyed || state.disconnecting || state.link.phase != LinkPhase.FULL ||
+            nativeStartProbe != null) {
+            noteNativeMenu(0x20, "$reason · 기존 세션/연결 변경으로 거부 응답 미전송")
+            return
+        }
+        val epoch = nativePresetConsentEpoch
+        val status = "$reason · 순정 시작 거부 응답"
+        noteNativeMenu(0x20, "$status 전송 중")
+        val frame = NativeNavigationStartup.rejectInitialPresetFrame(
+            navProbeTransportSequence++ and 65535, sid, reason)
+        runCatching {
+            connection.sendFrame(frame) { result ->
+                main.post {
+                    if (!destroyed && !state.disconnecting && epoch == nativePresetConsentEpoch &&
+                        state.link.phase == LinkPhase.FULL && nativeStartProbe == null) {
+                        noteNativeMenu(0x20, if (result.isSuccess)
+                            "$status 전송 완료 · 안경 종료 미확인" else "$status 전송 실패")
+                    }
+                }
+            }
+        }.onFailure { noteNativeMenu(0x20, "$status 전송 실패") }
     }
     val nativePresetPending get() = pendingNativePreset != null
     val nativePresetConsentEpoch get() = "$nativePresetServiceId:$navProbeRevision"
@@ -125,7 +150,10 @@ internal class BridgeService : Service() {
     }
     private fun startPreparedNativeRoute(destination: String, peerSid: String? = null): String {
         val route = preparedNativeRoute?.takeIf { it.parameters.destination == destination }
-            ?: return "순정 내비 실제 경로 공급 미연동 · 휴대폰 지도 미실행"
+        if (route == null) {
+            if (peerSid != null) rejectNativePresetStart(peerSid, "실제 경로 공급 미연동")
+            return "순정 내비 실제 경로 공급 미연동 · 휴대폰 지도 미실행"
+        }
         val now = SystemClock.elapsedRealtime()
         val ready = route.observation()?.guidance?.freshAt(now) == true
         if (!ready || !liveNativeCanStart(route)) {
@@ -137,6 +165,7 @@ internal class BridgeService : Service() {
                 return if (!ready) "순정 내비 최신 경로 정보 대기"
                     else "순정 내비 요청 대기 · 경로/화면 사용 상태 확인"
             }
+            rejectNativePresetStart(peerSid, "최신 경로 또는 화면 사용 상태 확인 필요")
             return "순정 내비 시작 보류 · 최신 경로/안경 화면 사용 상태 확인"
         }
         val caps = checkNotNull(nativeNavCapabilities)
@@ -152,6 +181,7 @@ internal class BridgeService : Service() {
         if (state.intent != DisplayIntent.NativeNavigation) {
             live.close()
             nativeStartProbe = null
+            if (peerSid != null) rejectNativePresetStart(peerSid, "순정 내비 화면 예약 실패")
             return "순정 내비 화면 예약 실패"
         }
         val frame = if (peerSid == null) session.startFrame(navProbeTransportSequence++ and 65535)

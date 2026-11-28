@@ -19,6 +19,20 @@ internal object NativeNavigationStartup {
         return ProtocolCodec.display(0x20, sequence, 3, JSONObject().put("sid", sid)
             .put("reason_code", 2).put("text", "MOBILE_APP_CLOSE").toString())
     }
+    /** Terminal negative reply to a validated glasses-originated preset.
+     * Stock 1.0.6.11 START_REPLY parser 0x107610b0 accepts code 0..15;
+     * 0x10741fa6/0x107420ee sends nonzero non-confirmation codes through
+     * the terminal rejection path. Generic code 15, not a guessed
+     * provider-specific or firmware-version error. No successful profile. */
+    fun rejectInitialPresetFrame(sequence: Int, sid: String, reason: String): ByteArray {
+        require(sequence in 0..65535)
+        require(sid.matches(Regex("(?i)([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")))
+        require(reason.isNotBlank() && reason.toByteArray(Charsets.UTF_8).size <= 128 &&
+            reason.none(Char::isISOControl))
+        return ProtocolCodec.display(0x20, sequence, 2, JSONObject().put("sid", sid)
+            .put("code", 15).put("text", reason).toString())
+    }
+
     internal enum class Profile(val map: String, val scene: String) {
         RASTER_FRAME("REMOTE_RASTER_FRAME_V1", "NONE"),
         VECTOR_TILE("REMOTE_VECTOR_TILE_V1", "ROUTE_SCENE_V1"),
