@@ -80,6 +80,27 @@ class NaverNavigationRegressionTest {
         assertEquals("""{"request_id":"preset-request","revision":2,"home":{"available":true,"preset_id":"1234567890abcdef"},"company":{"available":true,"preset_id":"fedcba0987654321"}}""", message.json)
     }
 
+    @Test fun directNativeNavigationUsesOnlyCurrentExplicitPlace() {
+        val p = NativeDirectNavigationPolicy
+        val command = "그래? 그러면 니가 직접 한번 버거킹 검색을 해봐. 경로를."
+        val answer = """{"route":"native_navigation","destination":"버거킹"}"""
+        assertTrue(p.eligible(command))
+        assertEquals("버거킹", p.decode(answer, command)?.destination)
+        assertEquals(false, p.decode(answer, command)?.phoneApp)
+        assertEquals(NaverVoiceCommand.Mode.WALK, p.decode(answer, command)?.mode)
+        assertEquals(true, p.decode(answer, "네이버로 버거킹 길안내 해줘")?.naverRequested)
+        assertNull(p.decode(answer, "길 안내 해줘"))
+        assertNull(p.decode(answer, "스타벅스까지 길 안내 해줘"))
+        listOf("버거킹 검색해줘", "버거킹 길 안내 가능해?", "버거킹 길 안내 하지 마",
+            "버거킹 길 안내 방법 설명해줘", "버거킹까지 차로 안내해줘",
+            "휴대폰에서 버거킹 경로 검색해줘", "버거킹 길 안내 해줘라고 말했어").forEach {
+            assertNull(it, p.decode(answer, it))
+        }
+        assertNull(p.decode("""{"route":"native_navigation","destination":"버거킹","extra":1}""", command))
+        assertNull(p.decode("""{"route":"native_navigation","destination":"여기"}""", "여기까지 길 안내 해줘"))
+        assertEquals("평소 답변", NativeExplicitVoicePolicy.decode("평소 답변", false)?.answer)
+    }
+
     @Test fun liveSessionUsesPeerSidAndNeverRefreshesStaleGuidance() {
         val sid = "0123456789abcdef0123456789abcdef"
         val params = NativeNavigationStartup.Parameters(NativeNavigationStartup.Profile.RASTER_FRAME,

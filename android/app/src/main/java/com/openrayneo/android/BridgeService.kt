@@ -1855,7 +1855,7 @@ internal class BridgeService : Service() {
                 if (prepared != null) startPreparedNativeRoute(prepared.parameters.destination)
                 else if (request.naverRequested) "네이버 실시간 순정 경로 공급 미연동 · 다른 공급자로 자동 전환하지 않음"
                 else requestOfflineNativeRoute(request.destination, request.mode)
-                    ?: "네이버 실시간 순정 경로 공급 미연동 · 다른 공급자로 자동 전환하지 않음"
+                    ?: "순정 도보 경로 공급자를 먼저 설정하세요. 카카오맵 REST API 또는 BRouter를 선택할 수 있습니다."
             }
         }
         navigationSwitchStatus = status
@@ -2648,7 +2648,9 @@ internal class BridgeService : Service() {
             segments.length() > 0 && (0 until segments.length()).all { segments.optJSONObject(it)?.optBoolean("mixed") == false }
         } == true
         val routeTools = unmixed && AiModelSelection.legacy(cfg)
-        diagnosticEvent("ai-routing", "explicit wake direct=${!AiModelSelection.legacy(cfg)} unmixed=$unmixed agentTools=$routeTools")
+        val directNavigation = unmixed && !AiModelSelection.legacy(cfg) &&
+            NativeDirectNavigationPolicy.eligible(request.text)
+        diagnosticEvent("ai-routing", "explicit wake direct=${!AiModelSelection.legacy(cfg)} unmixed=$unmixed agentTools=$routeTools localNav=$directNavigation")
         // Do not persist automatic context or ordinary chat history in a task.
         // Only the original current utterance can become an execution request.
         val taskInput = if (routeTools) JSONObject(input.toString()) else null
@@ -2661,6 +2663,7 @@ internal class BridgeService : Service() {
         try {
             nativeChatRequest = agent.harness.submit(request.text,
                 KoreanLanguage.withAnswerPolicy(NativeExplicitVoicePolicy.prompt(routeTools) + limit +
+                    (if (directNavigation) NativeDirectNavigationPolicy.instruction else "") +
                     (if (auto != null) "\n" + OrdinaryContextPolicy.INSTRUCTION else ""), cfg.optString("answerLanguage")),
                 kind = "hint", input = input, hintLifetimeMs = ProactiveHintPolicy.MAX_AGE_MS, automaticContext = auto) { result ->
                 if (token != nativeChatGeneration) return@submit
@@ -2668,6 +2671,23 @@ internal class BridgeService : Service() {
                 if (!current()) return@submit
                 val raw = result.getOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "[PASS]" }
                 if (raw == null) { respond("AI 응답 실패 또는 만료"); return@submit }
+                if (directNavigation && NativeDirectNavigationPolicy.isActionEnvelope(raw)) {
+                    val nav = NativeDirectNavigationPolicy.decode(raw, request.text)
+                    if (nav == null || !current() || AiModelSelection.legacy(settings.read()) ||
+                        !aiReady() || ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) == 0L) {
+                        respond("목적지 또는 길 안내 요청을 확인하지 못했습니다. 다시 요청해 주세요.")
+                        return@submit
+                    }
+                    val status = if (request.text.filterNot(Char::isWhitespace).contains("카카오") &&
+                        !nav.naverRequested && selectedNativeProvider() != "kakao")
+                        "카카오맵 경로 공급자를 먼저 선택하세요. 다른 공급자로 자동 전환하지 않았습니다."
+                    else requestNativeNavigation(nav)
+                    diagnosticEvent("ai-navigation", "direct local navigation; pending=$nativeRouteWaiting")
+                    input.put("derivedId", java.util.UUID.randomUUID().toString())
+                    deliverExternalVoice(request.text, status, input)
+                    notifyUI()
+                    return@submit
+                }
                 val decision = NativeExplicitVoicePolicy.decode(raw, routeTools)
                 if (decision == null) { respond("AI 응답 형식을 확인하지 못했습니다. 다시 질문해 주세요."); return@submit }
                 if (decision.agent) {
