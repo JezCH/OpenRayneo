@@ -2018,7 +2018,9 @@ internal class BridgeService : Service() {
                                 if (current()) respond("AI 작업 결과를 확인하지 못했습니다.")
                             })
                         }
-                        if (current()) respond("요청을 AI에 전달했습니다. 승인이 필요한 작업은 휴대폰에서 확인해 주세요.")
+                        // A native reply advances the wake ID. Do not send a
+                        // premature final reply and discard the actual task result.
+                        onLog("자연어 AI 요청 전달 · 실제 응답/기존 승인 대기")
                     } catch (error: Exception) { respond("AI 요청 전송 실패") }
                     notifyUI()
                     return@submit

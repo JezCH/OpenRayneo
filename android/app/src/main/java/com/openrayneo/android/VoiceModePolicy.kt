@@ -60,7 +60,11 @@ internal object NativeExplicitVoicePolicy {
         if (!canRoute) return Decision(false, text)
         val json = if (text.startsWith("```json\n") && text.endsWith("\n```"))
             text.removePrefix("```json\n").removeSuffix("\n```").trim() else text
-        val body = runCatching { JSONObject(json) }.getOrNull() ?: return null
+        // Some existing chat models respond in plain text despite the JSON
+        // request. Preserve the answer, but never infer a tool action from it.
+        val body = runCatching { JSONObject(json) }.getOrNull()
+            ?: return if (!json.startsWith("{") && !json.startsWith("[") && !json.startsWith("```"))
+                Decision(false, text) else null
         return when (body.opt("route")) {
             "agent" -> if (body.length() == 1) Decision(true) else null
             "answer" -> if (body.length() == 2) (body.opt("answer") as? String)
