@@ -48,6 +48,19 @@ internal object KoreanNavigationText {
             instruction(englishAction, en.groupValues[1], en.groupValues[2]) else null
     }
 
+    /** Stock 6.13.1.2 Now Bar card uses distinct, localized turn labels.
+     * Do not classify a crossing, stairs, destination, etc. as a left/right turn. */
+    fun parseNaverNowBar(title: String, text: String): Instruction? {
+        val action = when (KoreanLanguage.normalize(title).trim().lowercase(java.util.Locale.ROOT)) {
+            "왼쪽 방향" -> "좌회전"
+            "오른쪽 방향" -> "우회전"
+            "go straight" -> "continue straight"
+            else -> title
+        }
+        // The Now Bar card is populated with an explicit remaining-distance resource.
+        return parseNaverWalk(action, text)
+    }
+
     private fun instruction(action: String, value: String, unit: String): Instruction? {
         val n = value.replace(",", "").toDoubleOrNull() ?: return null
         val meters = n * if (unit.lowercase() in setOf("km", "킬로미터", "킬로")) 1000 else 1

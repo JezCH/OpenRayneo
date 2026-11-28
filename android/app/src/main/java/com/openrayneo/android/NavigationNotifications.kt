@@ -23,13 +23,18 @@ internal object NavigationFeed {
     fun sourceLabel(pkg: String) = sources[pkg] ?: "지원하지 않는 지도 앱"
     // A lifecycle-only notification does not supply a maneuver, route ID or map.
     enum class Observation { NON_NAVIGATION, STATUS_ONLY, WALK_STEP, UNRECOGNIZED, RECOGNIZED }
-    data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int, val walkSteps: Int = 0)
-    data class NativeWalkStep(val instruction: KoreanNavigationText.Instruction, val postedAt: Long) {
-        fun freshAt(now: Long) = now - postedAt in 0..2_999L
+    data class SourceEvidence(val packageName: String, val observed: Int, val recognized: Int, val unrecognized: Int,
+                              val walkSteps: Int = 0, val nowBarSteps: Int = 0,
+                              val nowBarProgress: Int? = null)
+    data class NativeWalkStep(val instruction: KoreanNavigationText.Instruction, val postedAt: Long,
+                              val nowBar: Boolean = false, val progressPercent: Int? = null) {
+        fun freshAt(now: Long) = now >= postedAt && now - postedAt < NativePhoneGuidance.VALID_FOR_MS
     }
     // Partial native-source data only; never insert into legacy 0x13 entries.
     private val nativeWalkSteps = linkedMapOf<String, NativeWalkStep>()
-    fun nativeWalkStep(now: Long): NativeWalkStep? = nativeWalkSteps.values.filter { it.freshAt(now) }.singleOrNull()
+    fun nativeWalkStep(now: Long): NativeWalkStep? =
+        if (!connected || activeNavigationCount != 1) null
+        else nativeWalkSteps.values.singleOrNull()?.takeIf { it.freshAt(now) }
     // Active notification metadata only; never retain rejected notification content.
     private val observations = linkedMapOf<String, Pair<String, Observation>>()
     fun observe(key: String, pkg: String, result: Observation) {
@@ -43,16 +48,28 @@ internal object NavigationFeed {
         }
     }
     fun resetObservations() { observations.clear(); nativeWalkSteps.clear() }
-    fun observeWalk(key: String, pkg: String, title: String, text: String, postedAt: Long) {
+    fun observeWalk(key: String, pkg: String, title: String, text: String, postedAt: Long,
+                    cardTitle: String? = null, cardDistance: String? = null,
+                    progress: Int? = null, progressMax: Int? = null) {
         if (!isNavigationSource(pkg)) return
         // Original stock resources: terminal titles (do not mark navigation active).
         if (title.trim() in setOf("길안내를 종료합니다.", "목적지에 도착했습니다.", "End directions.", "You've arrived at your destination.")) {
             observe(key, pkg, Observation.NON_NAVIGATION)
             return
         }
-        val step = KoreanNavigationText.parseNaverWalk(title, text)
+        val standard = KoreanNavigationText.parseNaverWalk(title, text)
+        val card = if (cardTitle != null && cardDistance != null)
+            KoreanNavigationText.parseNaverNowBar(cardTitle, cardDistance) else null
+        // The two observations must agree if both are available. Do not infer
+        // a maneuver from a road name or an arbitrary manufacturer extra.
+        val step = when {
+            standard != null && card != null && standard != card -> null
+            else -> card ?: standard
+        }
         if (step != null && postedAt > 0) {
-            nativeWalkSteps[key] = NativeWalkStep(step, postedAt)
+            val percent = if (card != null && progressMax == 100 && progress != null &&
+                progress in 0..100) progress else null
+            nativeWalkSteps[key] = NativeWalkStep(step, postedAt, card != null, percent)
             observe(key, pkg, Observation.WALK_STEP)
         } else observe(key, pkg, Observation.STATUS_ONLY)
     }
@@ -64,7 +81,9 @@ internal object NavigationFeed {
         val seen = observations.values.filter { it.first == pkg }
         SourceEvidence(pkg, seen.size, seen.count { it.second == Observation.RECOGNIZED },
             seen.count { it.second == Observation.UNRECOGNIZED || it.second == Observation.STATUS_ONLY },
-            seen.count { it.second == Observation.WALK_STEP })
+            seen.count { it.second == Observation.WALK_STEP },
+            if (pkg == PACKAGE) nativeWalkSteps.values.count { it.nowBar } else 0,
+            if (pkg == PACKAGE) nativeWalkStep(System.currentTimeMillis())?.progressPercent else null)
     }
 
     data class Entry(
@@ -227,7 +246,8 @@ internal class NavigationNotifications : NotificationListenerService() {
         val entry = parseSafely(notification)
         if (entry != null) NavigationFeed.update(entry) else {
             // Normal Naver notifications remain eligible for the existing opt-in phone forwarding.
-            if (!NavigationFeed.activeNavigationKey(notification.key))
+            if (!NavigationFeed.activeNavigationKey(notification.key) &&
+                notification.notification.channelId != "350_WALK_NAVIGATION")
                 PhoneNotificationForwarding.onPosted(this, notification)
             NavigationFeed.reject(notification.key)
         }
@@ -267,7 +287,16 @@ internal class NavigationNotifications : NotificationListenerService() {
         if (notification.channelId == "350_WALK_NAVIGATION" && notification.category == Notification.CATEGORY_SERVICE) {
             NavigationFeed.observeWalk(item.key, item.packageName,
                 extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
-                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(), item.postTime)
+                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(), item.postTime,
+                // Read only the four exact keys emitted by stock APK 6.13.1.2:
+                // OngoingActivity.Card.apply 0x3ff8a4 / Expand.Progress.apply 0x400318.
+                // No icons, pending intents, coordinates or arbitrary extras are collected.
+                extras.getString("android.ongoingActivityNoti.nowbarPrimaryInfo"),
+                extras.getString("android.ongoingActivityNoti.nowbarSecondaryInfo"),
+                if (extras.containsKey("android.ongoingActivityNoti.progress"))
+                    extras.getInt("android.ongoingActivityNoti.progress", -1) else null,
+                if (extras.containsKey("android.ongoingActivityNoti.progressMax"))
+                    extras.getInt("android.ongoingActivityNoti.progressMax", -1) else null)
             return null
         }
         // Existing NAVER interop evidence: NaviToTesla's NaverPoiFinder observes

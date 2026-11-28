@@ -676,11 +676,13 @@ private fun NavigationScreen(
                         !s.notificationConnected -> "알림 리스너 연결 대기"
                         recent -> "최신 방향·거리 인식 · 안경 안내 시작 가능"
                         (evidence?.recognized ?: 0) > 0 -> "방향·거리 인식했으나 최근 갱신 없음"
-                        (evidence?.walkSteps ?: 0) > 0 -> "순정 도보 방향·거리 수신 · 전체 경로/지도는 미확보"
+                        (evidence?.nowBarSteps ?: 0) > 0 -> "네이버 Now Bar 방향·거리 인식 · 전체 경로/지도는 미확보"
+                        (evidence?.walkSteps ?: 0) > 0 -> "순정 도보 방향·거리 인식 · 전체 경로/지도는 미확보"
                         (evidence?.unrecognized ?: 0) > 0 -> "길 안내 상태 수신 · 방향/거리 또는 전체 경로 미확보"
                         (evidence?.observed ?: 0) > 0 -> "일반 알림만 확인 · 시스템 길 안내 알림 없음"
                         else -> "현재 수신된 알림 없음 · 지도 앱에서 안내 시작 확인"
                     })
+                    evidence?.nowBarProgress?.let { Note("네이버 최신 경로 진행률: ${it}%") }
                 }
                 ToolOutlinedButton(onClick = { model.attempt { NavigationNotifications.refresh(model.getApplication(), foreground = true) } }, enabled = model.notificationAllowed) { Text("현재 알림 다시 확인") }
             }
