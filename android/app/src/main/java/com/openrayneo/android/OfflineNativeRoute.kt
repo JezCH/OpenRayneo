@@ -28,6 +28,11 @@ internal class OfflineNativeRoute(
         fun maneuver(code: Int?): Int? = if(code==null) noManeuver else maneuvers[code]
     }
     companion object {
+        /** The correlated peer END must report MOBILE_APP_CLOSE. A user/peer
+         * stop, timeout, disconnect, changed consent or other reason never restarts. */
+        fun mayRestartAfterEnd(reason: Int, sameEpoch: Boolean, connected: Boolean): Boolean =
+            reason == 2 && sameEpoch && connected
+
         // Official app 1.0.30, libapp SHA 5d196b14..., exact
         // 0x1c4f8f4 -> PP+0x52650 (60-entry semantic map).
         // Evidence: Rayneo-Original runs 46144064096 / 46144213745.
