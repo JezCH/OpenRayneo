@@ -435,7 +435,9 @@ internal fun DeviceOverview(model: AppModel, connect: () -> Unit, open: (String)
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             OpticalHeroPanel {
-                OpticalWorkspaceHeading(model.deviceName, connection.label, 4)
+                OpticalWorkspaceHeading(model.deviceName, connection.label, 4,
+                    detailColor = if (connection.phase == SystemStatusPolicy.Phase.ERROR) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
                 GlassesArtwork(Modifier.fillMaxWidth().height(110.dp), MaterialTheme.colorScheme.primary)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("통신 및 기기 응답", style = MaterialTheme.typography.labelLarge)

@@ -61,7 +61,7 @@ internal fun OpticalActivityHeader(activity: String) {
                 Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(activity, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
             }
-            OpticalSignature(Modifier.size(if (maxWidth >= 320.dp) 148.dp else 120.dp))
+            OpticalSignature(Modifier.size(if (maxWidth >= 288.dp) 148.dp else 120.dp))
         } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("현재 활동", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(activity, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })

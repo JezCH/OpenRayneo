@@ -93,18 +93,30 @@ def main():
                 png = adb("exec-out", "screencap", "-p")
                 assert png.startswith(b"\x89PNG\r\n\x1a\n"), "screenshot PNG missing"
                 (a.out / f"{name}.png").write_bytes(png)
-                # Ensure the actual app's navigation remains present and the
-                # destination header/content has changed. The screenshots still
-                # need visual inspection; this is not aesthetic acceptance.
+                # The selected semantics, not the always-visible tab labels,
+                # must change. Verify the foreground node belongs to our app.
+                parents = {child: parent for parent in root.iter() for child in parent}
+                current = find_tab(root, tab)
+                assert current.get("package") == PACKAGE, f"{case}/{tab}: wrong foreground app"
+                candidate = current
+                selected = False
+                while candidate is not None:
+                    if candidate.get("selected") == "true":
+                        selected = True
+                        break
+                    candidate = parents.get(candidate)
+                if not selected:
+                    raise RuntimeError(f"{case}/{tab}: tab selection was not observed")
                 for title in TABS:
                     find_tab(root, title)
                 visible = labels(root)
-                required = {0: ("현재 활동",), 1: ("AI",), 2: ("기억 및 음성 기록",),
-                            3: ("기능 라이브러리",), 4: ("기기",)}[index]
+                required = {0: ("현재 활동",), 1: ("AI에 연결해야", "AI 연결 대기", "무엇을 도와드릴까요?", "질문 입력 가능", "연결 또는 설정 확인", "서비스 상태 미확인"),
+                            2: ("기억 및 음성 기록",), 3: ("기능 라이브러리",),
+                            4: ("RayNeo iO", "통신 및 기기 응답", "안경 사용 및 설정")}[index]
                 if not any(any(expected in label for label in visible) for expected in required):
                     raise RuntimeError(f"{case}/{tab}: expected destination not visible; labels: {sorted(visible)[:50]}")
                 evidence.append({"case": case, "tab": tab, "file": name + ".png",
-                                 "native": True, "check": "tab and destination label present"})
+                                 "native": True, "check": "actual app, selected tab, destination content"})
     finally:
         (a.out / "manifest.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
         (a.out / "android-runtime.log").write_bytes(adb("logcat", "-d", "-s", "AndroidRuntime", check=False))

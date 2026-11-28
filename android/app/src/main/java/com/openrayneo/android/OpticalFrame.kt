@@ -149,12 +149,15 @@ internal fun OpticalHeroPanel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-internal fun OpticalWorkspaceHeading(title: String, detail: String, glyph: Int) {
+internal fun OpticalWorkspaceHeading(
+    title: String, detail: String, glyph: Int,
+    detailColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(detail, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            Text(detail, style = MaterialTheme.typography.labelMedium, color = detailColor)
             Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
         if (LocalDensity.current.fontScale <= 1.3f)
