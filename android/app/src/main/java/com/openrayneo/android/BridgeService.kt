@@ -176,6 +176,58 @@ internal class BridgeService : Service() {
     private var nativeVoiceNavigationWake: String? = null
     private var nativeVoiceNavigationEpoch: String? = null
     private var resumeAfterNativeNavigation = false
+    private class KakaoChoice(val token: String, val places: List<KakaoWalkingRoute.Candidate>,
+                              val config: KakaoNativeRouteSettings.Config, val epoch: String,
+                              val deadline: Long, var announce: Boolean)
+    private var kakaoChoice: KakaoChoice? = null
+    val kakaoCandidateToken get() = kakaoChoice?.token.orEmpty()
+    val kakaoCandidates get() = kakaoChoice?.places.orEmpty()
+    private fun validKakaoChoice(choice: KakaoChoice) = !destroyed && foreground &&
+        state.link.phase == LinkPhase.FULL && !state.disconnecting &&
+        choice.epoch == nativePresetConsentEpoch && SystemClock.elapsedRealtime() < choice.deadline &&
+        selectedNativeProvider() == "kakao" &&
+        runCatching { KakaoNativeRouteSettings.read(this) }.getOrNull() == choice.config
+    fun cancelKakaoChoice() {
+        kakaoChoice = null
+        nativeStartTestStatus = "목적지 선택 취소"
+        notifyUI()
+    }
+    private fun kakaoChoiceText(choice: KakaoChoice): String = choice.places.mapIndexed { index, place ->
+        val address = place.address.take(30)
+        "${index+1}번 ${place.name.take(30)}" + (if (address.isNotBlank()) " · $address" else "") +
+            (place.distanceMeters?.let { " · ${it}m" } ?: "")
+    }.joinToString("\n", postfix = "\n선택하려면 '2번 목적지 선택'처럼 말하세요.")
+    private fun pollKakaoChoice() {
+        val choice = kakaoChoice ?: return
+        if (!validKakaoChoice(choice)) {
+            kakaoChoice = null
+            nativeStartTestStatus = "목적지 선택 만료 또는 공급자 변경"
+            notifyUI()
+            return
+        }
+        if (choice.announce && !voiceTransport.nativeActive && voiceTransport.source == null &&
+            !conversations.state.running && !conversations.state.stopping &&
+            state.intent == DisplayIntent.Idle && state.session == null) {
+            choice.announce = false
+            runCatching { sendCompanionNotification("목적지 선택", kakaoChoiceText(choice), FocusPolicy.Output.DIRECT_ANSWER) }
+        }
+    }
+    fun chooseKakaoCandidate(token: String, id: String): String {
+        val choice = kakaoChoice?.takeIf { it.token == token && validKakaoChoice(it) }
+            ?: return "목적지 선택이 만료되었습니다. 다시 검색하세요."
+        val place = choice.places.singleOrNull { it.id == id }
+            ?: return "검색 목록에 없는 목적지입니다."
+        val status = requestOfflineNativeRoute(place.name, NaverVoiceCommand.Mode.WALK, selectedKakao = place)
+            ?: "카카오 경로 공급자를 먼저 설정하세요."
+        nativeStartTestStatus = status
+        notifyUI()
+        return status
+    }
+    private fun chooseKakaoCandidateNumber(number: Int): String {
+        val choice = kakaoChoice?.takeIf(::validKakaoChoice) ?: return "선택할 최신 목적지 후보가 없습니다."
+        val place = choice.places.getOrNull(number - 1) ?: return "목적지 후보 번호를 확인하세요."
+        return chooseKakaoCandidate(choice.token, place.id)
+    }
     private class OfflinePreparation(val destination: String, val peerSid: String?, val epoch: String, val deadline: Long,
                                      val provider: String = "brouter") {
         var future: java.util.concurrent.Future<*>? = null
@@ -258,8 +310,11 @@ internal class BridgeService : Service() {
         if (!nativeRouteWaiting && nativeStartProbe == null) { nativeStartTestStatus = result; notifyUI() }
     }
     private fun requestOfflineNativeRoute(destination: String, mode: NaverVoiceCommand.Mode, peerSid: String? = null,
-                                          reroute: OfflineReroute? = null): String? {
+                                          reroute: OfflineReroute? = null,
+                                          selectedKakao: KakaoWalkingRoute.Candidate? = null): String? {
         val provider = selectedNativeProvider() ?: return null
+        if (selectedKakao != null && (provider != "kakao" || reroute != null || peerSid != null))
+            return "선택한 카카오 목적지와 공급자가 일치하지 않습니다."
         if (reroute != null && (peerSid != null || reroute.epoch != nativePresetConsentEpoch || reroute.provider != provider))
             return "재탐색 취소 · 연결 또는 공급자 변경"
         val kakao = if (provider == "kakao") runCatching { KakaoNativeRouteSettings.read(this) }.getOrNull() else null
@@ -286,6 +341,7 @@ internal class BridgeService : Service() {
             return "앱에서 위치 전경 서비스를 먼저 시작하세요."
         if (!offlineProviderAvailable(provider)) return "선택한 경로 공급자 설정 및 정확한 GPS를 확인하세요."
         val pending = OfflinePreparation(destination, peerSid, nativePresetConsentEpoch, SystemClock.elapsedRealtime() + 35_000L, provider)
+        kakaoChoice = null
         offlinePreparation = pending
         diagnosticEvent("route-provider", "request=$provider")
         nativeStartTestStatus = if (reroute != null) "현재 위치에서 원래 목적지까지 동일 공급자 재탐색 중"
@@ -294,8 +350,11 @@ internal class BridgeService : Service() {
             val result = runCatching {
                 val fix = checkNotNull(OfflineRouteLocation.current(this)) { "정확한 GPS 위치 미확인" }
                 check(fix.accuracyMeters <= 25.0) { "정확한 GPS 위치 미확인" }
-                if (provider == "kakao") KakaoWalkingRoute.calculate(checkNotNull(kakao).key, fix.point, target)
-                else OfflineWalkingRoute.calculate(this, fix.point, checkNotNull(point))
+                if (provider == "kakao") {
+                    val key = checkNotNull(kakao).key
+                    if (selectedKakao != null) KakaoWalkingRoute.calculateTo(key, fix.point, selectedKakao.point)
+                    else KakaoWalkingRoute.calculate(key, fix.point, target)
+                } else OfflineWalkingRoute.calculate(this, fix.point, checkNotNull(point))
             }
             main.post {
                 if (offlinePreparation !== pending) return@post
@@ -319,6 +378,14 @@ internal class BridgeService : Service() {
                             notifyUI()
                         }
                 }, {
+                    if (it is KakaoWalkingRoute.ChoiceRequired && kakao != null && pending.peerSid == null && reroute == null) {
+                        kakaoChoice = KakaoChoice(java.util.UUID.randomUUID().toString(), it.candidates, kakao, pending.epoch,
+                            SystemClock.elapsedRealtime() + 120_000L, nativeVoiceNavigationWake != null)
+                        nativeStartTestStatus = "실제 카카오 목적지 후보 ${it.candidates.size}개 · 장소 선택 대기"
+                        diagnosticEvent("route-provider", "kakao candidate selection count=${it.candidates.size}")
+                        notifyUI()
+                        return@post
+                    }
                     diagnosticFailure("navigation-calculate", it)
                     diagnosticEvent("route-provider", "failure=$provider" + if (it is KakaoWalkingRoute.Failure) " ${it.message}" else "")
                     nativeStartTestStatus = if (provider == "kakao") "카카오 도보 경로 실패 · " +
@@ -383,7 +450,7 @@ internal class BridgeService : Service() {
         preparedNativeRoute = route
     }
     private fun clearPreparedNativeRoute(preserveVoiceHandoff: Boolean = false) {
-        if (!preserveVoiceHandoff) { nativeVoiceNavigationWake = null; nativeVoiceNavigationEpoch = null }
+        if (!preserveVoiceHandoff) { nativeVoiceNavigationWake = null; nativeVoiceNavigationEpoch = null; kakaoChoice = null }
         offlinePreparation?.future?.cancel(true)
         offlinePreparation = null
         preparedNativeRoute?.let { runCatching { it.close() } }
@@ -563,6 +630,7 @@ internal class BridgeService : Service() {
         notifyUI()
     }
     fun cancelNativeStartTest() {
+        if (kakaoChoice != null) cancelKakaoChoice()
         if (nativeRouteWaiting || preparedNativeRoute != null) {
             val sid = offlinePreparation?.peerSid ?: queuedNativePeerSid
             clearPreparedNativeRoute()
@@ -1254,6 +1322,7 @@ internal class BridgeService : Service() {
             pollNavigationSwitch()
             pollVoiceNavigation()
             pumpNativeNavigation()
+            pollKakaoChoice()
             if (resumeAfterNativeNavigation) resumeBackground()
             // Reflect actual source availability on the stock reciprocal
             // feature registry, not merely the peer's navigation profile.
@@ -1811,7 +1880,7 @@ internal class BridgeService : Service() {
     fun cancelVoiceNavigationRequest() {
         nativeStartProbe?.reroute = null
         clearVoiceNavigation()
-        if (nativeRouteWaiting) cancelNativeStartTest()
+        if (nativeRouteWaiting || kakaoChoice != null) cancelNativeStartTest()
         notifyUI()
     }
     private fun voiceNavigationBlock(): String? {
@@ -2234,7 +2303,7 @@ internal class BridgeService : Service() {
         }
     }
     private fun resumeBackground() {
-        if (nativeRouteWaiting || nativeStartProbe != null) {
+        if (nativeRouteWaiting || nativeStartProbe != null || kakaoChoice != null) {
             if (resumeAlwaysOn != null) resumeAfterNativeNavigation = true
             return
         }
@@ -2436,7 +2505,8 @@ internal class BridgeService : Service() {
         }
         val navCommand = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.parse(request.text) else null
         val navControl = if (request.source == ConversationSource.NATIVE) NaverVoiceCommand.control(request.text) else null
-        if (navCommand != null || navControl != null) {
+        val choiceCommand = if (request.source == ConversationSource.NATIVE) KakaoCandidateVoicePolicy.parse(request.text) else null
+        if (navCommand != null || navControl != null || choiceCommand != null) {
             val active = conversations.state
             val wake = request.wakeId
             val fresh = ProactiveHintPolicy.remainingForSpeech(System.currentTimeMillis(), request.lastSpeechAt) > 0L
@@ -2450,6 +2520,10 @@ internal class BridgeService : Service() {
                 state.link.phase == LinkPhase.FULL && !state.disconnecting) {
                 val wasWaiting = nativeRouteWaiting
                 val answer = if (!unmixed) "겹친 발화입니다. 다시 요청하세요."
+                    else if (choiceCommand != null) when (choiceCommand) {
+                        0 -> kakaoChoice?.takeIf(::validKakaoChoice)?.let(::kakaoChoiceText) ?: "선택할 최신 목적지 후보가 없습니다."
+                        else -> chooseKakaoCandidateNumber(choiceCommand)
+                    }
                     else if (navControl != null) executeNavigationControl(navControl)
                     else requestVoiceNavigation(checkNotNull(navCommand))
                 input.put("derivedId", java.util.UUID.randomUUID().toString())
@@ -2819,7 +2893,7 @@ internal class BridgeService : Service() {
         nativeVoiceNavigationEpoch = epoch
         return {
             !destroyed && foreground && state.link.phase == LinkPhase.FULL && !state.disconnecting &&
-                state.ownership == DisplayOwnership.APP && nativeRouteWaiting &&
+                state.ownership == DisplayOwnership.APP && (nativeRouteWaiting || kakaoChoice != null) &&
                 nativeVoiceNavigationWake == wake && nativeVoiceNavigationEpoch == epoch &&
                 nativePresetConsentEpoch == epoch && voiceTransport.wakeId == wake
         }

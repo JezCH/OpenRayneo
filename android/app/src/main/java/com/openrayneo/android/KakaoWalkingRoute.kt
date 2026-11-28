@@ -27,7 +27,36 @@ internal object KakaoNativeRouteSettings {
 }
 
 internal object KakaoWalkingRoute {
-    class Failure(message: String) : IllegalStateException(message)
+    open class Failure(message: String) : IllegalStateException(message)
+    data class Candidate(val id: String, val name: String, val address: String,
+                         val point: NaverWalkingCourse.Point, val distanceMeters: Int?) {
+        override fun toString() = "Candidate(redacted)"
+    }
+    class ChoiceRequired(val candidates: List<Candidate>) : Failure("목적지가 여러 개입니다. 장소를 선택하세요.")
+    internal fun selectKeywordDestination(raw: String, destination: String): Candidate {
+        val root = JSONObject(raw)
+        val docs = root.getJSONArray("documents")
+        require(docs.length() <= 15) { "장소 검색 응답 범위 오류" }
+        fun safe(value: String, limit: Int) = value.filterNot(Char::isISOControl).trim().take(limit)
+        val places = (0 until docs.length()).mapNotNull { i ->
+            runCatching {
+                val doc = docs.getJSONObject(i)
+                val id = doc.optString("id").takeIf { it.length in 1..128 && it.none(Char::isISOControl) } ?: return@mapNotNull null
+                val name = safe(doc.optString("place_name"), 120).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val address = safe(doc.optString("road_address_name").ifBlank { doc.optString("address_name") }, 160)
+                val x = doc.optString("x").toDoubleOrNull() ?: return@mapNotNull null
+                val y = doc.optString("y").toDoubleOrNull() ?: return@mapNotNull null
+                Candidate(id, name, address, point(x,y), doc.optString("distance").toIntOrNull()?.takeIf { it >= 0 })
+            }.getOrNull()
+        }.distinctBy { it.id }
+        // Invalid/duplicate rows never turn ambiguous results into automatic selection.
+        val complete = root.getJSONObject("meta").opt("is_end") == true && places.size == docs.length()
+        val exact = places.filter { destination == it.name || destination == it.address }
+        if (complete && exact.size == 1) return exact.single()
+        if (complete && places.size == 1) return places.single()
+        if (places.isNotEmpty()) throw ChoiceRequired(places.take(5))
+        fail("목적지 검색 결과가 없습니다. 실제 장소명 또는 좌표를 입력하세요.")
+    }
     private fun fail(message: String): Nothing = throw Failure(message)
     private fun number(value: Any?): Double = (value as? Number)?.toDouble()?.takeIf { it.isFinite() }
         ?: fail("응답 수치 형식 오류")
@@ -87,26 +116,14 @@ internal object KakaoWalkingRoute {
             fail("주소 검색 결과가 없거나 여러 개입니다. 정확한 주소 또는 좌표를 입력하세요.")
         }
         val raw = query(key, "v2/local/search/keyword.json", mapOf("query" to destination,
-            "x" to start.longitude.toString(), "y" to start.latitude.toString(), "size" to "15"))
-        val root = JSONObject(raw)
-        val docs = root.getJSONArray("documents")
-        val exact = (0 until docs.length()).map { docs.getJSONObject(it) }.filter { doc ->
-            destination == doc.optString("place_name") || destination == doc.optString("address_name") ||
-                destination == doc.optString("road_address_name")
-        }
-        val complete = root.getJSONObject("meta").optBoolean("is_end", false)
-        val match = when {
-            complete && exact.size == 1 -> exact.single()
-            complete && docs.length() == 1 -> docs.getJSONObject(0)
-            else -> fail("목적지 검색 결과가 없거나 여러 개입니다. 정확한 장소 또는 좌표를 입력하세요.")
-        }
-        val x = match.optString("x").toDoubleOrNull() ?: fail("목적지 좌표 오류")
-        val y = match.optString("y").toDoubleOrNull() ?: fail("목적지 좌표 오류")
-        return point(x,y)
+            "x" to start.longitude.toString(), "y" to start.latitude.toString(), "size" to "15", "sort" to "distance"))
+        return selectKeywordDestination(raw, destination).point
     }
 
     fun calculate(key: String, start: NaverWalkingCourse.Point, destination: String): OfflineWalkingRoute.Route {
-        val end = resolve(key, destination, start)
+        return calculateTo(key, start, resolve(key, destination, start))
+    }
+    fun calculateTo(key: String, start: NaverWalkingCourse.Point, end: NaverWalkingCourse.Point): OfflineWalkingRoute.Route {
         if (distance(start,end) !in 10.0..50_000.0) fail("도보 경로 요청 범위 10m~50km")
         val raw = query(key, "v2/routing/walk", mapOf(
             "start_x" to start.longitude.toString(), "start_y" to start.latitude.toString(),
@@ -212,5 +229,18 @@ internal object KakaoWalkingRoute {
         if(course.lengthMeters !in 1.0..200_000.0) fail("유효하지 않은 경로 길이")
         val timeValues = times.takeIf { elapsed > 0 && abs(elapsed-total)<=maxOf(10.0,total*.05) }
         return OfflineWalkingRoute.Route(course, turns, timeValues, total, "kakao", end)
+    }
+}
+
+
+/** Explicit native wake only. Never interpret a standalone number as consent. */
+internal object KakaoCandidateVoicePolicy {
+    fun parse(raw: String): Int? {
+        val text = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFKC)
+            .filterNot(Char::isWhitespace).trimEnd('.', '!', '?', '。', '！', '？')
+        if (text in setOf("목적지후보알려줘", "목적지후보보여줘", "목적지후보목록")) return 0
+        val number = Regex("^([1-5]|일|이|삼|사|오)번목적지(?:를)?선택(?:해줘|해주세요)?$").matchEntire(text)
+            ?.groupValues?.get(1) ?: return null
+        return number.toIntOrNull() ?: listOf("일","이","삼","사","오").indexOf(number).plus(1)
     }
 }

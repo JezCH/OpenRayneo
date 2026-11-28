@@ -9,6 +9,27 @@ class KakaoWalkingRouteTest {
     private val middle = NaverWalkingCourse.Point(37.4005,127.1)
     private val end = NaverWalkingCourse.Point(37.4005,127.1005)
     private val sample = """{"status":"OK","route":{"properties":{"totalDistance":100,"totalTime":90},"legs":[{"steps":[{"properties":{"distance":55,"time":50,"guidance":"55m 직진"},"path":{"points":[[127.1,37.4],[127.1,37.4005]]}},{"properties":{"distance":45,"time":40,"guidance":"우회전"},"path":{"points":[[127.1,37.4005],[127.1005,37.4005]]}}]}]}}"""
+    @Test fun ambiguousKeywordRetainsActualCandidatesWithoutChoosing() {
+        val raw = """{"meta":{"is_end":true},"documents":[
+          {"id":"1","place_name":"버거킹 A점","road_address_name":"주소 A","x":"127.1","y":"37.4","distance":"100"},
+          {"id":"2","place_name":"버거킹 B점","road_address_name":"주소 B","x":"127.1005","y":"37.4005","distance":"230"}]}"""
+        val error = assertThrows(KakaoWalkingRoute.ChoiceRequired::class.java) {
+            KakaoWalkingRoute.selectKeywordDestination(raw, "버거킹")
+        }
+        assertEquals(listOf("1", "2"), error.candidates.map { it.id })
+        assertEquals(end, error.candidates[1].point)
+        assertEquals(230, error.candidates[1].distanceMeters)
+        assertEquals("2", KakaoWalkingRoute.selectKeywordDestination(raw, "버거킹 B점").id)
+        val partial = raw.replace("\"is_end\":true", "\"is_end\":false")
+        assertThrows(KakaoWalkingRoute.ChoiceRequired::class.java) {
+            KakaoWalkingRoute.selectKeywordDestination(partial, "버거킹 B점")
+        }
+        assertEquals(2, KakaoCandidateVoicePolicy.parse("2번 목적지 선택"))
+        assertEquals(2, KakaoCandidateVoicePolicy.parse("이번목적지선택"))
+        assertEquals(0, KakaoCandidateVoicePolicy.parse("목적지 후보 알려줘"))
+        assertNull(KakaoCandidateVoicePolicy.parse("2번"))
+        assertNull(KakaoCandidateVoicePolicy.parse("2번 목적지 선택하지 마"))
+    }
     @Test fun realProviderShapeFeedsExistingNativeProgress() {
         val route = KakaoWalkingRoute.parse(sample,start,end)
         assertEquals("kakao",route.provider)

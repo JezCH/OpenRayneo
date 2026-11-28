@@ -109,10 +109,14 @@ internal class GlassesVoiceTransport(
             }
             3 -> if (source == ConversationSource.NATIVE && !navigationExit.owns(wakeId)) message.audio?.let(audio)
             8 -> { resetNavigationExit(); nativeActive = false; answering = false; if (source == ConversationSource.NATIVE) endRound(true) }
-            11 -> if (navigationExit.owns(wakeId) && nativeActive) {
-                val sid = body.optString("sid")
-                if (sid.isBlank() || sid == lastReply) wakeId?.let(::exitForNavigation)
-            } else if (answering && nativeActive) {
+            11 -> {
+                if (navigationExit.owns(wakeId) && nativeActive && navigationExitAllowed?.invoke() == true) {
+                    val sid = body.optString("sid")
+                    if (sid.isBlank() || sid == lastReply) wakeId?.let(::exitForNavigation)
+                    return
+                }
+                if (navigationExit.owns(wakeId)) resetNavigationExit()
+                if (answering && nativeActive) {
                 // The answer finished without an interruption; we are already listening for the next turn.
                 val sid = body.optString("sid")
                 if (sid.isBlank() || sid == lastReply) {
@@ -123,6 +127,7 @@ internal class GlassesVoiceTransport(
                 val sid = body.optString("sid")
                 if (sid.isNotBlank() && sid != lastReply) return
                 advancedReply = lastReply; wakeId = UUID.randomUUID().toString(); wake()
+                }
             }
             161 -> if (source == ConversationSource.ALWAYS_ON && lifeTask == null) {
                 val id = UUID.randomUUID().toString().lowercase(); lifeTask = id
