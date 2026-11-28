@@ -70,6 +70,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
     // Enlarged text or a short screen must have a scrollable header and composer.
     val constrained = androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f ||
         androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 500
+    // Setup is a workspace, not a chat with a fixed composer. Keep its primary
+    // connection action visible while allowing draft input further down.
+    val scrollWorkspace = constrained || (!inputReady && !running && pendingHere == 0 &&
+        question.isBlank() && history.isEmpty())
     val phase = opticalAiPhase(s.available, pendingHere > 0, running, inputReady, answer.isNotBlank())
     val statusDetail = if (mobile && configured && question.isBlank() && !running) model.aiStatus else status
     val destinationLabel = if (!mobile) "컴퓨터 Codex" else if (model.aiLegacy) "로컬 Agent" else AiModelSelection.label(model.config)
@@ -104,12 +108,12 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
     }
     // Approval cards are the final items before the end spacer. Keep them in
     // view instead of following the answer past an actionable approval.
-    LaunchedEffect(source, answer, question, s.approvals.map { it.id }, s.agentReviews.map { it.id }, constrained) {
+    LaunchedEffect(source, answer, question, s.approvals.map { it.id }, s.agentReviews.map { it.id }, scrollWorkspace) {
         withFrameNanos {}
         val count = list.layoutInfo.totalItemsCount
         // Do not scroll an empty thread's connection or welcome screen away.
         if (followLatest && count > 0 && (question.isNotBlank() || history.isNotEmpty() || pendingHere > 0))
-            list.scrollToItem((count - 1 - pendingHere - (if (constrained && pendingHere > 0) 1 else 0)).coerceAtLeast(0))
+            list.scrollToItem((count - 1 - pendingHere - (if (scrollWorkspace && pendingHere > 0) 1 else 0)).coerceAtLeast(0))
     }
     if (memoryQuestion) MemoryQuestionDialog(model, model.phoneDraft, autoMemory) { memoryQuestion = false; autoMemory = false }
     if (continuityDialog) AlertDialog(
@@ -183,7 +187,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            OpticalAiStatus(phase, if (keyboardVisible || constrained) "" else statusDetail, Modifier.weight(1f))
+            OpticalAiStatus(phase, if (keyboardVisible || scrollWorkspace) "" else statusDetail, Modifier.weight(1f))
             IconButton(
                 onClick = { if (mobile && s.chatContinuity.turns.isNotEmpty()) confirmNewChat = true else model.newConversation(source) },
                 enabled = s.available && !running && (mobile || configured),
@@ -194,7 +198,7 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
         if (pendingHere > 0) TextButton(onClick = {
             scrollScope.launch {
                 val count = list.layoutInfo.totalItemsCount
-                if (count > 0) list.scrollToItem((count - 1 - pendingHere - (if (constrained) 1 else 0)).coerceAtLeast(0))
+                if (count > 0) list.scrollToItem((count - 1 - pendingHere - (if (scrollWorkspace) 1 else 0)).coerceAtLeast(0))
             }
         }, modifier = Modifier.fillMaxWidth()) { Text("확인이 필요한 요청 ${pendingHere}건 보기") }
         if (mobile && s.approvals.isNotEmpty()) TextButton(onClick = { mobile = false }) { Text("PC 작업 승인 ${s.approvals.size}건 확인") }
@@ -316,14 +320,14 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
         }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
-        if (!constrained) assistantHeader()
+        if (!scrollWorkspace) assistantHeader()
         LazyColumn(
             state = list,
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (constrained) item(key = "assistant-header") {
+            if (scrollWorkspace) item(key = "assistant-header") {
                 assistantHeader()
                 if (configured && statusDetail.isNotBlank()) Note(statusDetail)
             }
@@ -339,17 +343,19 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                 item {
                     OpticalHeroPanel {
                         OpticalWorkspaceHeading(
-                            if (mobile) "AI에 연결해야 질문할 수 있습니다" else "컴퓨터가 아직 설정되지 않음",
+                            if (mobile) "AI 연결 필요" else "컴퓨터 연결 필요",
                             destinationLabel,
                             if (mobile) 1 else 3,
                         )
-                        Note(
-                            if (mobile) "설정의 모델 선택에서 사용할 AI를 선택하고 연결하세요."
-                            else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
-                        )
-                        ToolButton(onClick = { configure(if (mobile) "model" else "computer") }) {
+                        ToolButton(onClick = { configure(if (mobile) "model" else "computer") },
+                            modifier = Modifier.fillMaxWidth()) {
                             Text(if (mobile) "AI 연결 설정" else "컴퓨터 연결 설정")
                         }
+                        if (statusDetail.isNotBlank()) Note(statusDetail)
+                        Note(
+                            if (mobile) "사용할 AI 모델을 선택하고 연결하세요. 질문 초안은 연결 전에도 입력할 수 있습니다."
+                            else "컴퓨터의 Codex에 연결해 작업 진행 상황을 보고, 여기서 승인하고 답변을 받습니다."
+                        )
                     }
                 }
             else if (mobile && !model.aiReady && !running)
@@ -476,10 +482,10 @@ internal fun AssistantScreen(model: AppModel, actions: UiActions, keyboardVisibl
                 s.approvals.forEach { request ->
                     item(key = "approval:${request.id}") { ApprovalCard(model, request) }
                 }
-            if (constrained) item(key = "assistant-composer") { assistantComposer() }
+            if (scrollWorkspace) item(key = "assistant-composer") { assistantComposer() }
             item(key = "conversation-end") { Spacer(Modifier.height(1.dp)) }
         }
-        if (!constrained) assistantComposer()
+        if (!scrollWorkspace) assistantComposer()
     }
 }
 

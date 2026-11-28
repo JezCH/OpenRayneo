@@ -57,6 +57,62 @@ def enter_tab(tab):
     adb("shell", "input", "tap", str((x1 + x2)//2), str((y1 + y2)//2))
     time.sleep(1.5)
 
+def matching_nodes(root, token):
+    return [n for n in root.iter("node")
+            if n.get("package") == PACKAGE
+            and (token in n.get("text", "") or token in n.get("content-desc", ""))
+            and bounds(n)[2] > bounds(n)[0] and bounds(n)[3] > bounds(n)[1]]
+
+def editable_node(root):
+    for n in root.iter("node"):
+        if (n.get("package") == PACKAGE and n.get("class", "").endswith("EditText")
+                and n.get("enabled") == "true" and bounds(n)[2] > bounds(n)[0]
+                and bounds(n)[3] > bounds(n)[1]):
+            return n
+    return None
+
+def scroll_content(size):
+    width, height = map(int, size.split("x"))
+    adb("shell", "input", "swipe", str(width // 2), str(int(height * .75)),
+        str(width // 2), str(int(height * .34)), "500")
+    time.sleep(1)
+
+def save_check(out, name, raw):
+    (out / f"{name}.xml").write_bytes(raw)
+    png = adb("exec-out", "screencap", "-p")
+    assert png.startswith(b"\x89PNG\r\n\x1a\n"), "interaction screenshot PNG missing"
+    (out / f"{name}.png").write_bytes(png)
+
+def check_home(root, size, scale):
+    targets = ("AI에게 질문", "회의 기록", "실시간 힌트", "한국어 호출", "영상 자막", "한영 통역")
+    seen = {target for target in targets if matching_nodes(root, target)}
+    if scale == 1.0:
+        assert set(targets[:4]) <= seen, f"first four shortcuts not visible: {sorted(seen)}"
+    for _ in range(10):
+        if len(seen) == len(targets):
+            return sorted(seen)
+        scroll_content(size)
+        _, root = tree()
+        seen.update(target for target in targets if matching_nodes(root, target))
+    raise RuntimeError(f"missing reachable home shortcuts: {sorted(set(targets) - seen)}")
+
+def check_ai(root, size, scale, out, case):
+    # The clean test profile starts unconfigured. The setup control, not a
+    # status label, must be available before entering a real AI request.
+    if scale == 1.0:
+        assert matching_nodes(root, "AI 연결 설정"), "setup action not visible on entry"
+    setup = bool(matching_nodes(root, "AI 연결 설정"))
+    for _ in range(10):
+        if setup and editable_node(root) is not None:
+            raw, root = tree()
+            assert editable_node(root) is not None
+            save_check(out, case + "-ai-input", raw)
+            return {"setup_reachable": True, "editable_input_reachable": True}
+        scroll_content(size)
+        _, root = tree()
+        setup = setup or bool(matching_nodes(root, "AI 연결 설정"))
+    raise RuntimeError(f"AI setup/input not reachable: setup={setup}, input={editable_node(root) is not None}")
+
 def launch(appearance, size, density, scale):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "wm", "size", size)
@@ -74,6 +130,7 @@ def main():
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     evidence = []
+    checks = []
     try:
         wait_boot()
         adb("shell", "input", "keyevent", "82")
@@ -118,14 +175,21 @@ def main():
                     raise RuntimeError(f"{case}/{tab}: expected destination not visible; labels: {sorted(visible)[:50]}")
                 evidence.append({"case": case, "tab": tab, "file": name + ".png",
                                  "native": True, "check": "actual app, selected tab, destination content"})
+                if index == 0:
+                    checks.append({"case": case, "check": "home-shortcuts", "reachable": check_home(root, size, scale)})
+                elif index == 1:
+                    checks.append({"case": case, "check": "ai-setup-input", **check_ai(root, size, scale, a.out, case)})
     finally:
         (a.out / "manifest.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
+        (a.out / "interaction-checks.json").write_text(json.dumps(checks, ensure_ascii=False, indent=2))
+        print("NATIVE_INTERACTION_CHECKS " + json.dumps(checks, ensure_ascii=False))
         try:
             (a.out / "android-runtime.log").write_bytes(adb("logcat", "-d", "-s", "AndroidRuntime", check=False))
             (a.out / "last-window.xml").write_bytes(adb("exec-out", "cat", "/sdcard/optical-evidence.xml", check=False))
         except (OSError, subprocess.SubprocessError):
             pass
     assert len(evidence) == 15, f"captured only {len(evidence)} screens"
+    assert len(checks) == 6, f"completed only {len(checks)} interaction checks"
 
 if __name__ == "__main__":
     main()
